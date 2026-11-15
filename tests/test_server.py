@@ -88,3 +88,14 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
     servers = load_servers(ini)
     assert servers["lab"].host == "192.0.2.10"
     assert servers["lab"].password == "changeme"
+
+
+async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
+    assert await srv._check(connect=False) == 0
+    assert "12 tools" in capsys.readouterr().out
+
+    assert await srv._check(connect=True) == 1
+    out = capsys.readouterr().out
+    assert "gen12  192.0.2.10  OK  HPE ProLiant Compute DL345 Gen12" in out
+    assert "badpass  192.0.2.11  FAILED" in out
+    assert "good" not in out

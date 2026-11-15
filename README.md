@@ -43,24 +43,26 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `Tools (12)`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp 0.1.0: 12 tools`):
 
 ```powershell
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip fastmcp list --command proliant-mcp
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
 ```
 
 ### macOS / Linux
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip fastmcp list --command proliant-mcp
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
 ```
 
-Configure at least one iLO (next section), then call a tool:
+Configure at least one iLO (next section), then check that each iLO accepts the login:
 
 ```bash
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip fastmcp call --command proliant-mcp get_ilo_info server=default
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check --connect
 ```
+
+It prints each server with its model and iLO version, or the reason a login failed.
 
 ### Add it to your AI client (stdio)
 

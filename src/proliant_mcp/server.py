@@ -163,14 +163,47 @@ async def redfish_get(
     return await _run(server, lambda c: c.get(path))
 
 
+async def _check(connect: bool) -> int:
+    """Self-test for installers: version, tools, config, and optionally a login to each iLO."""
+    from proliant_mcp import __version__
+
+    print(f"proliant-mcp {__version__}: {len(await mcp.list_tools())} tools")
+    try:
+        servers = load_servers()
+    except FileNotFoundError as exc:
+        print(exc)
+        return 1
+    print(f"config file: {config_path() or '(none; using ILO_* environment variables)'}")
+    if not servers:
+        print("no iLO servers configured yet (see README: Configure your iLOs)")
+        return 0
+    failed = 0
+    for s in servers.values():
+        line = f"  {s.name}  {s.host}"
+        if connect:
+            try:
+                async with RedfishClient(s, transport=_transport) as client:
+                    summary = await ilo.server_summary(client)
+                line += f"  OK  {summary['model']}, iLO {summary['ilo_version']}"
+            except RedfishError as exc:
+                failed += 1
+                line += f"  FAILED  {exc}"
+        print(line)
+    return 1 if failed else 0
+
+
 def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(prog="proliant-mcp", description=__doc__)
+    parser.add_argument("--check", action="store_true", help="print version, tool count and configured servers, then exit")
+    parser.add_argument("--connect", action="store_true", help="with --check: also log in to each iLO")
     parser.add_argument("--http", action="store_true", help="serve streamable HTTP instead of stdio")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="HTTP port (default 8000)")
     args = parser.parse_args()
+    if args.check:
+        raise SystemExit(asyncio.run(_check(args.connect)))
     if args.http:
         # No authentication on this endpoint: keep it on localhost or a trusted lab network.
         mcp.run(transport="http", host=args.host, port=args.port)
