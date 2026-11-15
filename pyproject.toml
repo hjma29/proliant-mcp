@@ -1,0 +1,34 @@
+[project]
+name = "proliant-mcp"
+version = "0.1.0"
+description = "MCP server for HPE ProLiant servers: iLO Redfish inventory and health tools (Compute Ops Management and OneView planned)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "hjma29" }]
+keywords = ["mcp", "hpe", "proliant", "ilo", "redfish", "fastmcp", "ai-agent"]
+dependencies = [
+    "fastmcp>=4.2.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+proliant-mcp = "proliant_mcp.server:main"
+
+[project.urls]
+Repository = "https://github.com/hjma29/proliant-mcp"
+
+[build-system]
+requires = ["uv_build>=0.8,<0.12"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
