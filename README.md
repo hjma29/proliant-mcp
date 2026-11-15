@@ -40,6 +40,29 @@ cd proliant-mcp
 uv sync
 ```
 
+### Windows (PowerShell)
+
+Works the same on Windows; it needs [Git](https://git-scm.com/download/win),
+Python 3.12+ (installed or fetched by uv) and uv:
+
+```powershell
+winget install --id astral-sh.uv        # or: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+git clone https://github.com/hjma29/proliant-mcp.git
+cd proliant-mcp
+uv sync
+uv run pytest
+```
+
+Then configure one server with environment variables (PowerShell syntax) and call a tool:
+
+```powershell
+$env:ILO_HOST = "192.0.2.10"; $env:ILO_USERNAME = "Administrator"; $env:ILO_PASSWORD = "..."
+uv run fastmcp call src/proliant_mcp/server.py get_ilo_info server=default
+```
+
+The inventory file lives at `%USERPROFILE%\.config\proliant-mcp\inventory.ini`.
+The machine running the server must be able to reach the iLO's address (HTTPS, port 443).
+
 ## Configure your iLOs
 
 Credentials are read from your machine only, never from this repository.
