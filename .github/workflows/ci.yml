@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run pytest -v
+
+  # What a customer does: no clone, no checkout, install straight from GitHub on a clean machine.
+  customer-install:
+    name: customer install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: astral-sh/setup-uv@v6
+      - name: Install from GitHub
+        run: uv tool install git+https://github.com/${{ github.repository }}@${{ github.sha }}
+      - name: Start over stdio and list tools
+        run: uvx fastmcp list --command proliant-mcp
