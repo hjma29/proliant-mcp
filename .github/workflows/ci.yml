@@ -20,17 +20,40 @@ jobs:
       - run: uv sync
       - run: uv run pytest -v
 
-  # What a customer does: no clone, no checkout, install straight from GitHub on a clean machine.
+  # What a customer does: no clone, no git, install from the GitHub archive on a clean machine.
   customer-install:
     name: customer install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      PKG: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.zip
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
       - uses: astral-sh/setup-uv@v6
-      - name: Install from GitHub
-        run: uv tool install git+https://github.com/${{ github.repository }}@${{ github.sha }}
-      - name: Start over stdio and list tools
-        run: uvx fastmcp list --command proliant-mcp
+      - name: Remove git from PATH (a fresh Windows machine has none)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $keep = $env:PATH -split ';' | Where-Object { $_ -notmatch '\\Git\\' }
+          "PATH=$($keep -join ';')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Confirm git is gone
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: if (Get-Command git -ErrorAction SilentlyContinue) { throw "git is still on PATH" }
+      - name: Install from the archive and list tools over stdio
+        shell: pwsh
+        run: uvx --from $env:PKG fastmcp list --command proliant-mcp
+      - name: Windows inventory written by PowerShell 5.1 (UTF-16), locked with icacls
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $d = "$env:USERPROFILE\.config\proliant-mcp"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          "[defaults]`r`npassword = changeme`r`n`r`n[lab]`r`nhost = 192.0.2.10" > "$d\inventory.ini"
+          icacls "$d\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
+          $out = uvx --from $env:PKG fastmcp call --command proliant-mcp list_servers 2>&1 | Out-String
+          Write-Output $out
+          if ($out -notmatch '"name": "lab"') { throw "inventory was not read" }

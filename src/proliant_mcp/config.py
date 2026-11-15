@@ -63,6 +63,18 @@ def config_path() -> Path | None:
     return None
 
 
+def _read_text(path: Path) -> str:
+    """Read an ini file saved by any common Windows editor.
+
+    Windows PowerShell 5.1 (`>` / Out-File) writes UTF-16 and Notepad may add a UTF-8 BOM;
+    both would otherwise be misread or rejected.
+    """
+    raw = path.read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    return raw.decode("utf-8-sig")
+
+
 def load_servers(path: Path | None = None) -> dict[str, Server]:
     servers: dict[str, Server] = {}
     path = path if path is not None else config_path()
@@ -71,7 +83,7 @@ def load_servers(path: Path | None = None) -> dict[str, Server]:
         if not path.is_file():
             raise FileNotFoundError(f"Inventory file not found: {path}")
         parser = configparser.ConfigParser(default_section="defaults", interpolation=None)
-        parser.read(path)
+        parser.read_string(_read_text(path), source=str(path))
         for name in parser.sections():
             sec = parser[name]
             if sec.get("type", "ilo").strip().lower() != "ilo":

@@ -77,3 +77,14 @@ async def test_errors(mcp_client, args):
     async with mcp_client as c:
         with pytest.raises(ToolError):
             await c.call_tool(tool, args)
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
+    from proliant_mcp.config import load_servers
+
+    ini = tmp_path / "inventory.ini"
+    ini.write_text("[defaults]\r\npassword = changeme\r\n\r\n[lab]\r\nhost = 192.0.2.10\r\n", encoding=encoding)
+    servers = load_servers(ini)
+    assert servers["lab"].host == "192.0.2.10"
+    assert servers["lab"].password == "changeme"

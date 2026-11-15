@@ -33,58 +33,91 @@ Every tool is annotated `readOnlyHint`. Nothing in this version changes a server
 ## Install
 
 The only prerequisite is [uv](https://docs.astral.sh/uv/), which also fetches
-Python 3.12+ when needed. No clone is required; CI proves this on clean
-Windows, Linux and macOS machines.
+Python 3.12+ when needed. **No git, no admin rights and no clone are required**;
+CI proves this on clean Windows, Linux and macOS machines.
+
+### Windows (PowerShell)
 
 ```powershell
-# Windows (PowerShell)
-winget install --id astral-sh.uv        # or: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# 1. Install uv for your user only (no admin). Or: winget install --id astral-sh.uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+Open a **new** PowerShell window, then check that it installs and starts (should print `Tools (12)`):
+
+```powershell
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip fastmcp list --command proliant-mcp
+```
+
+### macOS / Linux
+
 ```bash
-# macOS / Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Open a new terminal, then check that it installs and starts (should print `Tools (12)`):
-
-```bash
-uvx --from git+https://github.com/hjma29/proliant-mcp fastmcp list --command proliant-mcp
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip fastmcp list --command proliant-mcp
 ```
 
 Configure at least one iLO (next section), then call a tool:
 
 ```bash
-uvx --from git+https://github.com/hjma29/proliant-mcp fastmcp call --command proliant-mcp get_ilo_info server=default
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip fastmcp call --command proliant-mcp get_ilo_info server=default
 ```
 
-Add it to Copilot / any MCP client (stdio):
+### Add it to your AI client (stdio)
+
+VS Code / GitHub Copilot (**MCP: Open User Configuration**), Claude Desktop
+(**Settings > Developer > Edit Config**) and other clients all take the same command:
 
 ```json
 {"servers": {"proliant": {"type": "stdio", "command": "uvx",
-  "args": ["--from", "git+https://github.com/hjma29/proliant-mcp", "proliant-mcp"],
-  "env": {"ILO_HOST": "192.0.2.10", "ILO_USERNAME": "Administrator", "ILO_PASSWORD": "changeme"}}}}
+  "args": ["--from", "https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip", "proliant-mcp"]}}}
 ```
 
-To hack on it instead: `git clone https://github.com/hjma29/proliant-mcp && cd proliant-mcp && uv sync && uv run pytest`.
+Claude Desktop uses the top-level key `mcpServers` instead of `servers`. Credentials come from
+your inventory file (next section), so none go in this JSON. If the client cannot find `uvx`,
+restart it after installing uv, or use the full path (`%USERPROFILE%\.local\bin\uvx.exe`).
+
+To pin a version instead of `main`, use a release or commit archive URL.
+To hack on it: `git clone https://github.com/hjma29/proliant-mcp && cd proliant-mcp && uv sync && uv run pytest`.
 
 ## Configure your iLOs
 
-Credentials are read from your machine only, never from this repository. In PowerShell set variables with `$env:ILO_HOST = "..."`; the inventory file is `%USERPROFILE%\.config\proliant-mcp\inventory.ini`. The machine running the server must reach each iLO over HTTPS (port 443).
+Credentials are read from the machine running the server, never from this repository,
+and never sent to the AI model. That machine must reach each iLO over HTTPS (port 443).
 
 **Option A: inventory file (several servers).** Copy
 [examples/inventory.example.ini](examples/inventory.example.ini) to
-`~/.config/proliant-mcp/inventory.ini`, fill in hosts and passwords, then
-`chmod 600` it. Or point `PROLIANT_MCP_CONFIG` at any path. An existing
-[proliant-cli](https://github.com/hjma29/proliant-cli) inventory at
+`~/.config/proliant-mcp/inventory.ini` (Windows: `%USERPROFILE%\.config\proliant-mcp\inventory.ini`),
+fill in hosts and passwords, and restrict it to your user. Or point `PROLIANT_MCP_CONFIG` at any path.
+The file can be saved by Notepad or PowerShell (UTF-8 or UTF-16).
+
+```powershell
+# Windows: create, edit, then lock to your user
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.config\proliant-mcp" | Out-Null
+notepad "$env:USERPROFILE\.config\proliant-mcp\inventory.ini"
+icacls "$env:USERPROFILE\.config\proliant-mcp\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
+```
+
+```bash
+# macOS / Linux
+chmod 600 ~/.config/proliant-mcp/inventory.ini
+```
+
+An existing [proliant-cli](https://github.com/hjma29/proliant-cli) inventory at
 `~/.config/proliant-cli/inventory.ini` is picked up automatically.
 
 **Option B: one server from environment variables.**
 
-```bash
-export ILO_HOST=192.0.2.10 ILO_USERNAME=Administrator ILO_PASSWORD='...'
-export ILO_NAME=my-server        # optional, default "default"
+```powershell
+# Windows (PowerShell)
+$env:ILO_HOST = "192.0.2.10"; $env:ILO_USERNAME = "Administrator"; $env:ILO_PASSWORD = "..."
 ```
+
+```bash
+# macOS / Linux
+export ILO_HOST=192.0.2.10 ILO_USERNAME=Administrator ILO_PASSWORD='...'
+```
+
+`ILO_NAME` sets the server's name (default `default`).
 
 iLO uses a self-signed certificate by default, so TLS verification is off
 unless you set `verify_ssl = true` (ini) or `ILO_VERIFY_SSL=1`. A read-only
