@@ -32,40 +32,45 @@ Every tool is annotated `readOnlyHint`. Nothing in this version changes a server
 
 ## Install
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+The only prerequisite is [uv](https://docs.astral.sh/uv/), which also fetches
+Python 3.12+ when needed. No clone is required; CI proves this on clean
+Windows, Linux and macOS machines.
+
+```powershell
+# Windows (PowerShell)
+winget install --id astral-sh.uv        # or: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
 ```bash
-git clone https://github.com/hjma29/proliant-mcp.git
-cd proliant-mcp
-uv sync
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Windows (PowerShell)
+Open a new terminal, then check that it installs and starts (should print `Tools (12)`):
 
-Works the same on Windows; it needs [Git](https://git-scm.com/download/win),
-Python 3.12+ (installed or fetched by uv) and uv:
-
-```powershell
-winget install --id astral-sh.uv        # or: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-git clone https://github.com/hjma29/proliant-mcp.git
-cd proliant-mcp
-uv sync
-uv run pytest
+```bash
+uvx --from git+https://github.com/hjma29/proliant-mcp fastmcp list --command proliant-mcp
 ```
 
-Then configure one server with environment variables (PowerShell syntax) and call a tool:
+Configure at least one iLO (next section), then call a tool:
 
-```powershell
-$env:ILO_HOST = "192.0.2.10"; $env:ILO_USERNAME = "Administrator"; $env:ILO_PASSWORD = "..."
-uv run fastmcp call src/proliant_mcp/server.py get_ilo_info server=default
+```bash
+uvx --from git+https://github.com/hjma29/proliant-mcp fastmcp call --command proliant-mcp get_ilo_info server=default
 ```
 
-The inventory file lives at `%USERPROFILE%\.config\proliant-mcp\inventory.ini`.
-The machine running the server must be able to reach the iLO's address (HTTPS, port 443).
+Add it to Copilot / any MCP client (stdio):
+
+```json
+{"servers": {"proliant": {"type": "stdio", "command": "uvx",
+  "args": ["--from", "git+https://github.com/hjma29/proliant-mcp", "proliant-mcp"],
+  "env": {"ILO_HOST": "192.0.2.10", "ILO_USERNAME": "Administrator", "ILO_PASSWORD": "changeme"}}}}
+```
+
+To hack on it instead: `git clone https://github.com/hjma29/proliant-mcp && cd proliant-mcp && uv sync && uv run pytest`.
 
 ## Configure your iLOs
 
-Credentials are read from your machine only, never from this repository.
+Credentials are read from your machine only, never from this repository. In PowerShell set variables with `$env:ILO_HOST = "..."`; the inventory file is `%USERPROFILE%\.config\proliant-mcp\inventory.ini`. The machine running the server must reach each iLO over HTTPS (port 443).
 
 **Option A: inventory file (several servers).** Copy
 [examples/inventory.example.ini](examples/inventory.example.ini) to
