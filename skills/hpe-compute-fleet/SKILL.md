@@ -74,6 +74,8 @@ deepest detail.
 - A server listed in `inventory_unavailable` has no cached hardware inventory in COM
   (never collected, or not connected). Say its GPUs are unknown, not that it has none.
   GPU names are what iLO reports, e.g. an unnamed "Intel Video Controller".
+- No iLO or OneView configured, or the user wants to add servers: `add_server` (one) or
+  `import_inventory` (a .ini/.csv file the user names in a pop-up). Never ask for a password in chat.
 - If a `com_` tool says no COM account is configured or the login failed, call
   `com_login`: it signs the user in with pop-ups. Never ask for a password in chat.
 - All tools are read-only. Changes (power, firmware updates, profile edits)

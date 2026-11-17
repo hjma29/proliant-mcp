@@ -6,6 +6,19 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.6.0 — 2026-11-17
+
+### New Features
+- `add_server` tool: add one iLO or OneView to your inventory from the AI chat. A pop-up asks for the type, address, name and user name, then a one-time page on your own computer (`127.0.0.1`) asks for the password in a masked field, so it never passes through the AI client or model. The login is checked against the server first (a wrong password is asked again, up to three times; an unreachable address saves nothing) and the tools use the server straight away.
+- `import_inventory` tool and `proliant-mcp import FILE` command: import many iLO and OneView entries from an `.ini` or `.csv` file (Excel: Save As > CSV). The user types the file's path in a pop-up; the AI cannot choose the file. Column names such as `IP Address`, `Server Name`, `User` and `Pass` are recognised, `;` and tab separators and Excel's ANSI/UTF-16 encodings are read, and invalid rows are reported and skipped. It confirms what it found, asks once for a password shared by entries that have none, and optionally checks each login. Existing entries are kept unless "Replace" is ticked (`--replace`).
+- The inventory file is written owner-only (`chmod 600`, `icacls` on Windows), edited section by section so comments and other entries are untouched, and a proliant-cli inventory is copied, never modified.
+
+### Enhancements
+- A wrong iLO or OneView password is now told apart from an unreachable server, so `add_server` and the imports can say which.
+- When no iLO or OneView is configured, the error tells the assistant to use `add_server` or `import_inventory`.
+
+---
+
 ## v0.5.0 — 2026-11-17
 
 ### New Features

@@ -6,7 +6,7 @@ import pytest
 from fastmcp import Client
 from mcp_types import ElicitRequestURLParams, ElicitResult
 
-from proliant_mcp import chat_login, com, login
+from proliant_mcp import chat, com, login
 from proliant_mcp import server as srv
 from proliant_mcp.config import load_com
 
@@ -275,7 +275,7 @@ async def test_com_login_gmail_password_on_local_page(greenlake, mode):
 
 async def test_com_login_links_the_password_page_without_url_mode(greenlake, monkeypatch):
     greenlake()
-    monkeypatch.setattr(chat_login, "_elicitation_modes", lambda ctx: (True, False))
+    monkeypatch.setattr(chat, "_elicitation_modes", lambda ctx: (True, False))
     handler, seen = chat_user("you@gmail.com")
     async with Client(srv.mcp, elicitation_handler=handler) as client:
         data = (await client.call_tool("com_login", {})).structured_content
@@ -291,7 +291,7 @@ async def test_com_login_cancelled_or_without_popups(greenlake):
 
     async with Client(srv.mcp, elicitation_handler=decline) as client:
         result = await client.call_tool("com_login", {}, raise_on_error=False)
-    assert result.is_error and "cancelled" in result.content[0].text
+    assert result.is_error and "cancelled" in result.content[0].text.lower()
     async with Client(srv.mcp) as client:
         result = await client.call_tool("com_login", {}, raise_on_error=False)
     assert result.is_error and "proliant-mcp login" in result.content[0].text

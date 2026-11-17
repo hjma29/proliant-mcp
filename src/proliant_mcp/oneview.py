@@ -25,6 +25,10 @@ class OneViewError(RuntimeError):
     pass
 
 
+class OneViewLoginError(OneViewError):
+    """The appliance answered but refused the user name or password."""
+
+
 def _detail(resp: httpx.Response) -> str:
     try:
         body = resp.json()
@@ -58,7 +62,7 @@ class OneViewClient:
             raise OneViewError(f"{a.name}: cannot reach OneView at {a.host} ({exc.__class__.__name__})") from exc
         if resp.status_code >= 400:
             await self._http.aclose()
-            raise OneViewError(f"{a.name}: OneView login failed (HTTP {resp.status_code} {_detail(resp)})")
+            raise OneViewLoginError(f"{a.name}: OneView login failed (HTTP {resp.status_code} {_detail(resp)})")
         self._http.headers["auth"] = resp.json().get("sessionID", "")
         self._logged_in = True
         return self

@@ -12,7 +12,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_login, com, ilo, login, oneview
+from proliant_mcp import __version__, chat_inventory, chat_login, com, ilo, inventory_cli, login, oneview
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -32,8 +32,10 @@ For tables or comparisons across servers use com_list_servers (add include_hardw
 GPU columns) or com_list_gpus; they return the whole fleet in one call. Never loop com_get_server
 or com_api_get over many servers.
 If a com_ tool says no COM account is configured or the COM login failed, call com_login:
-it signs the user in to HPE GreenLake with pop-ups in this chat. Never ask the user to type
-a password into the chat."""
+it signs the user in to HPE GreenLake with pop-ups in this chat. If no iLO or OneView is
+configured, or the user wants to add servers, call add_server (one iLO or OneView) or
+import_inventory (a .ini or .csv file the user names in a pop-up). Never ask the user to type
+a password into the chat; these tools collect it on a secure page."""
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
@@ -55,7 +57,8 @@ def _servers() -> dict[str, Server]:
     servers = load_servers()
     if not servers:
         raise ToolError(
-            "No iLO servers configured. Set ILO_HOST/ILO_USERNAME/ILO_PASSWORD, or create "
+            "No iLO servers configured. Add one with the add_server tool (pop-ups in the chat), import a file "
+            "with import_inventory, set ILO_HOST/ILO_USERNAME/ILO_PASSWORD, or edit "
             "~/.config/proliant-mcp/inventory.ini (see examples/inventory.example.ini)."
         )
     return servers
@@ -83,7 +86,7 @@ async def _run(name: str, fn: Callable[[RedfishClient], Awaitable[Any]]) -> Any:
 def _pick(kind: str, items: dict[str, Any], name: str | None) -> Any:
     if not items:
         hint = (
-            "Add a section with `type = oneview` (host/username/password) to the inventory file, or set ONEVIEW_HOST/ONEVIEW_USERNAME/ONEVIEW_PASSWORD."
+            "Add one with the add_server tool (pop-ups in the chat), import a file with import_inventory, add a section with `type = oneview` (host/username/password) to the inventory file, or set ONEVIEW_HOST/ONEVIEW_USERNAME/ONEVIEW_PASSWORD."
             if kind == "OneView appliance"
             else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or sign the user in with the com_login tool (pop-ups in the chat)."
         )
@@ -345,6 +348,39 @@ async def com_login(
     return await chat_login.com_login(ctx, email, workspace, region)
 
 
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Add an iLO or OneView to the inventory", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+    )
+)
+async def add_server(
+    ctx: Context,
+    type: Annotated[Literal["ilo", "oneview"] | None, Field(description="Pre-fills the pop-up: ilo or oneview.")] = None,
+    host: Annotated[str | None, Field(description="Pre-fills the pop-up: IP address or name of the iLO or OneView.")] = None,
+    name: Annotated[str | None, Field(description="Pre-fills the pop-up: short name for the server.")] = None,
+    username: Annotated[str | None, Field(description="Pre-fills the pop-up: user name (default Administrator).")] = None,
+) -> dict[str, Any] | mcp_types.InputRequiredResult:
+    """Add one iLO or OneView to the user's inventory with pop-ups in the chat: a form for the
+    type, address, name and user name, then a secure page for the password. The login is
+    checked before anything is saved. The tools use the new server immediately. Call it when
+    the user wants to add a server, or when no iLO or OneView is configured. Never ask for the
+    password in chat, and never pass one; the secure page collects it."""
+    return await chat_inventory.add_server(ctx, type, name, host, username)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Import servers from a file", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+    )
+)
+async def import_inventory(ctx: Context) -> dict[str, Any] | mcp_types.InputRequiredResult:
+    """Import many iLO and OneView entries from a .ini or .csv file (Excel: save as CSV) with
+    pop-ups in the chat: the user types the file's path, confirms what was found, and gives one
+    shared password on a secure page for entries that have none. Optionally checks each login.
+    The tools use the entries immediately. Takes no arguments: the user chooses the file, not you."""
+    return await chat_inventory.import_inventory(ctx)
+
+
 # ── HPE OneView / Synergy ─────────────────────────────────────────────────────
 
 
@@ -519,7 +555,10 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(prog="proliant-mcp", description=__doc__)
-    parser.add_argument("command", nargs="?", choices=["login", "logout"], help="login: sign in to HPE GreenLake with your email and an Okta Verify push (creates the API client for you); logout: forget that login")
+    parser.add_argument("command", nargs="?", choices=["login", "logout", "import"], help="login: sign in to HPE GreenLake with your email and an Okta Verify push (creates the API client for you); logout: forget that login; import FILE: add the iLO / OneView entries of a .ini or .csv file to your inventory")
+    parser.add_argument("file", nargs="?", help="with import: the .ini or .csv file")
+    parser.add_argument("--replace", action="store_true", help="with import: overwrite entries that are already in your inventory")
+    parser.add_argument("--no-check", action="store_true", help="with import: do not log in to each imported server")
     parser.add_argument("--email", help="with login: your GreenLake email (asked if omitted)")
     parser.add_argument("--workspace", help="with login: workspace name (asked if you have several)")
     parser.add_argument("--region", choices=["us-west", "eu-central", "ap-northeast"], help="with login: Compute Ops Management region (detected if omitted)")
@@ -533,6 +572,10 @@ def main() -> None:
         raise SystemExit(login.run_login(args.email, args.workspace, args.region))
     if args.command == "logout":
         raise SystemExit(login.run_logout())
+    if args.command == "import":
+        if not args.file:
+            parser.error("import needs a file: proliant-mcp import servers.csv")
+        raise SystemExit(inventory_cli.run_import(args.file, args.replace, not args.no_check))
     if args.check:
         raise SystemExit(asyncio.run(_check(args.connect)))
     if args.http:

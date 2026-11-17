@@ -1,0 +1,4 @@
+name,type,host,username,password
+dl380-lab,ilo,192.0.2.10,Administrator,changeme
+dl325-lab,ilo,192.0.2.11,,
+synergy,oneview,192.0.2.100,Administrator,changeme

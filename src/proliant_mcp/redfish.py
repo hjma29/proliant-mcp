@@ -16,6 +16,10 @@ class RedfishError(RuntimeError):
     pass
 
 
+class RedfishLoginError(RedfishError):
+    """The iLO answered but refused the user name or password."""
+
+
 def _error_detail(resp: httpx.Response) -> str:
     try:
         info = resp.json().get("error", {}).get("@Message.ExtendedInfo", [])
@@ -56,7 +60,7 @@ class RedfishClient:
             raise RedfishError(f"{self.server.name}: cannot reach iLO at {self.server.host} ({exc.__class__.__name__})") from exc
         if resp.status_code >= 400:
             await self._http.aclose()
-            raise RedfishError(f"{self.server.name}: login failed (HTTP {resp.status_code} {_error_detail(resp)})")
+            raise RedfishLoginError(f"{self.server.name}: login failed (HTTP {resp.status_code} {_error_detail(resp)})")
         token = resp.headers.get("X-Auth-Token")
         if not token:
             await self._http.aclose()

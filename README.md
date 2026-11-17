@@ -21,7 +21,7 @@ Synergy Composer2 running OneView 11.10, and COM (`us-west`). The COM and OneVie
 logic comes from [proliant-cli](https://github.com/hjma29/proliant-cli), the
 human-facing CLI for the same three sources.
 
-> Status: **v0.5, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
+> Status: **v0.6, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Tools
 
@@ -56,7 +56,6 @@ human-facing CLI for the same three sources.
 | `com_list_groups` | Server groups, members and firmware / iLO-settings compliance |
 | `com_list_firmware_bundles` | SPPs and patch bundles available in COM |
 | `com_api_get` | Raw read-only GET of any `/compute-ops-mgmt/...` resource (secrets redacted) |
-| `com_login` | Sign in to HPE GreenLake with pop-ups in the chat (email, then Okta Verify number or a secure password page) |
 
 ### HPE OneView / Synergy
 
@@ -72,8 +71,18 @@ human-facing CLI for the same three sources.
 | `oneview_list_firmware_baselines` | SPP / Synergy Service Packs uploaded to OneView |
 | `oneview_rest_get` | Raw read-only GET of any `/rest/...` resource (sessions and users blocked, secrets redacted) |
 
-Every tool except `com_login` is annotated `readOnlyHint`; `com_login` creates a GreenLake API
-client for the signed-in user (see Configure > HPE Compute Ops Management) and changes no server.
+### Setup (pop-ups in the chat)
+
+| Tool | What it does |
+|---|---|
+| `add_server` | Add one iLO or OneView: pop-up for type, address, name and user name, then a secure page for the password; the login is checked before saving |
+| `import_inventory` | Import many from an `.ini` or `.csv` file whose path you type in a pop-up; optional shared password and login checks |
+| `com_login` | Sign in to HPE GreenLake with pop-ups (email, then Okta Verify number or a secure password page); creates a GreenLake API client for you (see Configure > HPE Compute Ops Management) |
+
+Every other tool is annotated `readOnlyHint`. The setup tools change no server: `add_server` and
+`import_inventory` only edit the inventory file on this computer, and `com_login` also creates a
+GreenLake API client. None of them takes a password (or, for `import_inventory`, a file path) as an
+argument, so the AI cannot see a password or choose which file is read.
 
 ## Install
 
@@ -88,7 +97,7 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 31 tools` and `(up to date)`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 33 tools` and `(up to date)`):
 
 ```powershell
 uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check
@@ -139,7 +148,7 @@ using the copy it cached first, however many releases come out.
 - **Which version am I on:** `--check` prints it, plus the latest release and
   `UPDATE AVAILABLE` if you are behind.
 - **Pin a version** (no surprise changes; you upgrade by editing the version):
-  `https://github.com/hjma29/proliant-mcp/releases/download/v0.5.0/proliant-mcp.tar.gz`.
+  `https://github.com/hjma29/proliant-mcp/releases/download/v0.6.0/proliant-mcp.tar.gz`.
   A pinned URL never changes, so `--refresh-package` is not needed.
 - **Unreleased changes** from `main`:
   `https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip` (with `--refresh-package`).
@@ -155,7 +164,28 @@ and OneView appliance over HTTPS (443), and `*.api.greenlake.hpe.com` /
 
 ### Inventory file
 
-Copy [examples/inventory.example.ini](examples/inventory.example.ini) to
+**Add servers from the chat** (easiest): ask your assistant to *"add an iLO"* or *"add a OneView"*. It
+calls the `add_server` tool, which shows a pop-up for the type, address, name and user name, then
+opens a secure page on your own computer (`127.0.0.1`) for the password. The password goes straight
+to proliant-mcp, never through the AI client or model. It is **checked against the server before
+anything is saved**, so a wrong password or address is caught at once. The tools use the new server
+immediately, no restart.
+
+**Import a list** (many servers): ask your assistant to *"import my servers from a file"*. The
+`import_inventory` tool pops up for the **path** of an `.ini` or `.csv` file (the AI cannot choose the
+file; you type it), shows what it found, and optionally asks once for a password shared by entries
+that have none, then checks each login. The file stays where it is. For a spreadsheet, use **File >
+Save As > CSV** in Excel; the columns are `name, type, host, username, password`
+([example](examples/inventory.example.csv)), and common variants such as `IP Address` or `Server Name`
+are recognised (`.xlsx` files are not read directly). Same thing in a terminal:
+`proliant-mcp import servers.csv` (`--replace` overwrites entries that already exist, `--no-check` skips the login checks).
+
+Both write `~/.config/proliant-mcp/inventory.ini` (or the file `PROLIANT_MCP_CONFIG` names), readable
+only by you, and leave other content in the file as it is. If you only had a proliant-cli inventory,
+its content is copied there first; the proliant-cli file is never changed. Passwords are stored in
+that file in plain text, so delete a CSV you imported once you no longer need it.
+
+**Or edit the file by hand.** Copy [examples/inventory.example.ini](examples/inventory.example.ini) to
 `~/.config/proliant-mcp/inventory.ini` (Windows: `%USERPROFILE%\.config\proliant-mcp\inventory.ini`),
 fill it in, and restrict it to your user. Or point `PROLIANT_MCP_CONFIG` at any path.
 The file can be saved by Notepad or PowerShell (UTF-8 or UTF-16).
