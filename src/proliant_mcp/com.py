@@ -86,7 +86,7 @@ class ComClient:
         if resp.status_code >= 400:
             raise ComError(
                 f"COM login failed for account '{self.account.name}' (HTTP {resp.status_code}). "
-                "Check the GreenLake API client ID/secret, or sign in again with `proliant-mcp login`."
+                "Check the GreenLake API client ID/secret, or sign in again with the com_login tool."
             )
         data = resp.json()
         _tokens[self.account.client_id] = (data["access_token"], time.monotonic() + float(data.get("expires_in", 7200)))

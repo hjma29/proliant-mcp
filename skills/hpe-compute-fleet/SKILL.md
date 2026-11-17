@@ -65,7 +65,9 @@ deepest detail.
   `status` is `OK` / `Warning` / `Critical`.
 - `connected: false` in COM means the iLO isn't talking to COM right now, so
   COM's health and power data may be stale. Say so.
-- Report tool errors as they come back (login failure, 403 = the API client has
-  no COM role). Never fill in values from memory.
+- Report tool errors as they come back (403 = the API client has no COM role).
+  Never fill in values from memory.
+- If a `com_` tool says no COM account is configured or the login failed, call
+  `com_login`: it signs the user in with pop-ups. Never ask for a password in chat.
 - All tools are read-only. Changes (power, firmware updates, profile edits)
   are not available in this version; don't suggest the tools can do them.

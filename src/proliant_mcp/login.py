@@ -1,11 +1,18 @@
-"""``proliant-mcp login``: sign in to HPE GreenLake with your email and an Okta Verify
-push, so no API client has to be created by hand.
+"""Sign in to HPE GreenLake with your email, the way the GreenLake web page does, so no
+API client has to be created by hand.
 
-It does what the GreenLake web UI does (PKCE sign-in through Okta, then a workspace
-session), creates a temporary GreenLake API client in the chosen workspace and saves its
-ID and secret to ``~/.config/proliant-mcp/com/login.json``. The Compute Ops Management
-tools then use that client like any other API client. Your email, password and session
-tokens are never stored.
+- ``@hpe.com`` accounts approve an Okta Verify push (tap the number shown); accounts
+  without push fall back to their password.
+- Other accounts (e.g. gmail.com) use their GreenLake password, then an Okta Verify
+  push if Okta asks for a second factor.
+
+Then it opens a workspace session, creates a temporary GreenLake API client in the
+chosen workspace and saves its ID and secret to ``~/.config/proliant-mcp/com/login.json``.
+The Compute Ops Management tools use that client like any other API client. The email,
+password and session tokens are never stored.
+
+The same engine serves the ``com_login`` MCP tool (pop-ups in the AI chat, see
+``chat_login.py``) and the ``proliant-mcp login`` terminal command (``TerminalUI``).
 
 The sign-in endpoints are the web UI's, not a published API (ported from proliant-cli's
 ``proliant.com.login``). If HPE changes them, create an API client instead (README).
@@ -18,6 +25,7 @@ import base64
 import contextlib
 import datetime
 import difflib
+import getpass
 import hashlib
 import json
 import os
@@ -29,7 +37,7 @@ import time
 import urllib.parse
 from collections.abc import Callable
 from html import unescape
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
@@ -52,6 +60,9 @@ IDX_HEADERS = {
     "Content-Type": "application/json; okta-version=1.0.0",
     "Accept": "application/ion+json; okta-version=1.0.0",
 }
+# Plain JSON for password sign-in: with the ion+json headers Okta routes non-HPE accounts
+# to certificate (MTLS) sign-in instead of offering the password authenticator.
+CLASSIC_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
 # Tests swap this to inject a fake GreenLake / Okta (httpx.MockTransport).
 _transport: httpx.AsyncBaseTransport | None = None
@@ -67,8 +78,48 @@ class PushNotAvailable(LoginError):
     pass
 
 
+class WrongPassword(LoginError):
+    pass
+
+
+class LoginUI(Protocol):
+    """How the sign-in talks to the person: a terminal, or pop-ups in an AI chat."""
+
+    def say(self, message: str) -> None: ...
+
+    async def password(self, email: str, error: str | None) -> str:
+        """Ask for the GreenLake password (never echoed, never stored)."""
+
+    async def approve(self, number: Any, approval: asyncio.Task[str]) -> str:
+        """Show the number to tap in Okta Verify; return the approval task's result."""
+
+    async def workspace(self, names: list[str]) -> str:
+        """Pick one of several workspaces."""
+
+
 def _say(message: str = "") -> None:
     print(message, flush=True)
+
+
+class TerminalUI:
+    def say(self, message: str) -> None:
+        _say(message)
+
+    async def password(self, email: str, error: str | None) -> str:
+        if error:
+            _say(error)
+        return await asyncio.to_thread(getpass.getpass, f"GreenLake password for {email}: ")
+
+    async def approve(self, number: Any, approval: asyncio.Task[str]) -> str:
+        _say("")
+        _say(f"Open Okta Verify on your phone and tap {number}." if number is not None else "Approve the push notification in Okta Verify on your phone.")
+        _say("Waiting for approval...")
+        return await approval
+
+    async def workspace(self, names: list[str]) -> str:
+        if not sys.stdin.isatty():
+            raise LoginError(f"Several workspaces ({', '.join(names)}); pass --workspace NAME")
+        return await asyncio.to_thread(_ask_workspace, names)
 
 
 def _client(**kwargs: Any) -> httpx.AsyncClient:
@@ -175,8 +226,9 @@ async def _get_state_token(client: httpx.AsyncClient, challenge: str, state: str
     return state_token, str(resp.url).split("/oauth2/")[0]
 
 
-async def _idx_introspect(client: httpx.AsyncClient, okta_base: str, state_token: str) -> dict[str, Any] | None:
-    resp = await client.post(f"{okta_base}/idp/idx/introspect", json={"stateToken": state_token}, headers=IDX_HEADERS)
+async def _idx_introspect(client: httpx.AsyncClient, okta_base: str, state_token: str,
+                          headers: dict[str, str] = IDX_HEADERS) -> dict[str, Any] | None:
+    resp = await client.post(f"{okta_base}/idp/idx/introspect", json={"stateToken": state_token}, headers=headers)
     data = resp.json()
     return data if "stateHandle" in data else None
 
@@ -215,8 +267,20 @@ async def _follow_saml_to_workforce(client: httpx.AsyncClient, redirect_idp: dic
     return data, okta_base
 
 
-async def _begin_push(client: httpx.AsyncClient, email: str, challenge: str, state: str) -> tuple[str, str, Any]:
-    """Identify the user and send the Okta Verify push. Returns (poll href, state handle, number to tap)."""
+def _remediation_names(data: dict[str, Any]) -> list[str]:
+    return [v.get("name", "") for v in data.get("remediation", {}).get("value", [])]
+
+
+def _success_href(data: dict[str, Any]) -> str | None:
+    return (
+        (data.get("success") or {}).get("href")
+        or (data.get("successWithInteractionCode") or {}).get("href")
+        or (data.get("successWithInteractionCode") or {}).get("redirectUri")
+    )
+
+
+async def _identify_for_push(client: httpx.AsyncClient, email: str, challenge: str, state: str) -> dict[str, Any]:
+    """Identify the user; return the IDX state that offers authenticators (after corporate SSO, if any)."""
     state_token, okta_base = await _get_state_token(client, challenge, state, email)
     idx = await _idx_introspect(client, okta_base, state_token)
     if idx is None:
@@ -229,27 +293,23 @@ async def _begin_push(client: httpx.AsyncClient, email: str, challenge: str, sta
     ).json()
     if "remediation" not in identified:
         raise LoginError("GreenLake did not accept that email address")
-
-    idx = identified
     redirect_idp = _remediation(identified, "redirect-idp")
     if redirect_idp:
-        idx, okta_base = await _follow_saml_to_workforce(client, redirect_idp)
-    select = _remediation(idx, "select-authenticator-authenticate")
-    if not select:
-        names = [v.get("name") for v in idx.get("remediation", {}).get("value", [])]
-        raise PushNotAvailable(
-            f"This account does not sign in with an Okta Verify push (GreenLake offered: {names}). "
-            "Create an API client instead (README: HPE Compute Ops Management)."
-        )
+        identified, _ = await _follow_saml_to_workforce(client, redirect_idp)
+    return identified
 
+
+async def _select_push(client: httpx.AsyncClient, idx: dict[str, Any]) -> tuple[str, str, Any]:
+    """Send the Okta Verify push. Returns (poll href, state handle, number to tap)."""
+    select = _remediation(idx, "select-authenticator-authenticate")
     authenticators = idx.get("authenticators", {}).get("value", [])
-    verify = next((a for a in authenticators if "okta_verify" in a.get("key", "").lower()), None)
+    verify = next(
+        (a for a in authenticators if "okta_verify" in a.get("key", "").lower() or "okta verify" in a.get("displayName", "").lower()),
+        None,
+    )
     methods = [m.get("type") for m in (verify or {}).get("methods", [])]
-    if not verify or "push" not in methods:
-        raise PushNotAvailable(
-            "Okta Verify push is not set up for this account. Set it up in GreenLake, or create an API client instead "
-            "(README: HPE Compute Ops Management)."
-        )
+    if not select or not verify or "push" not in methods:
+        raise PushNotAvailable("Okta Verify push is not set up for this account")
     chosen = (
         await client.post(
             select["href"],
@@ -262,6 +322,104 @@ async def _begin_push(client: httpx.AsyncClient, email: str, challenge: str, sta
         raise LoginError("GreenLake did not start the Okta Verify push")
     answer = chosen.get("currentAuthenticator", {}).get("value", {}).get("contextualData", {}).get("correctAnswer")
     return poll["href"], chosen["stateHandle"], answer
+
+
+async def _approve_push(client: httpx.AsyncClient, idx: dict[str, Any], ui: LoginUI) -> str:
+    """Send the push, show the number and wait for approval. Returns the success href."""
+    poll_href, handle, answer = await _select_push(client, idx)
+    approval = asyncio.create_task(_poll_push(client, poll_href, handle))
+    try:
+        return await ui.approve(answer, approval)
+    finally:
+        if not approval.done():
+            approval.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await approval
+
+
+def _check_password_reply(resp: httpx.Response) -> dict[str, Any]:
+    """Raise WrongPassword for Okta's 'incorrect password' answers (HTTP 401 or 200 with an error)."""
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    messages = data.get("messages", {}).get("value", [])
+    keys = {m.get("i18n", {}).get("key", "") for m in messages} | {"errors." + data.get("errorCode", "")}
+    if resp.status_code == 401 or keys & {"errors.E0000004", "errors.E0000207"} or any(m.get("class") == "ERROR" for m in messages):
+        raise WrongPassword("Incorrect password, try again.")
+    return data
+
+
+async def _password_challenge(client: httpx.AsyncClient, okta_base: str, idx: dict[str, Any], password: str, ui: LoginUI) -> str:
+    """Password via the select/challenge steps (corporate Okta or newer Okta). Returns the success href."""
+    select = _remediation(idx, "select-authenticator-authenticate")
+    authenticators = idx.get("authenticators", {}).get("value", [])
+    password_auth = next(
+        (a for a in authenticators if a.get("key") == "okta_password" or "password" in a.get("displayName", "").lower()),
+        None,
+    )
+    if not select or not password_auth:
+        raise LoginError("GreenLake does not offer password sign-in for this account")
+    chosen = (
+        await client.post(select["href"], json={"authenticator": {"id": password_auth["id"]}, "stateHandle": idx["stateHandle"]}, headers=IDX_HEADERS)
+    ).json()
+    challenge = _remediation(chosen, "challenge-authenticator")
+    if not challenge:
+        raise LoginError("GreenLake did not ask for the password")
+    reply = await client.post(challenge["href"], json={"credentials": {"passcode": password}, "stateHandle": chosen["stateHandle"]}, headers=IDX_HEADERS)
+    data = _check_password_reply(reply)
+    if href := _success_href(data):
+        return href
+    if _remediation(data, "select-authenticator-authenticate"):
+        ui.say("Password accepted; GreenLake also wants an Okta Verify push.")
+        return await _approve_push(client, data, ui)
+    raise LoginError(f"Unexpected GreenLake answer after the password ({_remediation_names(data)})")
+
+
+async def _password_sign_in(client: httpx.AsyncClient, email: str, password: str, challenge: str, state: str, ui: LoginUI) -> str:
+    """Email + password (the path for gmail.com and other non-HPE accounts). Returns the success href."""
+    state_token, okta_base = await _get_state_token(client, challenge, state, email)
+    idx = await _idx_introspect(client, okta_base, state_token, CLASSIC_HEADERS)
+    if idx is None:
+        raise LoginError("The sign-in session expired")
+    identify = _remediation(idx, "identify")
+    identify_href = identify["href"] if identify else f"{okta_base}/idp/idx/identify"
+    identified = (
+        await client.post(identify_href, json={"identifier": email, "stateHandle": idx["stateHandle"]}, headers=CLASSIC_HEADERS)
+    ).json()
+    names = _remediation_names(identified)
+    authenticators = identified.get("authenticators", {}).get("value", [])
+    password_auth = next((a for a in authenticators if a.get("key") == "okta_password" or a.get("type") == "password"), None)
+
+    if password_auth and "challenge-authenticator" in names:
+        with contextlib.suppress(httpx.HTTPError):
+            await client.post(f"{okta_base}/api/v1/internal/device/nonce", headers=CLASSIC_HEADERS)
+        reply = await client.post(
+            _remediation(identified, "challenge-authenticator")["href"],
+            json={"credentials": {"passcode": password}, "stateHandle": identified["stateHandle"]},
+            headers=CLASSIC_HEADERS,
+        )
+        data = _check_password_reply(reply)
+        if href := _success_href(data):
+            return href
+        if _remediation(data, "select-authenticator-authenticate"):
+            ui.say("Password accepted; GreenLake also wants an Okta Verify push.")
+            return await _approve_push(client, data, ui)
+        raise LoginError(f"Unexpected GreenLake answer after the password ({_remediation_names(data)})")
+
+    if "redirect-idp" in names:
+        idx, okta_base = await _follow_saml_to_workforce(client, _remediation(identified, "redirect-idp"))
+        again = _remediation(idx, "identify")
+        if not _remediation(idx, "select-authenticator-authenticate") and again:
+            idx = (await client.post(again["href"], json={"identifier": email, "stateHandle": idx["stateHandle"]}, headers=IDX_HEADERS)).json()
+        return await _password_challenge(client, okta_base, idx, password, ui)
+
+    if "select-authenticator-authenticate" in names:
+        return await _password_challenge(client, okta_base, identified, password, ui)
+
+    if {"enroll-authenticator", "select-authenticator-enroll"} & set(names):
+        raise LoginError("This account has no GreenLake password yet. Sign in to the GreenLake web page once to set one.")
+    raise LoginError(f"GreenLake did not offer password sign-in for this account ({names})")
 
 
 async def _poll_push(client: httpx.AsyncClient, poll_href: str, state_handle: str, timeout: float = POLL_TIMEOUT) -> str:
@@ -321,8 +479,12 @@ async def _exchange_token(verifier: str, code: str) -> dict[str, Any]:
     return resp.json()
 
 
-async def sign_in(email: str, say: Say = _say) -> dict[str, Any]:
-    """Email + Okta Verify push. Returns GreenLake's token response (kept in memory only)."""
+async def _finish(client: httpx.AsyncClient, verifier: str, success_href: str) -> dict[str, Any]:
+    code = await _extract_code(client, success_href)
+    return await _exchange_token(verifier, code)
+
+
+async def _push_login(email: str, ui: LoginUI) -> dict[str, Any]:
     last: Exception | None = None
     for attempt in range(3):
         if attempt:
@@ -330,18 +492,39 @@ async def sign_in(email: str, say: Say = _say) -> dict[str, Any]:
         verifier, challenge, state = _pkce()
         async with _client(follow_redirects=True, timeout=20) as client:
             try:
-                poll_href, handle, answer = await _begin_push(client, email, challenge, state)
-            except PushNotAvailable:
-                raise
+                idx = await _identify_for_push(client, email, challenge, state)
             except (LoginError, httpx.HTTPError, ValueError, KeyError) as exc:
                 last = exc
                 continue
-            say("")
-            say(f"Open Okta Verify on your phone and tap {answer}." if answer is not None else "Approve the push notification in Okta Verify on your phone.")
-            say("Waiting for approval...")
-            code = await _extract_code(client, await _poll_push(client, poll_href, handle))
-        return await _exchange_token(verifier, code)
+            return await _finish(client, verifier, await _approve_push(client, idx, ui))
     raise LoginError(f"Could not start the GreenLake sign-in: {last}")
+
+
+async def _password_login(email: str, ui: LoginUI) -> dict[str, Any]:
+    error: str | None = None
+    for _ in range(3):
+        password = await ui.password(email, error)
+        if not password:
+            raise LoginError("No password entered")
+        verifier, challenge, state = _pkce()
+        async with _client(follow_redirects=True, timeout=20) as client:
+            try:
+                href = await _password_sign_in(client, email, password, challenge, state, ui)
+            except WrongPassword as exc:
+                error = str(exc)
+                continue
+            return await _finish(client, verifier, href)
+    raise LoginError("Incorrect password three times")
+
+
+async def sign_in(email: str, ui: LoginUI) -> dict[str, Any]:
+    """Returns GreenLake's token response (kept in memory only)."""
+    if email.lower().endswith("@hpe.com"):
+        try:
+            return await _push_login(email, ui)
+        except PushNotAvailable:
+            ui.say("Okta Verify push is not set up for this account; signing in with your password instead.")
+    return await _password_login(email, ui)
 
 
 # ── Workspace, region and API client ──────────────────────────────────────────
@@ -421,7 +604,7 @@ def _ask_workspace(names: list[str]) -> str:
         _say("Not a unique match, try again.")
 
 
-def choose_workspace(workspaces: list[dict[str, Any]], wanted: str | None, ask: Callable[[list[str]], str] | None) -> dict[str, Any]:
+async def choose_workspace(workspaces: list[dict[str, Any]], wanted: str | None, ui: LoginUI) -> dict[str, Any]:
     names = [w.get("company_name", "") for w in workspaces]
     if wanted:
         found = _match_workspace(workspaces, wanted)
@@ -430,9 +613,11 @@ def choose_workspace(workspaces: list[dict[str, Any]], wanted: str | None, ask: 
         return found
     if len(workspaces) == 1:
         return workspaces[0]
-    if ask is None:
-        raise LoginError(f"Several workspaces ({', '.join(names)}); pass --workspace NAME")
-    return next(w for w in workspaces if w.get("company_name") == ask(names))
+    picked = await ui.workspace(names)
+    found = next((w for w in workspaces if w.get("company_name") == picked), None)
+    if not found:
+        raise LoginError(f"Workspace '{picked}' not found")
+    return found
 
 
 async def _resolve_region(access_token: str, ccs_session: str, wanted: str | None, say: Say) -> str:
@@ -523,19 +708,18 @@ def load_login() -> dict[str, Any]:
         return {}
 
 
-async def login(email: str, workspace: str | None = None, region: str | None = None, say: Say = _say,
-                ask: Callable[[list[str]], str] | None = None) -> dict[str, Any]:
-    token = await sign_in(email, say)
+async def login(email: str, ui: LoginUI, workspace: str | None = None, region: str | None = None) -> dict[str, Any]:
+    token = await sign_in(email, ui)
     access_token, id_token = token.get("access_token"), token.get("id_token")
     if not access_token or not id_token:
         raise LoginError("GreenLake returned no tokens")
-    say("Approved. Opening your workspace...")
+    ui.say("Signed in. Opening your workspace...")
     workspaces, ccs_session = await _init_workspace_session(access_token, id_token)
-    chosen = choose_workspace(workspaces, workspace, ask)
+    chosen = await choose_workspace(workspaces, workspace, ui)
     workspace_id, workspace_name = chosen["platform_customer_id"], chosen.get("company_name", "")
     ccs_session = await _load_workspace(access_token, workspace_id, ccs_session)
-    resolved = await _resolve_region(access_token, ccs_session, region, say)
-    say(f"Creating a GreenLake API client in '{workspace_name}' ({resolved})...")
+    resolved = await _resolve_region(access_token, ccs_session, region, ui.say)
+    ui.say(f"Creating a GreenLake API client in '{workspace_name}' ({resolved})...")
     api_client = await _create_api_client(access_token, ccs_session)
     data = {
         "client_id": api_client["client_id"],
@@ -551,14 +735,11 @@ async def login(email: str, workspace: str | None = None, region: str | None = N
     return data
 
 
-async def _verify(data: dict[str, Any], say: Say) -> None:
+async def server_count(data: dict[str, Any]) -> int | None:
+    """First Compute Ops Management call with the new API client."""
     account = ComAccount("com", data["client_id"], data["client_secret"], data["region"], "login")
-    try:
-        async with ComClient(account, transport=_transport) as client:
-            total = (await client.get("/servers", {"limit": 1})).get("total")
-        say(f"Compute Ops Management answers: {total} servers.")
-    except ComError as exc:
-        say(f"Saved, but the first Compute Ops Management call failed: {exc}\nTry `proliant-mcp --check --connect` in a minute.")
+    async with ComClient(account, transport=_transport) as client:
+        return (await client.get("/servers", {"limit": 1})).get("total")
 
 
 def run_login(email: str | None, workspace: str | None, region: str | None) -> int:
@@ -568,10 +749,12 @@ def run_login(email: str | None, workspace: str | None, region: str | None) -> i
             email = input(f"HPE GreenLake email{f' [{previous}]' if previous else ''}: ").strip() or previous
         if not email:
             raise LoginError("An email address is required")
-        data = asyncio.run(login(email, workspace, region, ask=_ask_workspace if sys.stdin.isatty() else None))
+        data = asyncio.run(login(email, TerminalUI(), workspace, region))
         _say(f"Logged in as {email}. Saved to {com_login_path()}")
-        _say("Restart your AI client so it picks this up.")
-        asyncio.run(_verify(data, _say))
+        try:
+            _say(f"Compute Ops Management answers: {asyncio.run(server_count(data))} servers.")
+        except ComError as exc:
+            _say(f"Saved, but the first Compute Ops Management call failed: {exc}\nTry `proliant-mcp --check --connect` in a minute.")
     except (LoginError, httpx.HTTPError) as exc:
         print(f"Login failed: {exc}", file=sys.stderr)
         return 1

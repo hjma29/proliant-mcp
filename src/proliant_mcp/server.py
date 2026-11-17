@@ -6,12 +6,13 @@ import asyncio
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
 import httpx
-from fastmcp import FastMCP
+import mcp_types
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, com, ilo, login, oneview
+from proliant_mcp import __version__, chat_login, com, ilo, login, oneview
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -26,7 +27,10 @@ Read-only tools for HPE compute management, across three sources:
 Start with list_servers: it returns the configured iLO server names, OneView appliances
 and COM accounts. For a fleet-wide question start with com_get_overview or
 oneview_get_appliance. The same physical server can appear in all three; match by
-serial number. If a tool returns an error, report it; never invent values."""
+serial number. If a tool returns an error, report it; never invent values.
+If a com_ tool says no COM account is configured or the COM login failed, call com_login:
+it signs the user in to HPE GreenLake with pop-ups in this chat. Never ask the user to type
+a password into the chat."""
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
@@ -78,7 +82,7 @@ def _pick(kind: str, items: dict[str, Any], name: str | None) -> Any:
         hint = (
             "Add a section with `type = oneview` (host/username/password) to the inventory file, or set ONEVIEW_HOST/ONEVIEW_USERNAME/ONEVIEW_PASSWORD."
             if kind == "OneView appliance"
-            else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or sign in once by running `proliant-mcp login` in a terminal (email + Okta Verify push)."
+            else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or sign the user in with the com_login tool (pop-ups in the chat)."
         )
         raise ToolError(f"No {kind} configured. {hint}")
     if not name:
@@ -298,6 +302,26 @@ async def com_api_get(
     if not path.startswith("/compute-ops-mgmt/") or ".." in path:
         raise ToolError("path must start with /compute-ops-mgmt/")
     return redact(await _com(account, lambda c: c.get(path)))
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Sign in to HPE GreenLake", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+    )
+)
+async def com_login(
+    ctx: Context,
+    email: Annotated[str | None, Field(description="Pre-fills the email pop-up; the user confirms or changes it.")] = None,
+    workspace: Annotated[str | None, Field(description="GreenLake workspace name; asked in a pop-up if omitted and the user has several.")] = None,
+    region: Annotated[Literal["us-west", "eu-central", "ap-northeast"] | None, Field(description="COM region; detected if omitted.")] = None,
+) -> dict[str, Any] | mcp_types.InputRequiredResult:
+    """Sign the user in to HPE GreenLake so the com_ tools work. Shows pop-ups in the chat:
+    the user's email, then for @hpe.com accounts the number to tap in Okta Verify, or for
+    other accounts (e.g. gmail.com) a secure local page with a masked password field. It then
+    creates a GreenLake API client for the read-only com_ tools and saves it on this computer.
+    Call it when a com_ tool says no COM account is configured or login failed, or when the
+    user asks to sign in. Never ask for the password in chat; the pop-ups collect everything."""
+    return await chat_login.com_login(ctx, email, workspace, region)
 
 
 # ── HPE OneView / Synergy ─────────────────────────────────────────────────────

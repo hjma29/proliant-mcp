@@ -17,15 +17,20 @@ Public repository. Read this before changing anything.
    no hardware or GreenLake account.
 4. Layout: `config.py` (inventory: iLOs, OneView appliances, COM accounts),
    `redfish.py` + `ilo.py` (iLO), `oneview.py` (OneView client + views),
-   `com.py` (COM client + views), `login.py` (`proliant-mcp login`, see below),
-   `server.py` (MCP tools only), `skills/`.
+   `com.py` (COM client + views), `login.py` (GreenLake sign-in engine),
+   `chat_login.py` (`com_login` tool: pop-ups), `server.py` (MCP tools only), `skills/`.
    COM/OneView logic is ported from proliant-cli (`proliant/com`,
    `proliant/oneview`); this repo returns JSON for AI agents, not tables.
    Tool names: iLO tools unprefixed, `com_*`, `oneview_*`.
-   `proliant-mcp login` is a terminal command, deliberately not an MCP tool: it
-   creates a GreenLake API client, so a person runs it. It ports proliant-cli's
-   email + Okta Verify push sign-in (undocumented web endpoints; keep the README
-   caveat) and stores only the API client in `~/.config/proliant-mcp/com/login.json`.
+   GreenLake sign-in (`login.py`) ports proliant-cli's `proliant com login`:
+   `@hpe.com` -> Okta Verify push (password fallback), other emails -> password
+   (+ push if Okta asks). It uses undocumented web endpoints (keep the README
+   caveat) and stores only the API client it creates, in
+   `~/.config/proliant-mcp/com/login.json`. Two front ends share it through
+   `LoginUI`: `com_login` (MCP elicitation; must work on both 2025-11-25 live
+   pop-ups and 2026-07-28 `InputRequiredResult` rounds, test both) and the
+   `proliant-mcp login` terminal command. Passwords never go through a form
+   elicitation or the AI: URL-mode elicitation to a one-time 127.0.0.1 page.
 5. **Releases** (proliant-cli style, no binaries): the version lives only in
    `pyproject.toml`. For each customer-visible change add a line under a
    `## vX.Y.Z — YYYY-MM-DD` section of `CHANGELOG.md` (New Features /

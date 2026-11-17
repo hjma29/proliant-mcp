@@ -21,7 +21,7 @@ Synergy Composer2 running OneView 11.10, and COM (`us-west`). The COM and OneVie
 logic comes from [proliant-cli](https://github.com/hjma29/proliant-cli), the
 human-facing CLI for the same three sources.
 
-> Status: **v0.3, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
+> Status: **v0.4, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Tools
 
@@ -55,6 +55,7 @@ human-facing CLI for the same three sources.
 | `com_list_groups` | Server groups, members and firmware / iLO-settings compliance |
 | `com_list_firmware_bundles` | SPPs and patch bundles available in COM |
 | `com_api_get` | Raw read-only GET of any `/compute-ops-mgmt/...` resource (secrets redacted) |
+| `com_login` | Sign in to HPE GreenLake with pop-ups in the chat (email, then Okta Verify number or a secure password page) |
 
 ### HPE OneView / Synergy
 
@@ -70,7 +71,8 @@ human-facing CLI for the same three sources.
 | `oneview_list_firmware_baselines` | SPP / Synergy Service Packs uploaded to OneView |
 | `oneview_rest_get` | Raw read-only GET of any `/rest/...` resource (sessions and users blocked, secrets redacted) |
 
-Every tool is annotated `readOnlyHint`.
+Every tool except `com_login` is annotated `readOnlyHint`; `com_login` creates a GreenLake API
+client for the signed-in user (see Configure > HPE Compute Ops Management) and changes no server.
 
 ## Install
 
@@ -85,7 +87,7 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 29 tools` and `(up to date)`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 30 tools` and `(up to date)`):
 
 ```powershell
 uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check
@@ -136,7 +138,7 @@ using the copy it cached first, however many releases come out.
 - **Which version am I on:** `--check` prints it, plus the latest release and
   `UPDATE AVAILABLE` if you are behind.
 - **Pin a version** (no surprise changes; you upgrade by editing the version):
-  `https://github.com/hjma29/proliant-mcp/releases/download/v0.3.0/proliant-mcp.tar.gz`.
+  `https://github.com/hjma29/proliant-mcp/releases/download/v0.4.0/proliant-mcp.tar.gz`.
   A pinned URL never changes, so `--refresh-package` is not needed.
 - **Unreleased changes** from `main`:
   `https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip` (with `--refresh-package`).
@@ -214,25 +216,34 @@ environment variables: `ONEVIEW_HOST`, `ONEVIEW_USERNAME`, `ONEVIEW_PASSWORD`
 
 ### HPE Compute Ops Management
 
-**Sign in with your email** (easiest): run this once in a terminal on the machine that runs the server.
+**Sign in from the chat** (easiest): ask your assistant to *"sign in to HPE GreenLake"*, or just
+ask a COM question; it calls the `com_login` tool, which shows pop-ups in the chat:
+
+1. Your HPE GreenLake email.
+2. **`@hpe.com` accounts:** the number to tap in **Okta Verify** on your phone.
+   **Other accounts (e.g. gmail.com):** a sign-in page opens with a masked password field. The page
+   is served by proliant-mcp on your own computer (`127.0.0.1`), so the password goes straight to
+   it, never through the AI client or model. If Okta also wants a push, the number pop-up follows.
+3. Which workspace, if you have several. The COM region is detected.
+
+It then creates a temporary GreenLake API client (`GLP-proliant-mcp-<host>-...`) in that workspace
+and saves its ID and secret to `~/.config/proliant-mcp/com/login.json` (readable only by you). The
+`com_*` tools use it straight away, no restart. Your email, password and session are never stored.
+Signing in again replaces this computer's previous client.
+
+This needs an AI client that supports MCP pop-ups (elicitation), such as VS Code with GitHub
+Copilot. Otherwise run the same sign-in in a terminal:
 
 ```bash
 uvx --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp login
 ```
 
-It asks for your HPE GreenLake email, shows a number to tap in **Okta Verify** on your phone,
-asks which workspace if you have several, then creates a temporary GreenLake API client in that
-workspace and saves its ID and secret to `~/.config/proliant-mcp/com/login.json` (readable only by
-you). The COM region is detected. Restart your AI client afterwards. Your email, password and
-session are never stored, and the client is only used for the read-only COM tools.
-`proliant-mcp logout` forgets the saved login; delete the `GLP-proliant-mcp-...` API client under
-**Manage Workspace > API** if you no longer need it. Options: `--email`, `--workspace NAME`,
-`--region us-west|eu-central|ap-northeast`.
+(`--email`, `--workspace NAME`, `--region us-west|eu-central|ap-northeast`; `proliant-mcp logout`
+forgets the saved login, and you can delete the API client under **Manage Workspace > API**.)
 
-This needs an account that signs in to GreenLake with an Okta Verify push, and permission to create
-API clients. It uses the same sign-in as the GreenLake web page, which HPE does not publish as an
-API, so use an API client (below) for unattended or shared setups, SSO-federated accounts, or if
-HPE changes the sign-in.
+The account needs permission to create API clients in the workspace. The sign-in is the same one
+the GreenLake web page uses, which HPE does not publish as an API, so for unattended or shared
+setups, or if HPE changes the sign-in, use an API client instead:
 
 **Or use an API client.** In HPE GreenLake open **Manage Workspace > API**, create a personal API
 client for the Compute Ops Management service in your region with a Compute Ops Management role (an

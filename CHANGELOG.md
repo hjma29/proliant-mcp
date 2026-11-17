@@ -6,6 +6,17 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.4.0 — 2026-11-17
+
+### New Features
+- `com_login` tool: sign in to HPE GreenLake from the AI chat with pop-ups (MCP elicitation). It asks for your email. For `@hpe.com` accounts it shows the number to tap in Okta Verify, falling back to the password when push isn't set up. Other accounts (e.g. gmail.com) type their password into a masked field on a one-time sign-in page served by proliant-mcp on `127.0.0.1`, so the password never passes through the AI client or model. If Okta also wants a push, the number pop-up follows. When you have several workspaces it asks which one. The `com_*` tools use the new login immediately, with no restart. Works with clients on MCP 2025-11-25 (live pop-ups) and 2026-07-28 (input-required rounds).
+- `proliant-mcp login` (terminal) now signs in non-HPE accounts with their password, the same way as proliant-cli.
+
+### Enhancements
+- When no COM account is configured or the COM login fails, the assistant is told to call `com_login`.
+
+---
+
 ## v0.3.0 — 2026-11-17
 
 ### New Features
