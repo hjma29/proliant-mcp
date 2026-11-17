@@ -6,6 +6,17 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.3.0 — 2026-11-17
+
+### New Features
+- `proliant-mcp login`: sign in to HPE GreenLake with your email and an Okta Verify push (tap the number shown), with no API client to create by hand. It creates a temporary GreenLake API client in the chosen workspace, detects the Compute Ops Management region, saves the client to `~/.config/proliant-mcp/com/login.json` (owner-only) and checks that COM answers. Options: `--email`, `--workspace`, `--region`. `proliant-mcp logout` removes the saved login.
+- The saved login is used when no COM account is configured in the inventory or environment, ahead of proliant-cli's COM login.
+
+### Enhancements
+- A missing or rejected COM login now tells you to run `proliant-mcp login`.
+
+---
+
 ## v0.2.0 — 2026-11-17
 
 ### New Features

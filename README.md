@@ -21,7 +21,7 @@ Synergy Composer2 running OneView 11.10, and COM (`us-west`). The COM and OneVie
 logic comes from [proliant-cli](https://github.com/hjma29/proliant-cli), the
 human-facing CLI for the same three sources.
 
-> Status: **v0.2, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
+> Status: **v0.3, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Tools
 
@@ -136,7 +136,7 @@ using the copy it cached first, however many releases come out.
 - **Which version am I on:** `--check` prints it, plus the latest release and
   `UPDATE AVAILABLE` if you are behind.
 - **Pin a version** (no surprise changes; you upgrade by editing the version):
-  `https://github.com/hjma29/proliant-mcp/releases/download/v0.2.0/proliant-mcp.tar.gz`.
+  `https://github.com/hjma29/proliant-mcp/releases/download/v0.3.0/proliant-mcp.tar.gz`.
   A pinned URL never changes, so `--refresh-package` is not needed.
 - **Unreleased changes** from `main`:
   `https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip` (with `--refresh-package`).
@@ -214,15 +214,34 @@ environment variables: `ONEVIEW_HOST`, `ONEVIEW_USERNAME`, `ONEVIEW_PASSWORD`
 
 ### HPE Compute Ops Management
 
-COM needs a GreenLake **API client** with a Compute Ops Management role (an
-observer role is enough for these read-only tools). In HPE GreenLake open
-**Manage Workspace > API**, create a personal API client for the Compute Ops
-Management service in your region, and copy the client ID and secret. Region is
-`us-west`, `eu-central` or `ap-northeast`.
+**Sign in with your email** (easiest): run this once in a terminal on the machine that runs the server.
 
-Put it in the inventory (`type = com`) or set `HPECOM_CLIENT_ID`,
-`HPECOM_CLIENT_SECRET` and `HPECOM_REGION`. If neither is set and you already
-use proliant-cli, its COM login (`proliant com login`) is reused automatically.
+```bash
+uvx --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp login
+```
+
+It asks for your HPE GreenLake email, shows a number to tap in **Okta Verify** on your phone,
+asks which workspace if you have several, then creates a temporary GreenLake API client in that
+workspace and saves its ID and secret to `~/.config/proliant-mcp/com/login.json` (readable only by
+you). The COM region is detected. Restart your AI client afterwards. Your email, password and
+session are never stored, and the client is only used for the read-only COM tools.
+`proliant-mcp logout` forgets the saved login; delete the `GLP-proliant-mcp-...` API client under
+**Manage Workspace > API** if you no longer need it. Options: `--email`, `--workspace NAME`,
+`--region us-west|eu-central|ap-northeast`.
+
+This needs an account that signs in to GreenLake with an Okta Verify push, and permission to create
+API clients. It uses the same sign-in as the GreenLake web page, which HPE does not publish as an
+API, so use an API client (below) for unattended or shared setups, SSO-federated accounts, or if
+HPE changes the sign-in.
+
+**Or use an API client.** In HPE GreenLake open **Manage Workspace > API**, create a personal API
+client for the Compute Ops Management service in your region with a Compute Ops Management role (an
+observer role is enough for these read-only tools), and copy the client ID and secret. Region is
+`us-west`, `eu-central` or `ap-northeast`. Put it in the inventory (`type = com`) or set
+`HPECOM_CLIENT_ID`, `HPECOM_CLIENT_SECRET` and `HPECOM_REGION`.
+
+Order of use: inventory / environment variables, then the saved `proliant-mcp login`, then
+proliant-cli's COM login (`proliant com login`), which is reused automatically if you have it.
 
 ## Test it
 

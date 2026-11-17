@@ -11,7 +11,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, com, ilo, oneview
+from proliant_mcp import __version__, com, ilo, login, oneview
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -78,7 +78,7 @@ def _pick(kind: str, items: dict[str, Any], name: str | None) -> Any:
         hint = (
             "Add a section with `type = oneview` (host/username/password) to the inventory file, or set ONEVIEW_HOST/ONEVIEW_USERNAME/ONEVIEW_PASSWORD."
             if kind == "OneView appliance"
-            else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or run `proliant com login`."
+            else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or sign in once by running `proliant-mcp login` in a terminal (email + Okta Verify push)."
         )
         raise ToolError(f"No {kind} configured. {hint}")
     if not name:
@@ -474,12 +474,20 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(prog="proliant-mcp", description=__doc__)
+    parser.add_argument("command", nargs="?", choices=["login", "logout"], help="login: sign in to HPE GreenLake with your email and an Okta Verify push (creates the API client for you); logout: forget that login")
+    parser.add_argument("--email", help="with login: your GreenLake email (asked if omitted)")
+    parser.add_argument("--workspace", help="with login: workspace name (asked if you have several)")
+    parser.add_argument("--region", choices=["us-west", "eu-central", "ap-northeast"], help="with login: Compute Ops Management region (detected if omitted)")
     parser.add_argument("--check", action="store_true", help="print version, tool count and configured iLOs, OneView appliances and COM accounts, then exit")
     parser.add_argument("--connect", action="store_true", help="with --check: also log in to each iLO, OneView appliance and COM account")
     parser.add_argument("--http", action="store_true", help="serve streamable HTTP instead of stdio")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="HTTP port (default 8000)")
     args = parser.parse_args()
+    if args.command == "login":
+        raise SystemExit(login.run_login(args.email, args.workspace, args.region))
+    if args.command == "logout":
+        raise SystemExit(login.run_logout())
     if args.check:
         raise SystemExit(asyncio.run(_check(args.connect)))
     if args.http:

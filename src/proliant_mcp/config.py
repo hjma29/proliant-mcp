@@ -33,9 +33,11 @@ Environment variables add one more of each: ``ILO_HOST`` / ``ILO_USERNAME`` /
 ``ONEVIEW_PASSWORD`` (name ``ONEVIEW_NAME``) and ``HPECOM_CLIENT_ID`` /
 ``HPECOM_CLIENT_SECRET`` / ``HPECOM_REGION``.
 
-When no COM account is configured either way, proliant-cli's own COM login is
-reused: ``~/.config/proliant-cli/com/credentials.yml`` or the GreenLake API
-client that ``proliant com login`` stores in ``~/.config/proliant-cli/com/token.json``.
+When no COM account is configured either way, the login saved by
+``proliant-mcp login`` (``~/.config/proliant-mcp/com/login.json``) is used, then
+proliant-cli's own COM login: ``~/.config/proliant-cli/com/credentials.yml`` or the
+GreenLake API client that ``proliant com login`` stores in
+``~/.config/proliant-cli/com/token.json``.
 """
 
 from __future__ import annotations
@@ -206,6 +208,22 @@ def load_oneview(path: Path | None = None) -> dict[str, OneViewAppliance]:
     return appliances
 
 
+def com_login_path() -> Path:
+    return _home_config("proliant-mcp", "com", "login.json")
+
+
+def _saved_com_login() -> ComAccount | None:
+    """The API client that `proliant-mcp login` created."""
+    path = com_login_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not (data.get("client_id") and data.get("client_secret")):
+        return None
+    return ComAccount("com", data["client_id"], data["client_secret"], data.get("region") or "us-west", str(path), data.get("workspace", ""))
+
+
 def _proliant_cli_com() -> ComAccount | None:
     """Reuse proliant-cli's COM login (API client file, or the client `proliant com login` stored)."""
     com_dir = _home_config("proliant-cli", "com")
@@ -242,7 +260,7 @@ def load_com(path: Path | None = None) -> dict[str, ComAccount]:
         accounts["com"] = ComAccount("com", cid, secret, os.environ.get("HPECOM_REGION", "us-west"), "environment")
 
     if not accounts:
-        fallback = _proliant_cli_com()
+        fallback = _saved_com_login() or _proliant_cli_com()
         if fallback:
             accounts[fallback.name] = fallback
     return accounts
