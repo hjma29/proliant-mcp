@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
+import httpx
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import com, ilo, oneview
+from proliant_mcp import __version__, com, ilo, oneview
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -35,7 +36,9 @@ ApplianceName = Annotated[str | None, Field(description="OneView appliance name 
 AccountName = Annotated[str | None, Field(description="COM account name from list_servers; omit to use the first one.")]
 Limit = Annotated[int, Field(ge=1, le=1000)]
 
-mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS)
+mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS, version=__version__)
+
+LATEST_RELEASE_API = "https://api.github.com/repos/hjma29/proliant-mcp/releases/latest"
 
 # Tests swap this to inject fake iLO / OneView / COM endpoints (httpx.MockTransport).
 _transport = None
@@ -383,11 +386,38 @@ async def oneview_rest_get(
     return redact(await _ov(appliance, lambda c: c.get(path)))
 
 
+def _version_tuple(v: str) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(p) for p in v.lstrip("v").split("."))
+    except ValueError:
+        return None
+
+
+async def _release_status() -> str:
+    """One line comparing this version with the latest GitHub release (best effort)."""
+    try:
+        async with httpx.AsyncClient(timeout=5, transport=_transport, follow_redirects=True) as client:
+            resp = await client.get(LATEST_RELEASE_API, headers={"Accept": "application/vnd.github+json"})
+            if resp.status_code == 404:
+                return "latest release: none published yet"
+            resp.raise_for_status()
+            latest = resp.json()["tag_name"]
+    except (httpx.HTTPError, KeyError, ValueError):
+        return "latest release: unknown (cannot reach GitHub)"
+    mine, theirs = _version_tuple(__version__), _version_tuple(latest)
+    if mine is None or theirs is None:
+        return f"latest release: {latest}"
+    if mine == theirs:
+        return f"latest release: {latest} (up to date)"
+    if mine > theirs:
+        return f"latest release: {latest} (this build is newer, unreleased)"
+    return f"latest release: {latest}  UPDATE AVAILABLE (see README: Update)"
+
+
 async def _check(connect: bool) -> int:
     """Self-test for installers: version, tools, config, and optionally a login to each target."""
-    from proliant_mcp import __version__
-
     print(f"proliant-mcp {__version__}: {len(await mcp.list_tools())} tools")
+    print(await _release_status())
     try:
         servers, appliances, accounts = load_servers(), load_oneview(), load_com()
     except FileNotFoundError as exc:

@@ -21,3 +21,12 @@ Public repository. Read this before changing anything.
    COM/OneView logic is ported from proliant-cli (`proliant/com`,
    `proliant/oneview`); this repo returns JSON for AI agents, not tables.
    Tool names: iLO tools unprefixed, `com_*`, `oneview_*`.
+5. **Releases** (proliant-cli style, no binaries): the version lives only in
+   `pyproject.toml`. For each customer-visible change add a line under a
+   `## vX.Y.Z — YYYY-MM-DD` section of `CHANGELOG.md` (New Features /
+   Enhancements / Bug Fixes). To release: bump `pyproject.toml`, run
+   `uv lock`, commit and push, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+   `.github/workflows/release.yml` checks the tag matches `pyproject.toml`,
+   runs the tests, publishes the release with that CHANGELOG section and
+   `proliant-mcp.tar.gz`, and installs it on Windows/Linux/macOS. Customers
+   on the `releases/latest` URL get it on their next AI client restart.

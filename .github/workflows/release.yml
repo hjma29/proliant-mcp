@@ -1,0 +1,74 @@
+name: Release
+
+# Push a tag vX.Y.Z (matching pyproject.toml and a "## vX.Y.Z" section in CHANGELOG.md)
+# to publish a GitHub release with those notes and a proliant-mcp.tar.gz that uvx installs.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Tag must match pyproject.toml version
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pyproject.toml version $VERSION"
+            exit 1
+          fi
+
+      - name: Tests
+        run: uv sync && uv run pytest -q
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          awk -v v="## v${VERSION} " 'index($0, v)==1 {found=1; next} found && /^## v/ {exit} found && !/^---$/ {print}' \
+            CHANGELOG.md > release_notes.md
+          if ! grep -q '[^[:space:]]' release_notes.md; then
+            echo "::error::CHANGELOG.md has no '## v${VERSION} ' section"
+            exit 1
+          fi
+          cat release_notes.md
+
+      - name: Build package
+        run: |
+          uv build --sdist
+          cp dist/proliant_mcp-*.tar.gz dist/proliant-mcp.tar.gz
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/proliant-mcp.tar.gz \
+            --title "$GITHUB_REF_NAME" --notes-file release_notes.md --verify-tag
+
+  # What a customer does after a release: install from the release URLs on a clean machine.
+  verify:
+    needs: release
+    name: install release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: astral-sh/setup-uv@v6
+      - name: Pinned and latest release URLs install this version
+        shell: pwsh
+        run: |
+          $want = "proliant-mcp $($env:GITHUB_REF_NAME.TrimStart('v')):"
+          foreach ($url in @(
+              "https://github.com/${{ github.repository }}/releases/download/$env:GITHUB_REF_NAME/proliant-mcp.tar.gz",
+              "https://github.com/${{ github.repository }}/releases/latest/download/proliant-mcp.tar.gz")) {
+            $out = uvx --refresh-package proliant-mcp --from $url proliant-mcp --check | Out-String
+            Write-Output $out
+            if (-not $out.Contains($want)) { throw "$url did not install $want" }
+          }

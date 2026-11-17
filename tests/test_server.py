@@ -107,7 +107,9 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
 
 async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert await srv._check(connect=False) == 0
-    assert "29 tools" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "29 tools" in out
+    assert "latest release:" in out
 
     assert await srv._check(connect=True) == 1
     out = capsys.readouterr().out
@@ -117,6 +119,26 @@ async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert "ov-badpass  192.0.2.100  FAILED" in out
     assert "greenlake  us-west  OK  2 servers" in out
     assert "good" not in out
+
+
+@pytest.mark.parametrize(
+    ("installed", "status", "expected"),
+    [
+        ("0.2.0", 200, "UPDATE AVAILABLE"),
+        ("0.10.0", 200, "(up to date)"),
+        ("0.11.0", 200, "newer, unreleased"),
+        ("0.2.0", 404, "none published yet"),
+        ("0.2.0", 503, "unknown"),
+    ],
+)
+async def test_check_compares_with_latest_github_release(monkeypatch, installed, status, expected):
+    def github(request: httpx.Request) -> httpx.Response:
+        assert request.url == srv.LATEST_RELEASE_API
+        return httpx.Response(status, json={"tag_name": "v0.10.0"})
+
+    monkeypatch.setattr(srv, "_transport", httpx.MockTransport(github))
+    monkeypatch.setattr(srv, "__version__", installed)
+    assert expected in await srv._release_status()
 
 
 async def test_com_overview_counts_only_uncleared_alerts_across_pages(mcp_client, monkeypatch):

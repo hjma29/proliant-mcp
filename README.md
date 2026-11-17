@@ -21,7 +21,7 @@ Synergy Composer2 running OneView 11.10, and COM (`us-west`). The COM and OneVie
 logic comes from [proliant-cli](https://github.com/hjma29/proliant-cli), the
 human-facing CLI for the same three sources.
 
-> Status: **v0.2, read-only.** Nothing in this version changes a server.
+> Status: **v0.2, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Tools
 
@@ -85,23 +85,23 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp 0.2.0: 29 tools`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 29 tools` and `(up to date)`):
 
 ```powershell
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
+uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check
 ```
 
 ### macOS / Linux
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
+uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check
 ```
 
 Configure at least one iLO, OneView appliance or COM account (next section), then check that each one accepts the login:
 
 ```bash
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check --connect
+uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check --connect
 ```
 
 It prints each iLO (model, iLO version), OneView appliance (model, software version) and
@@ -114,14 +114,33 @@ VS Code / GitHub Copilot (**MCP: Open User Configuration**), Claude Desktop
 
 ```json
 {"servers": {"proliant": {"type": "stdio", "command": "uvx",
-  "args": ["--from", "https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip", "proliant-mcp"]}}}
+  "args": ["--refresh-package", "proliant-mcp", "--from",
+           "https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz",
+           "proliant-mcp"]}}}
 ```
 
 Claude Desktop uses the top-level key `mcpServers` instead of `servers`. Credentials come from
 your inventory file (next section), so none go in this JSON. If the client cannot find `uvx`,
 restart it after installing uv, or use the full path (`%USERPROFILE%\.local\bin\uvx.exe`).
 
-To pin a version instead of `main`, use a release or commit archive URL.
+### Update
+
+The command above always runs the **latest release**: `--refresh-package` makes `uvx`
+check for a new release each time the AI client starts the server (it costs a fraction of
+a second when nothing changed). To update, **restart the AI client** (in VS Code:
+**MCP: List Servers > proliant > Restart**). Without `--refresh-package`, `uvx` keeps
+using the copy it cached first, however many releases come out.
+
+- **What's new:** [CHANGELOG.md](CHANGELOG.md) and the
+  [releases page](https://github.com/hjma29/proliant-mcp/releases).
+- **Which version am I on:** `--check` prints it, plus the latest release and
+  `UPDATE AVAILABLE` if you are behind.
+- **Pin a version** (no surprise changes; you upgrade by editing the version):
+  `https://github.com/hjma29/proliant-mcp/releases/download/v0.2.0/proliant-mcp.tar.gz`.
+  A pinned URL never changes, so `--refresh-package` is not needed.
+- **Unreleased changes** from `main`:
+  `https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip` (with `--refresh-package`).
+
 To hack on it: `git clone https://github.com/hjma29/proliant-mcp && cd proliant-mcp && uv sync && uv run pytest`.
 
 ## Configure
