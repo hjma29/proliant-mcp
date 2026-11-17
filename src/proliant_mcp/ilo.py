@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from hpe_compute_mcp.redfish import RedfishClient, RedfishError
+from proliant_mcp.redfish import RedfishClient, RedfishError
 
 
 def _hpe(resource: dict[str, Any]) -> dict[str, Any]:

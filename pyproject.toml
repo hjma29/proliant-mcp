@@ -1,5 +1,5 @@
 [project]
-name = "hpe-compute-mcp"
+name = "proliant-mcp"
 version = "0.2.0"
 description = "MCP server for HPE compute: read-only tools for ProLiant iLO (Redfish), HPE Compute Ops Management (GreenLake) and HPE OneView / Synergy"
 readme = "README.md"
@@ -13,12 +13,10 @@ dependencies = [
 ]
 
 [project.scripts]
-hpe-compute-mcp = "hpe_compute_mcp.server:main"
-# Older name, kept so existing MCP client configs keep working.
-proliant-mcp = "hpe_compute_mcp.server:main"
+proliant-mcp = "proliant_mcp.server:main"
 
 [project.urls]
-Repository = "https://github.com/hjma29/hpe-compute-mcp"
+Repository = "https://github.com/hjma29/proliant-mcp"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.12"]

@@ -1,4 +1,4 @@
-# HPE Compute MCP server
+# proliant-mcp
 
 An [MCP](https://modelcontextprotocol.io) server for **HPE compute**, built with
 [FastMCP](https://gofastmcp.com). It gives AI assistants and agents (GitHub
@@ -85,23 +85,23 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `hpe-compute-mcp 0.2.0: 29 tools`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp 0.2.0: 29 tools`):
 
 ```powershell
-uvx --from https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip hpe-compute-mcp --check
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
 ```
 
 ### macOS / Linux
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip hpe-compute-mcp --check
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
 ```
 
 Configure at least one iLO, OneView appliance or COM account (next section), then check that each one accepts the login:
 
 ```bash
-uvx --from https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip hpe-compute-mcp --check --connect
+uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check --connect
 ```
 
 It prints each iLO (model, iLO version), OneView appliance (model, software version) and
@@ -113,8 +113,8 @@ VS Code / GitHub Copilot (**MCP: Open User Configuration**), Claude Desktop
 (**Settings > Developer > Edit Config**) and other clients all take the same command:
 
 ```json
-{"servers": {"hpe-compute": {"type": "stdio", "command": "uvx",
-  "args": ["--from", "https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip", "hpe-compute-mcp"]}}}
+{"servers": {"proliant": {"type": "stdio", "command": "uvx",
+  "args": ["--from", "https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip", "proliant-mcp"]}}}
 ```
 
 Claude Desktop uses the top-level key `mcpServers` instead of `servers`. Credentials come from
@@ -122,7 +122,7 @@ your inventory file (next section), so none go in this JSON. If the client canno
 restart it after installing uv, or use the full path (`%USERPROFILE%\.local\bin\uvx.exe`).
 
 To pin a version instead of `main`, use a release or commit archive URL.
-To hack on it: `git clone https://github.com/hjma29/hpe-compute-mcp && cd hpe-compute-mcp && uv sync && uv run pytest`.
+To hack on it: `git clone https://github.com/hjma29/proliant-mcp && cd proliant-mcp && uv sync && uv run pytest`.
 
 ## Configure
 
@@ -134,8 +134,8 @@ and OneView appliance over HTTPS (443), and `*.api.greenlake.hpe.com` /
 ### Inventory file
 
 Copy [examples/inventory.example.ini](examples/inventory.example.ini) to
-`~/.config/hpe-compute-mcp/inventory.ini` (Windows: `%USERPROFILE%\.config\hpe-compute-mcp\inventory.ini`),
-fill it in, and restrict it to your user. Or point `HPE_COMPUTE_MCP_CONFIG` at any path.
+`~/.config/proliant-mcp/inventory.ini` (Windows: `%USERPROFILE%\.config\proliant-mcp\inventory.ini`),
+fill it in, and restrict it to your user. Or point `PROLIANT_MCP_CONFIG` at any path.
 The file can be saved by Notepad or PowerShell (UTF-8 or UTF-16).
 
 ```ini
@@ -164,18 +164,17 @@ Keep comments on their own lines; a `#` or `;` after a value becomes part of the
 
 ```powershell
 # Windows: create, edit, then lock to your user
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.config\hpe-compute-mcp" | Out-Null
-notepad "$env:USERPROFILE\.config\hpe-compute-mcp\inventory.ini"
-icacls "$env:USERPROFILE\.config\hpe-compute-mcp\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.config\proliant-mcp" | Out-Null
+notepad "$env:USERPROFILE\.config\proliant-mcp\inventory.ini"
+icacls "$env:USERPROFILE\.config\proliant-mcp\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
 ```
 
 ```bash
 # macOS / Linux
-chmod 600 ~/.config/hpe-compute-mcp/inventory.ini
+chmod 600 ~/.config/proliant-mcp/inventory.ini
 ```
 
-Older locations still work: `~/.config/proliant-mcp/inventory.ini`, `PROLIANT_MCP_CONFIG`, and a
-[proliant-cli](https://github.com/hjma29/proliant-cli) inventory at `~/.config/proliant-cli/inventory.ini`.
+A [proliant-cli](https://github.com/hjma29/proliant-cli) inventory at `~/.config/proliant-cli/inventory.ini` is also read.
 
 ### iLO
 
@@ -220,17 +219,17 @@ through a real MCP client. No hardware or GreenLake account needed.
 ### 2. From the terminal
 
 ```bash
-uv run fastmcp list src/hpe_compute_mcp/server.py                     # tools and schemas
-uv run fastmcp call src/hpe_compute_mcp/server.py list_servers
-uv run fastmcp call src/hpe_compute_mcp/server.py get_ilo_info server=dl380-gen11
-uv run fastmcp call src/hpe_compute_mcp/server.py com_get_overview
-uv run fastmcp call src/hpe_compute_mcp/server.py oneview_list_alerts
+uv run fastmcp list src/proliant_mcp/server.py                     # tools and schemas
+uv run fastmcp call src/proliant_mcp/server.py list_servers
+uv run fastmcp call src/proliant_mcp/server.py get_ilo_info server=dl380-gen11
+uv run fastmcp call src/proliant_mcp/server.py com_get_overview
+uv run fastmcp call src/proliant_mcp/server.py oneview_list_alerts
 ```
 
 ### 3. MCP Inspector (web UI)
 
 ```bash
-npx @modelcontextprotocol/inspector uv run --directory "$PWD" hpe-compute-mcp
+npx @modelcontextprotocol/inspector uv run --directory "$PWD" proliant-mcp
 ```
 
 Open the printed URL, click **Connect**, then **Tools** to call each tool by hand.
@@ -238,7 +237,7 @@ Open the printed URL, click **Connect**, then **Tools** to call each tool by han
 ### 4. VS Code / GitHub Copilot
 
 Open this folder in VS Code. [.vscode/mcp.json](.vscode/mcp.json) registers
-the server as `hpe-compute`; start it from the MCP view (or the code lens in that
+the server as `proliant`; start it from the MCP view (or the code lens in that
 file), switch Copilot Chat to **Agent** mode, and ask:
 
 - "Give me a COM fleet health report. Which servers need attention and why?"
@@ -253,14 +252,12 @@ To use it from any workspace, add the same entry to your user MCP config
 with an absolute path in `--directory`.
 
 Claude Desktop / Claude Code / other clients use the same command:
-`uv run --directory /path/to/hpe-compute-mcp hpe-compute-mcp`.
-
-The old command name `proliant-mcp` still works, so existing client configs keep running.
+`uv run --directory /path/to/proliant-mcp proliant-mcp`.
 
 ### 5. Over HTTP
 
 ```bash
-uv run hpe-compute-mcp --http --host 127.0.0.1 --port 8000   # endpoint: http://127.0.0.1:8000/mcp
+uv run proliant-mcp --http --host 127.0.0.1 --port 8000   # endpoint: http://127.0.0.1:8000/mcp
 ```
 
 The HTTP endpoint has **no authentication**. Keep it on localhost or a

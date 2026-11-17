@@ -1,12 +1,12 @@
 ---
 name: proliant-ilo
-description: "Read HPE ProLiant server state through the hpe-compute-mcp iLO tools: identity, power/POST state, health, iLO version and license, firmware, CPUs/GPUs, memory, storage, NICs with LLDP neighbors, and IML/iLO event logs. Use for questions like 'what iLO version is on X', 'which servers have GPUs', 'is the server healthy', 'what switch port is this NIC on', 'show recent hardware errors', or a fleet firmware audit."
+description: "Read HPE ProLiant server state through the proliant-mcp iLO tools: identity, power/POST state, health, iLO version and license, firmware, CPUs/GPUs, memory, storage, NICs with LLDP neighbors, and IML/iLO event logs. Use for questions like 'what iLO version is on X', 'which servers have GPUs', 'is the server healthy', 'what switch port is this NIC on', 'show recent hardware errors', or a fleet firmware audit."
 ---
 
-# ProLiant iLO (hpe-compute-mcp)
+# ProLiant iLO (proliant-mcp)
 
 All data comes live from each server's iLO Redfish API through the
-`hpe-compute-mcp` MCP server. Every tool is read-only. For fleet-wide
+`proliant-mcp` MCP server. Every tool is read-only. For fleet-wide
 questions through Compute Ops Management or OneView, use the
 `hpe-compute-fleet` skill.
 

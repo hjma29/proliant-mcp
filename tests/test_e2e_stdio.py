@@ -1,4 +1,4 @@
-"""End to end: launch the real `hpe-compute-mcp` process over stdio against a local fake iLO."""
+"""End to end: launch the real `proliant-mcp` process over stdio against a local fake iLO."""
 
 from __future__ import annotations
 
@@ -53,10 +53,10 @@ async def test_stdio_process_serves_tools(fake_ilo_url, tmp_path):
     empty_inventory.write_text("")
     transport = StdioTransport(
         command=sys.executable,
-        args=["-m", "hpe_compute_mcp"],
+        args=["-m", "proliant_mcp"],
         env={
             "ILO_HOST": fake_ilo_url, "ILO_NAME": "lab", "ILO_PASSWORD": "good",
-            "HPE_COMPUTE_MCP_CONFIG": str(empty_inventory), "HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
+            "PROLIANT_MCP_CONFIG": str(empty_inventory), "HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
         },
         keep_alive=False,
     )

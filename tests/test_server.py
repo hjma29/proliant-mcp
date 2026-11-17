@@ -9,8 +9,8 @@ from fastmcp.exceptions import ToolError
 
 from fake_ilo import fake_ilo
 from fake_mgmt import fake_mgmt
-from hpe_compute_mcp import com
-from hpe_compute_mcp import server as srv
+from proliant_mcp import com
+from proliant_mcp import server as srv
 
 
 def _fake(request: httpx.Request) -> httpx.Response:
@@ -28,10 +28,10 @@ def mcp_client(tmp_path, monkeypatch):
         "[ov-badpass]\nhost = 192.0.2.100\ntype = oneview\npassword = wrong\n\n"
         "[greenlake]\ntype = com\nclient_id = cid\nclient_secret = csecret\nregion = us-west\n"
     )
-    monkeypatch.setenv("HPE_COMPUTE_MCP_CONFIG", str(ini))
+    monkeypatch.setenv("PROLIANT_MCP_CONFIG", str(ini))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    for var in ("ILO_HOST", "ONEVIEW_HOST", "HPECOM_CLIENT_ID", "HPECOM_CLIENT_SECRET", "PROLIANT_MCP_CONFIG"):
+    for var in ("ILO_HOST", "ONEVIEW_HOST", "HPECOM_CLIENT_ID", "HPECOM_CLIENT_SECRET"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(srv, "_transport", httpx.MockTransport(_fake))
     com._tokens.clear()
@@ -96,7 +96,7 @@ async def test_errors(mcp_client, args):
 
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
 def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
-    from hpe_compute_mcp.config import load_servers
+    from proliant_mcp.config import load_servers
 
     ini = tmp_path / "inventory.ini"
     ini.write_text("[defaults]\r\npassword = changeme\r\n\r\n[lab]\r\nhost = 192.0.2.10\r\n", encoding=encoding)
@@ -139,7 +139,7 @@ async def test_com_get_server_by_ilo_ip(mcp_client):
 
 
 def test_redact_masks_secret_keys_and_values():
-    from hpe_compute_mcp.util import redact
+    from proliant_mcp.util import redact
 
     out = redact({"base64SSLKeyData": "x", "iloSsoUrl": "https://x", "nested": [{"url": "hplocons://addr=1&sessionkey=abc"}], "messageKey": "Fan"})
     assert out == {"base64SSLKeyData": "***", "iloSsoUrl": "***", "nested": [{"url": "***"}], "messageKey": "Fan"}
@@ -191,11 +191,11 @@ async def test_mgmt_errors(mcp_client, tool, args, message):
 
 
 def test_com_account_reused_from_proliant_cli_login(tmp_path, monkeypatch):
-    from hpe_compute_mcp.config import load_com
+    from proliant_mcp.config import load_com
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    for var in ("HPECOM_CLIENT_ID", "HPE_COMPUTE_MCP_CONFIG", "PROLIANT_MCP_CONFIG"):
+    for var in ("HPECOM_CLIENT_ID", "PROLIANT_MCP_CONFIG"):
         monkeypatch.delenv(var, raising=False)
     token = tmp_path / ".config" / "proliant-cli" / "com" / "token.json"
     token.parent.mkdir(parents=True)

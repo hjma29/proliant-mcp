@@ -13,8 +13,8 @@ from typing import Any
 
 import httpx
 
-from hpe_compute_mcp.config import OneViewAppliance
-from hpe_compute_mcp.util import matches
+from proliant_mcp.config import OneViewAppliance
+from proliant_mcp.util import matches
 
 _TIMEOUT = httpx.Timeout(timeout=60.0, connect=10.0)
 _LOGIN_TIMEOUT = httpx.Timeout(timeout=15.0, connect=8.0)

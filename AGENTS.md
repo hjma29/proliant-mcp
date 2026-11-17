@@ -1,11 +1,11 @@
-# Agent instructions for hpe-compute-mcp
+# Agent instructions for proliant-mcp
 
 Public repository. Read this before changing anything.
 
 1. **No credentials, ever.** No real passwords, API keys, tokens, client
    secrets or internal IPs/hostnames in code, tests, docs or examples. Use
    RFC 5737 addresses (`192.0.2.x`) and `changeme`-style placeholders. Real
-   credentials live only in `~/.config/hpe-compute-mcp/inventory.ini` (or
+   credentials live only in `~/.config/proliant-mcp/inventory.ini` (or
    proliant-cli's config) or env vars. Raw-GET tools must pass results
    through `util.redact`.
 2. **Read-only by default.** New tools that change a server, a COM group or a

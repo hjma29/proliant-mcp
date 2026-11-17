@@ -1,9 +1,9 @@
 {
   "servers": {
-    "hpe-compute": {
+    "proliant": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--directory", "${workspaceFolder}", "hpe-compute-mcp"]
+      "args": ["run", "--directory", "${workspaceFolder}", "proliant-mcp"]
     }
   }
 }

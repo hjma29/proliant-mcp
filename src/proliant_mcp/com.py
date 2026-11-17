@@ -14,8 +14,8 @@ from typing import Any
 
 import httpx
 
-from hpe_compute_mcp.config import ComAccount
-from hpe_compute_mcp.util import matches
+from proliant_mcp.config import ComAccount
+from proliant_mcp.util import matches
 
 TOKEN_URL = "https://sso.common.cloud.hpe.com/as/token.oauth2"
 API = "/compute-ops-mgmt/v1"

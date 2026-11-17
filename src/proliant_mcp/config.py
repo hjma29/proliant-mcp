@@ -3,10 +3,9 @@ accounts this MCP server may talk to, and their credentials.
 
 Credentials never live in this repository. The ini file is the first match of:
 
-1. ``HPE_COMPUTE_MCP_CONFIG`` (or the older ``PROLIANT_MCP_CONFIG``) -> path to an ini file
-2. ``~/.config/hpe-compute-mcp/inventory.ini``
-3. ``~/.config/proliant-mcp/inventory.ini``
-4. ``~/.config/proliant-cli/inventory.ini`` (same format as proliant-cli)
+1. ``PROLIANT_MCP_CONFIG`` -> path to an ini file
+2. ``~/.config/proliant-mcp/inventory.ini``
+3. ``~/.config/proliant-cli/inventory.ini`` (same format as proliant-cli)
 
 Ini format (section ``type`` defaults to ``ilo``; a section named ``[oneview]``
 is a OneView appliance)::
@@ -114,11 +113,10 @@ def _home_config(*parts: str) -> Path:
 
 
 def config_path() -> Path | None:
-    explicit = os.environ.get("HPE_COMPUTE_MCP_CONFIG") or os.environ.get("PROLIANT_MCP_CONFIG")
+    explicit = os.environ.get("PROLIANT_MCP_CONFIG")
     if explicit:
         return Path(explicit).expanduser()
     for candidate in (
-        _home_config("hpe-compute-mcp", "inventory.ini"),
         _home_config("proliant-mcp", "inventory.ini"),
         _home_config("proliant-cli", "inventory.ini"),
     ):

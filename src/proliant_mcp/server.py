@@ -10,12 +10,12 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from hpe_compute_mcp import com, ilo, oneview
-from hpe_compute_mcp.com import ComClient, ComError
-from hpe_compute_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
-from hpe_compute_mcp.oneview import OneViewClient, OneViewError
-from hpe_compute_mcp.redfish import RedfishClient, RedfishError
-from hpe_compute_mcp.util import redact
+from proliant_mcp import com, ilo, oneview
+from proliant_mcp.com import ComClient, ComError
+from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
+from proliant_mcp.oneview import OneViewClient, OneViewError
+from proliant_mcp.redfish import RedfishClient, RedfishError
+from proliant_mcp.util import redact
 
 INSTRUCTIONS = """\
 Read-only tools for HPE compute management, across three sources:
@@ -35,7 +35,7 @@ ApplianceName = Annotated[str | None, Field(description="OneView appliance name 
 AccountName = Annotated[str | None, Field(description="COM account name from list_servers; omit to use the first one.")]
 Limit = Annotated[int, Field(ge=1, le=1000)]
 
-mcp = FastMCP("hpe-compute-mcp", instructions=INSTRUCTIONS)
+mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS)
 
 # Tests swap this to inject fake iLO / OneView / COM endpoints (httpx.MockTransport).
 _transport = None
@@ -385,9 +385,9 @@ async def oneview_rest_get(
 
 async def _check(connect: bool) -> int:
     """Self-test for installers: version, tools, config, and optionally a login to each target."""
-    from hpe_compute_mcp import __version__
+    from proliant_mcp import __version__
 
-    print(f"hpe-compute-mcp {__version__}: {len(await mcp.list_tools())} tools")
+    print(f"proliant-mcp {__version__}: {len(await mcp.list_tools())} tools")
     try:
         servers, appliances, accounts = load_servers(), load_oneview(), load_com()
     except FileNotFoundError as exc:
@@ -443,7 +443,7 @@ async def _check(connect: bool) -> int:
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(prog="hpe-compute-mcp", description=__doc__)
+    parser = argparse.ArgumentParser(prog="proliant-mcp", description=__doc__)
     parser.add_argument("--check", action="store_true", help="print version, tool count and configured iLOs, OneView appliances and COM accounts, then exit")
     parser.add_argument("--connect", action="store_true", help="with --check: also log in to each iLO, OneView appliance and COM account")
     parser.add_argument("--http", action="store_true", help="serve streamable HTTP instead of stdio")

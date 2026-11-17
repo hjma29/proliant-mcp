@@ -1,13 +1,13 @@
 ---
 name: hpe-compute-fleet
-description: "Report on HPE server fleets through the hpe-compute-mcp Compute Ops Management (com_*) and OneView (oneview_*) tools: fleet health, servers needing attention, disconnected servers, subscriptions, active alerts and corrective actions, jobs, server groups and compliance, firmware bundles and baselines, Synergy frames, profiles and interconnects. Use for questions like 'how healthy is my fleet', 'which servers are critical', 'any active OneView alerts', 'what SPPs are available', 'is server X in COM or OneView', or a cross-source health or firmware report."
+description: "Report on HPE server fleets through the proliant-mcp Compute Ops Management (com_*) and OneView (oneview_*) tools: fleet health, servers needing attention, disconnected servers, subscriptions, active alerts and corrective actions, jobs, server groups and compliance, firmware bundles and baselines, Synergy frames, profiles and interconnects. Use for questions like 'how healthy is my fleet', 'which servers are critical', 'any active OneView alerts', 'what SPPs are available', 'is server X in COM or OneView', or a cross-source health or firmware report."
 ---
 
 # HPE compute fleet (COM + OneView)
 
 Live, read-only data from HPE Compute Ops Management (GreenLake cloud,
 `com_*` tools) and HPE OneView / Synergy Composer (`oneview_*` tools) through
-the `hpe-compute-mcp` MCP server. For one server's deep detail through its
+the `proliant-mcp` MCP server. For one server's deep detail through its
 iLO (DIMMs, drives, NIC LLDP, IML), use the `proliant-ilo` skill.
 
 Call `list_servers` first. It returns `oneview_appliances` and `com_accounts`.

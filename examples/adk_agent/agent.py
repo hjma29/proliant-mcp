@@ -1,4 +1,4 @@
-"""Google ADK agent that uses hpe-compute-mcp over stdio.
+"""Google ADK agent that uses proliant-mcp over stdio.
 
 Run from the repo root:
     uv run --with "google-adk[mcp]" adk web examples
@@ -18,7 +18,7 @@ hpe_compute_tools = McpToolset(
     connection_params=StdioConnectionParams(
         server_params=StdioServerParameters(
             command="uv",
-            args=["run", "--directory", str(REPO), "hpe-compute-mcp"],
+            args=["run", "--directory", str(REPO), "proliant-mcp"],
         ),
         timeout=120,
     ),
