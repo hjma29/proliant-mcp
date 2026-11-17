@@ -21,7 +21,7 @@ Synergy Composer2 running OneView 11.10, and COM (`us-west`). The COM and OneVie
 logic comes from [proliant-cli](https://github.com/hjma29/proliant-cli), the
 human-facing CLI for the same three sources.
 
-> Status: **v0.6, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
+> Status: **v0.6, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](https://github.com/hjma29/proliant-mcp/blob/main/CHANGELOG.md).
 
 ## Tools
 
@@ -100,20 +100,20 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 33 tools` and `(up to date)`):
 
 ```powershell
-uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check
+uvx proliant-mcp@latest --check
 ```
 
 ### macOS / Linux
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check
+uvx proliant-mcp@latest --check
 ```
 
 Configure at least one iLO, OneView appliance or COM account (next section), then check that each one accepts the login:
 
 ```bash
-uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check --connect
+uvx proliant-mcp@latest --check --connect
 ```
 
 It prints each iLO (model, iLO version), OneView appliance (model, software version) and
@@ -125,10 +125,7 @@ VS Code / GitHub Copilot (**MCP: Open User Configuration**), Claude Desktop
 (**Settings > Developer > Edit Config**) and other clients all take the same command:
 
 ```json
-{"servers": {"proliant": {"type": "stdio", "command": "uvx",
-  "args": ["--refresh-package", "proliant-mcp", "--from",
-           "https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz",
-           "proliant-mcp"]}}}
+{"servers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["proliant-mcp@latest"]}}}
 ```
 
 Claude Desktop uses the top-level key `mcpServers` instead of `servers`. Credentials come from
@@ -137,21 +134,22 @@ restart it after installing uv, or use the full path (`%USERPROFILE%\.local\bin\
 
 ### Update
 
-The command above always runs the **latest release**: `--refresh-package` makes `uvx`
-check for a new release each time the AI client starts the server (it costs a fraction of
-a second when nothing changed). To update, **restart the AI client** (in VS Code:
-**MCP: List Servers > proliant > Restart**). Without `--refresh-package`, `uvx` keeps
-using the copy it cached first, however many releases come out.
+`proliant-mcp@latest` makes `uvx` check [PyPI](https://pypi.org/project/proliant-mcp/) for a new
+release each time the AI client starts the server (a fraction of a second when nothing changed).
+To update, **restart the AI client** (in VS Code: **MCP: List Servers > proliant > Restart**).
+Plain `proliant-mcp` without `@latest` keeps using the copy `uvx` cached first.
 
-- **What's new:** [CHANGELOG.md](CHANGELOG.md) and the
+- **What's new:** [CHANGELOG.md](https://github.com/hjma29/proliant-mcp/blob/main/CHANGELOG.md) and the
   [releases page](https://github.com/hjma29/proliant-mcp/releases).
 - **Which version am I on:** `--check` prints it, plus the latest release and
   `UPDATE AVAILABLE` if you are behind.
 - **Pin a version** (no surprise changes; you upgrade by editing the version):
-  `https://github.com/hjma29/proliant-mcp/releases/download/v0.6.0/proliant-mcp.tar.gz`.
-  A pinned URL never changes, so `--refresh-package` is not needed.
+  `proliant-mcp@0.6.1` in place of `proliant-mcp@latest`.
+- **No access to PyPI** (some corporate networks): every release is also attached to GitHub.
+  Use `"args": ["--refresh-package", "proliant-mcp", "--from", "https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz", "proliant-mcp"]`.
 - **Unreleased changes** from `main`:
-  `https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip` (with `--refresh-package`).
+  `"args": ["--from", "https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip", "proliant-mcp"]`
+  (picks up every push on restart; may include unfinished work).
 
 To hack on it: `git clone https://github.com/hjma29/proliant-mcp && cd proliant-mcp && uv sync && uv run pytest`.
 
@@ -176,7 +174,7 @@ immediately, no restart.
 file; you type it), shows what it found, and optionally asks once for a password shared by entries
 that have none, then checks each login. The file stays where it is. For a spreadsheet, use **File >
 Save As > CSV** in Excel; the columns are `name, type, host, username, password`
-([example](examples/inventory.example.csv)), and common variants such as `IP Address` or `Server Name`
+([example](https://github.com/hjma29/proliant-mcp/blob/main/examples/inventory.example.csv)), and common variants such as `IP Address` or `Server Name`
 are recognised (`.xlsx` files are not read directly). Same thing in a terminal:
 `proliant-mcp import servers.csv` (`--replace` overwrites entries that already exist, `--no-check` skips the login checks).
 
@@ -185,7 +183,7 @@ only by you, and leave other content in the file as it is. If you only had a pro
 its content is copied there first; the proliant-cli file is never changed. Passwords are stored in
 that file in plain text, so delete a CSV you imported once you no longer need it.
 
-**Or edit the file by hand.** Copy [examples/inventory.example.ini](examples/inventory.example.ini) to
+**Or edit the file by hand.** Copy [examples/inventory.example.ini](https://github.com/hjma29/proliant-mcp/blob/main/examples/inventory.example.ini) to
 `~/.config/proliant-mcp/inventory.ini` (Windows: `%USERPROFILE%\.config\proliant-mcp\inventory.ini`),
 fill it in, and restrict it to your user. Or point `PROLIANT_MCP_CONFIG` at any path.
 The file can be saved by Notepad or PowerShell (UTF-8 or UTF-16).
@@ -266,7 +264,7 @@ This needs an AI client that supports MCP pop-ups (elicitation), such as VS Code
 Copilot. Otherwise run the same sign-in in a terminal:
 
 ```bash
-uvx --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp login
+uvx proliant-mcp@latest login
 ```
 
 (`--email`, `--workspace NAME`, `--region us-west|eu-central|ap-northeast`; `proliant-mcp logout`
@@ -316,7 +314,7 @@ Open the printed URL, click **Connect**, then **Tools** to call each tool by han
 
 ### 4. VS Code / GitHub Copilot
 
-Open this folder in VS Code. [.vscode/mcp.json](.vscode/mcp.json) registers
+Open this folder in VS Code. [.vscode/mcp.json](https://github.com/hjma29/proliant-mcp/blob/main/.vscode/mcp.json) registers
 the server as `proliant`; start it from the MCP view (or the code lens in that
 file), switch Copilot Chat to **Agent** mode, and ask:
 
@@ -345,7 +343,7 @@ trusted management network.
 
 ## Google ADK
 
-[examples/adk_agent/agent.py](examples/adk_agent/agent.py) is a
+[examples/adk_agent/agent.py](https://github.com/hjma29/proliant-mcp/blob/main/examples/adk_agent/agent.py) is a
 [Google ADK](https://google.github.io/adk-docs/) agent that starts this server
 over stdio with `McpToolset`:
 
@@ -362,9 +360,9 @@ instead, swap `StdioConnectionParams` for
 
 Agent skills that tell an assistant which tool to use for which question, plus workflows:
 
-- [skills/proliant-ilo/SKILL.md](skills/proliant-ilo/SKILL.md): one server through its iLO
+- [skills/proliant-ilo/SKILL.md](https://github.com/hjma29/proliant-mcp/blob/main/skills/proliant-ilo/SKILL.md): one server through its iLO
   (firmware audit, health triage, finding a server's switch port).
-- [skills/hpe-compute-fleet/SKILL.md](skills/hpe-compute-fleet/SKILL.md): fleets through
+- [skills/hpe-compute-fleet/SKILL.md](https://github.com/hjma29/proliant-mcp/blob/main/skills/hpe-compute-fleet/SKILL.md): fleets through
   Compute Ops Management and OneView (fleet health report, alert triage, firmware
   baseline drift, finding one server across all three sources).
 
@@ -394,4 +392,4 @@ Copy them into your agent's skills folder (for example `~/.copilot/skills/` or
 
 ## License
 
-[MIT](LICENSE). Not an official HPE product.
+[MIT](https://github.com/hjma29/proliant-mcp/blob/main/LICENSE). Not an official HPE product.

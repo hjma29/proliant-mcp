@@ -41,5 +41,7 @@ Public repository. Read this before changing anything.
    `uv lock`, commit and push, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
    `.github/workflows/release.yml` checks the tag matches `pyproject.toml`,
    runs the tests, publishes the release with that CHANGELOG section and
-   `proliant-mcp.tar.gz`, and installs it on Windows/Linux/macOS. Customers
-   on the `releases/latest` URL get it on their next AI client restart.
+   `proliant-mcp.tar.gz`, uploads the same build to PyPI (trusted publishing,
+   GitHub environment `pypi`; a version can never be re-uploaded, so a bad
+   release is fixed by the next version), and installs it on Windows/Linux/macOS.
+   Customers on `uvx proliant-mcp@latest` get it on their next AI client restart.

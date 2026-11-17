@@ -6,6 +6,15 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.6.1 — 2026-11-17
+
+### Enhancements
+- Published on PyPI: install and run with `uvx proliant-mcp@latest`, pin with `uvx proliant-mcp@0.6.1`. Each release is uploaded from the GitHub release workflow by trusted publishing (no token stored), and the release check installs it from PyPI on Windows, Linux and macOS. The GitHub release download still works for networks that cannot reach PyPI.
+- Releases now include a wheel, so installs no longer build the package.
+- README links work on the PyPI project page.
+
+---
+
 ## v0.6.0 — 2026-11-17
 
 ### New Features

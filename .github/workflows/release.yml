@@ -1,7 +1,8 @@
 name: Release
 
 # Push a tag vX.Y.Z (matching pyproject.toml and a "## vX.Y.Z" section in CHANGELOG.md)
-# to publish a GitHub release with those notes and a proliant-mcp.tar.gz that uvx installs.
+# to publish a GitHub release with those notes and a proliant-mcp.tar.gz that uvx installs,
+# and the same build to PyPI (trusted publishing: no token is stored anywhere).
 on:
   push:
     tags: ['v*']
@@ -42,8 +43,17 @@ jobs:
         # --force-pep517 builds with the pinned uv_build backend. uv 0.13's built-in builder
         # writes an sdist that older uv releases cannot extract ("numeric field was not a number").
         run: |
-          uv build --sdist --force-pep517
+          uv build --force-pep517
           cp dist/proliant_mcp-*.tar.gz dist/proliant-mcp.tar.gz
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: |
+            dist/proliant_mcp-*.tar.gz
+            dist/proliant_mcp-*.whl
+          if-no-files-found: error
 
       - name: Publish GitHub release
         env:
@@ -52,9 +62,22 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/proliant-mcp.tar.gz \
             --title "$GITHUB_REF_NAME" --notes-file release_notes.md --verify-tag
 
-  # What a customer does after a release: install from the release URLs on a clean machine.
-  verify:
+  pypi:
     needs: release
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # What a customer does after a release: install from the release URLs and PyPI on a clean machine.
+  verify:
+    needs: [release, pypi]
     name: install release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -74,6 +97,18 @@ jobs:
             Write-Output $out
             if (-not $out.Contains($want)) { throw "$url did not install $want" }
           }
+      - name: PyPI installs it
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $want = "proliant-mcp ${version}:"
+          for ($try = 1; $try -le 10; $try++) {
+            $out = uvx --refresh "proliant-mcp@$version" --check 2>&1 | Out-String
+            if ($out.Contains($want)) { break }
+            Start-Sleep -Seconds 15  # the PyPI index can lag the upload by a minute
+          }
+          Write-Output $out
+          if (-not $out.Contains($want)) { throw "PyPI did not install $want" }
       - name: An old uv (0.8.0) also installs it
         shell: pwsh
         run: |
