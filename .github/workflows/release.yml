@@ -39,8 +39,10 @@ jobs:
           cat release_notes.md
 
       - name: Build package
+        # --force-pep517 builds with the pinned uv_build backend. uv 0.13's built-in builder
+        # writes an sdist that older uv releases cannot extract ("numeric field was not a number").
         run: |
-          uv build --sdist
+          uv build --sdist --force-pep517
           cp dist/proliant_mcp-*.tar.gz dist/proliant-mcp.tar.gz
 
       - name: Publish GitHub release
@@ -72,3 +74,11 @@ jobs:
             Write-Output $out
             if (-not $out.Contains($want)) { throw "$url did not install $want" }
           }
+      - name: An old uv (0.8.0) also installs it
+        shell: pwsh
+        run: |
+          $want = "proliant-mcp $($env:GITHUB_REF_NAME.TrimStart('v')):"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$env:GITHUB_REF_NAME/proliant-mcp.tar.gz"
+          $out = uvx uv@0.8.0 tool run --from $url proliant-mcp --check | Out-String
+          Write-Output $out
+          if (-not $out.Contains($want)) { throw "uv 0.8.0 did not install $want" }
