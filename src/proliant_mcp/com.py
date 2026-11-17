@@ -235,6 +235,74 @@ def bundle_row(b: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _section(inv: dict[str, Any], name: str) -> list[dict[str, Any]]:
+    return (inv.get(name) or {}).get("data") or []
+
+
+def _ok(item: dict[str, Any]) -> bool:
+    return ((item.get("Status") or {}).get("Health") or "OK").upper() in ("OK", "")
+
+
+def hardware_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]:
+    """CPUs and GPUs from a server's cached COM inventory (``/servers/{id}/inventory``).
+
+    GPUs are the ``processor`` entries iLO reports with ``ProcessorType: GPU``. Older iLOs
+    may only list them as PCIe display controllers, which is the fallback. ``detail`` adds
+    serial numbers.
+    """
+    processors, pci = _section(inv, "processor"), _section(inv, "pciDevice")
+    cpus = [p for p in processors if str(p.get("ProcessorType", "")).upper() == "CPU"]
+    gpu_items = [p for p in processors if str(p.get("ProcessorType", "")).upper() == "GPU"]
+    source = "processor"
+    if not gpu_items:
+        source = "pci"
+        for dev in pci:
+            functions = dev.get("PCIeFunctions") or [{}]
+            display = any(f.get("DeviceClass") == "DisplayController" or str(f.get("ClassCode", "")).upper().startswith("0X03") for f in functions)
+            if display and "embedded" not in (dev.get("Name") or "").lower():
+                gpu_items.append(dev)
+
+    cpu_groups = Counter((" ".join((c.get("Model") or c.get("Name") or "").split()), c.get("TotalCores"), c.get("TotalThreads")) for c in cpus)
+    gpu_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for g in gpu_items:
+        key = ((g.get("Name") or g.get("Model") or "").strip(), (g.get("Manufacturer") or "").strip(), (g.get("PartNumber") or g.get("Model") or "").strip())
+        gpu_groups.setdefault(key, []).append(g)
+    gpus = []
+    for (name, vendor, part), items in gpu_groups.items():
+        entry: dict[str, Any] = {
+            "name": name,
+            "manufacturer": vendor or None,
+            "part_number": part if part and part != name else None,
+            "count": len(items),
+            "health": "OK" if all(_ok(i) for i in items) else "NOT OK",
+        }
+        if detail:
+            entry["serial_numbers"] = [i.get("SerialNumber") for i in items if i.get("SerialNumber")]
+        gpus.append(entry)
+    return {
+        "inventory_available": bool(processors or pci),
+        "inventory_collected_at": inv.get("lastFullInventoryCollectionAt"),
+        "cpu": [{"model": m, "count": n, "cores_each": cores, "threads_each": threads} for (m, cores, threads), n in cpu_groups.items()],
+        "gpu_count": len(gpu_items),
+        "gpus": gpus,
+        "gpu_source": source if gpu_items else None,
+    }
+
+
+async def _hardware_for(c: ComClient, ids: list[str], workers: int = 8) -> dict[str, dict[str, Any]]:
+    """Hardware summary per server id; a server whose inventory cannot be read gets an error entry."""
+    gate = asyncio.Semaphore(workers)
+
+    async def one(sid: str) -> tuple[str, dict[str, Any]]:
+        async with gate:
+            try:
+                return sid, hardware_summary(await c.get(f"/servers/{sid}/inventory"))
+            except ComError as exc:
+                return sid, {"inventory_available": False, "inventory_error": str(exc)}
+
+    return dict(await asyncio.gather(*(one(i) for i in ids)))
+
+
 # ── views used by the MCP tools ───────────────────────────────────────────────
 
 
@@ -280,7 +348,9 @@ async def overview(c: ComClient) -> dict[str, Any]:
     }
 
 
-async def list_servers(c: ComClient, health: str | None, connected: bool | None, name_contains: str | None) -> list[dict[str, Any]]:
+async def list_servers(
+    c: ComClient, health: str | None, connected: bool | None, name_contains: str | None, include_hardware: bool = False
+) -> list[dict[str, Any]]:
     rows = [server_row(s) for s in await c.get_all("/servers")]
     if health:
         rows = [r for r in rows if (r["health"] or "").upper() == health.upper()]
@@ -288,7 +358,50 @@ async def list_servers(c: ComClient, health: str | None, connected: bool | None,
         rows = [r for r in rows if bool(r["connected"]) == connected]
     if name_contains:
         rows = [r for r in rows if name_contains.lower() in (r["name"] or "").lower()]
+    if include_hardware:
+        hardware = await _hardware_for(c, [r["id"] for r in rows])
+        rows = [{**r, "hardware": hardware[r["id"]]} for r in rows]
     return rows
+
+
+async def list_gpus(c: ComClient, name_contains: str | None, connected: bool | None, include_without_gpus: bool) -> dict[str, Any]:
+    """Fleet GPU report: one row per server with its model, iLO firmware, CPU and GPUs."""
+    rows = await list_servers(c, None, connected, name_contains, include_hardware=True)
+    totals: Counter[str] = Counter()
+    report, unavailable = [], []
+    for r in rows:
+        hw = r["hardware"]
+        if not hw["inventory_available"]:
+            unavailable.append(r["name"])
+        for g in hw.get("gpus", []):
+            vendor = g["manufacturer"]
+            label = f"{vendor} {g['name']}" if vendor and vendor.lower() not in g["name"].lower() else g["name"]
+            totals[label] += g["count"]
+        if hw.get("gpu_count") or include_without_gpus:
+            report.append({
+                "name": r["name"],
+                "serial_number": r["serial_number"],
+                "model": r["model"],
+                "generation": r["generation"],
+                "ilo_version": r["ilo"]["version"],
+                "health": r["health"],
+                "power_state": r["power_state"],
+                "connected": r["connected"],
+                "cpu": hw.get("cpu"),
+                "gpu_count": hw.get("gpu_count", 0),
+                "gpus": hw.get("gpus", []),
+                "inventory_collected_at": hw.get("inventory_collected_at"),
+            })
+    return {
+        "servers_checked": len(rows),
+        "servers_with_gpus": sum(1 for r in rows if r["hardware"].get("gpu_count")),
+        "total_gpus": sum(totals.values()),
+        "gpus_by_model": dict(totals),
+        "inventory_unavailable": unavailable,
+        "note": "Data is COM's cached inventory. Servers in inventory_unavailable have no cached hardware inventory "
+        "(never collected, or not connected to COM), so their GPUs are unknown, not absent.",
+        "servers": report,
+    }
 
 
 async def get_server(c: ComClient, query: str) -> dict[str, Any]:
@@ -296,6 +409,10 @@ async def get_server(c: ComClient, query: str) -> dict[str, Any]:
     detail = server_detail(s)
     alerts = await c.get_all(f"/servers/{s['id']}/alerts", {"sort": "createdAt desc"}, max_items=200)
     detail["active_alerts"] = [alert_row(a) for a in alerts if not a.get("cleared")][:20]
+    try:
+        detail["hardware"] = hardware_summary(await c.get(f"/servers/{s['id']}/inventory"), detail=True)
+    except ComError as exc:
+        detail["hardware"] = {"inventory_available": False, "inventory_error": str(exc)}
     return detail
 
 

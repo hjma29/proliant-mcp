@@ -6,6 +6,18 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.5.0 — 2026-11-17
+
+### New Features
+- `com_list_gpus`: GPU report for the whole COM fleet in one call (about 3 s for 49 servers): per server model, generation, iLO firmware, health, CPU and GPUs (name, vendor, part number, count, health), totals by GPU model, and the servers COM has no cached hardware inventory for (their GPUs are unknown, not absent).
+- `com_list_servers` takes `include_hardware` to add CPU and GPU columns to the fleet table. `com_get_server` now includes the CPU and GPUs with serial numbers.
+
+### Bug Fixes
+- Fleet questions such as "show servers with iLO firmware, model and GPU" no longer need one `com_get_server` or raw `com_api_get` call per server and pages of raw inventory JSON; the tool descriptions and server instructions point assistants at the fleet tools.
+- `com_login` API client names now carry a per-install ID, so two installs that share a hostname (for example WSL and its Windows host) no longer delete each other's client when signing in again, which made the other install fail with HTTP 401. Existing clients keep working; sign in again if one was already removed.
+
+---
+
 ## v0.4.0 — 2026-11-17
 
 ### New Features

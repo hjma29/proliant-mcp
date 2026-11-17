@@ -296,3 +296,15 @@ async def test_com_login_cancelled_or_without_popups(greenlake):
         result = await client.call_tool("com_login", {}, raise_on_error=False)
     assert result.is_error and "proliant-mcp login" in result.content[0].text
     assert not (login.com_login_path()).exists()
+
+
+def test_api_client_names_are_unique_per_install(home, monkeypatch):
+    monkeypatch.setattr(login.socket, "gethostname", lambda: "SAMEHOST")
+    first = login._credential_prefix()
+    assert login._credential_prefix() == first  # stable for this install
+    other = home / "other-install"
+    monkeypatch.setenv("HOME", str(other))
+    monkeypatch.setenv("USERPROFILE", str(other))
+    second = login._credential_prefix()
+    assert first.startswith("GLP-proliant-mcp-SAMEHOST-") and second.startswith("GLP-proliant-mcp-SAMEHOST-")
+    assert first != second  # same hostname, different install: cleanup of one never matches the other

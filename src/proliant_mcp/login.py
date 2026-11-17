@@ -653,9 +653,24 @@ async def _resolve_region(access_token: str, ccs_session: str, wanted: str | Non
     return provisioned[0]
 
 
+def _install_id() -> str:
+    """Random per-install tag, so two installs that share a hostname (WSL and its Windows host,
+    cloned VMs, containers) never delete each other's API client."""
+    path = com_login_path().with_name("install_id")
+    with contextlib.suppress(OSError):
+        saved = path.read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"[0-9a-f]{6}", saved):
+            return saved
+    new = secrets.token_hex(3)
+    with contextlib.suppress(OSError):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(new, encoding="utf-8")
+    return new
+
+
 def _credential_prefix() -> str:
     host = re.sub(r"[^A-Za-z0-9]", "", socket.gethostname())[:16] or "host"
-    return f"{CRED_NAME_PREFIX}-{host}-"
+    return f"{CRED_NAME_PREFIX}-{host}-{_install_id()}-"
 
 
 async def _create_api_client(access_token: str, ccs_session: str) -> dict[str, str]:

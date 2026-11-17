@@ -28,6 +28,9 @@ Start with list_servers: it returns the configured iLO server names, OneView app
 and COM accounts. For a fleet-wide question start with com_get_overview or
 oneview_get_appliance. The same physical server can appear in all three; match by
 serial number. If a tool returns an error, report it; never invent values.
+For tables or comparisons across servers use com_list_servers (add include_hardware for CPU and
+GPU columns) or com_list_gpus; they return the whole fleet in one call. Never loop com_get_server
+or com_api_get over many servers.
 If a com_ tool says no COM account is configured or the COM login failed, call com_login:
 it signs the user in to HPE GreenLake with pop-ups in this chat. Never ask the user to type
 a password into the chat."""
@@ -237,10 +240,27 @@ async def com_list_servers(
     health: Annotated[Literal["OK", "WARNING", "CRITICAL", "UNKNOWN"] | None, Field(description="Only servers with this health summary.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
+    include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server: CPU model/count/cores and GPUs (name, vendor, count, health) from COM's cached inventory. Slower (one read per server, done inside this call); use it for tables with CPU or GPU columns instead of calling com_get_server per server.")] = False,
 ) -> list[dict[str, Any]]:
     """Servers in Compute Ops Management: name, serial, model, generation, health, power,
-    COM connection, subscription, iLO host/IP/version, OS, CPU and firmware bundle."""
-    return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains))
+    COM connection, subscription, iLO host/IP/version, OS, CPU vendor and firmware bundle.
+    One call returns the whole fleet, so use it for any table or comparison across servers.
+    Set include_hardware for CPU and GPU columns."""
+    return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def com_list_gpus(
+    account: AccountName = None,
+    name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
+    connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
+    include_servers_without_gpus: Annotated[bool, Field(description="Also list servers with no GPU.")] = False,
+) -> dict[str, Any]:
+    """GPU report for the whole COM fleet in one call: per server the model, generation, iLO
+    firmware version, health, CPU and GPUs (name, vendor, part number, count, health), plus
+    totals by GPU model and the servers whose inventory COM does not have (their GPUs are
+    unknown, not absent). Start here for any GPU question."""
+    return await _com(account, lambda c: com.list_gpus(c, name_contains, connected, include_servers_without_gpus))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -249,7 +269,8 @@ async def com_get_server(
     account: AccountName = None,
 ) -> dict[str, Any]:
     """One COM server in detail: identity, per-subsystem health, iLO, subscription, last
-    firmware update, full firmware inventory, and its active alerts."""
+    firmware update, full firmware inventory, CPU and GPUs (with GPU serial numbers), and its
+    active alerts. For several servers use com_list_servers or com_list_gpus, not one call each."""
     return await _com(account, lambda c: com.get_server(c, server))
 
 

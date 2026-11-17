@@ -21,7 +21,7 @@ Synergy Composer2 running OneView 11.10, and COM (`us-west`). The COM and OneVie
 logic comes from [proliant-cli](https://github.com/hjma29/proliant-cli), the
 human-facing CLI for the same three sources.
 
-> Status: **v0.4, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
+> Status: **v0.5, read-only.** Nothing in this version changes a server. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Tools
 
@@ -48,8 +48,9 @@ human-facing CLI for the same three sources.
 | Tool | What it returns |
 |---|---|
 | `com_get_overview` | Fleet report: counts by health, power, connection, generation, model; servers needing attention; disconnected servers; soonest subscription expirations; active alerts by severity |
-| `com_list_servers` | Every COM server (filter by health, connected, name): serial, model, health, power, iLO, OS, subscription, firmware bundle |
-| `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, last firmware update, active alerts |
+| `com_list_servers` | Every COM server (filter by health, connected, name): serial, model, health, power, iLO, OS, subscription, firmware bundle. `include_hardware` adds CPU and GPU columns |
+| `com_list_gpus` | GPU report for the whole fleet in one call: per server model, iLO firmware, CPU and GPUs, totals by GPU model, servers with no cached inventory |
+| `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, CPU and GPUs (with serial numbers), last firmware update, active alerts |
 | `com_list_alerts` | Newest alerts, uncleared by default; filter by server and severity |
 | `com_list_jobs` | Newest jobs (firmware updates, inventory, OneView sync) with state and result |
 | `com_list_groups` | Server groups, members and firmware / iLO-settings compliance |
@@ -87,7 +88,7 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 30 tools` and `(up to date)`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 31 tools` and `(up to date)`):
 
 ```powershell
 uvx --refresh-package proliant-mcp --from https://github.com/hjma29/proliant-mcp/releases/latest/download/proliant-mcp.tar.gz proliant-mcp --check
@@ -138,7 +139,7 @@ using the copy it cached first, however many releases come out.
 - **Which version am I on:** `--check` prints it, plus the latest release and
   `UPDATE AVAILABLE` if you are behind.
 - **Pin a version** (no surprise changes; you upgrade by editing the version):
-  `https://github.com/hjma29/proliant-mcp/releases/download/v0.4.0/proliant-mcp.tar.gz`.
+  `https://github.com/hjma29/proliant-mcp/releases/download/v0.5.0/proliant-mcp.tar.gz`.
   A pinned URL never changes, so `--refresh-package` is not needed.
 - **Unreleased changes** from `main`:
   `https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip` (with `--refresh-package`).

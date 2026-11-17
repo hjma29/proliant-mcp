@@ -108,7 +108,7 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
 async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert await srv._check(connect=False) == 0
     out = capsys.readouterr().out
-    assert "30 tools" in out
+    assert "31 tools" in out
     assert "latest release:" in out
 
     assert await srv._check(connect=True) == 1
@@ -117,7 +117,7 @@ async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert "badpass  192.0.2.11  FAILED" in out
     assert "oneview  192.0.2.100  OK  Synergy Composer2 11.10.00-1" in out
     assert "ov-badpass  192.0.2.100  FAILED" in out
-    assert "greenlake  us-west  OK  2 servers" in out
+    assert "greenlake  us-west  OK  4 servers" in out
     assert "good" not in out
 
 
@@ -145,8 +145,8 @@ async def test_com_overview_counts_only_uncleared_alerts_across_pages(mcp_client
     monkeypatch.setattr(com, "_PAGE", 1)
     async with mcp_client as c:
         data = (await c.call_tool("com_get_overview", {})).structured_content
-    assert data["server_count"] == 2
-    assert data["by_health"] == {"WARNING": 1, "OK": 1}
+    assert data["server_count"] == 4
+    assert data["by_health"] == {"WARNING": 1, "OK": 3}
     assert data["not_connected"] == ["dl345.example.com"]
     assert data["active_alerts"]["by_severity"] == {"WARNING": 1}
     assert data["active_alerts"]["newest"][0]["server"] == "esx2.example.com"
@@ -224,3 +224,34 @@ def test_com_account_reused_from_proliant_cli_login(tmp_path, monkeypatch):
     token.write_text('{"glp_client_id": "cid", "glp_client_secret": "sec", "region": "eu-central", "workspace_name": "Lab  WS"}')
     account = load_com()["com"]
     assert (account.client_id, account.region, account.workspace) == ("cid", "eu-central", "Lab WS")
+
+
+async def test_com_list_gpus_reports_the_fleet_in_one_call(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("com_list_gpus", {})).structured_content
+    assert (data["servers_checked"], data["servers_with_gpus"], data["total_gpus"]) == (4, 2, 4)
+    assert data["gpus_by_model"] == {"NVIDIA L40S": 2, "Intel Video Controller": 1, "NVIDIA T4": 1}
+    assert data["inventory_unavailable"] == ["dl345.example.com"]  # no inventory is "unknown", not "no GPU"
+    gpu1 = next(s for s in data["servers"] if s["name"] == "gpu1.example.com")
+    assert (gpu1["model"], gpu1["ilo_version"], gpu1["gpu_count"]) == ("ProLiant DL380 Gen11", "iLO 6 v1.74", 3)
+    assert gpu1["cpu"] == [{"model": "AMD EPYC 9374F 32-Core Processor", "count": 1, "cores_each": 32, "threads_each": 64}]
+    assert gpu1["gpus"][0] == {"name": "NVIDIA L40S", "manufacturer": "NVIDIA", "part_number": "900-2G133-0380-030", "count": 2, "health": "OK"}
+    old = next(s for s in data["servers"] if s["name"] == "old-t4.example.com")
+    assert old["gpus"][0]["name"] == "NVIDIA T4"  # PCIe display controller fallback; embedded video is ignored
+    assert all(s["name"] != "esx2.example.com" for s in data["servers"])  # embedded video only
+
+    async with mcp_client as c:
+        everyone = (await c.call_tool("com_list_gpus", {"include_servers_without_gpus": True, "name_contains": "esx"})).structured_content
+    assert [s["name"] for s in everyone["servers"]] == ["esx2.example.com"] and everyone["servers"][0]["gpu_count"] == 0
+
+
+async def test_com_list_servers_with_hardware_and_server_detail(mcp_client):
+    async with mcp_client as c:
+        rows = (await c.call_tool("com_list_servers", {"include_hardware": True})).structured_content["result"]
+        plain = (await c.call_tool("com_list_servers", {})).structured_content["result"]
+        detail = (await c.call_tool("com_get_server", {"server": "gpu1.example.com"})).structured_content
+    assert "hardware" not in plain[0]
+    by_name = {r["name"]: r for r in rows}
+    assert by_name["gpu1.example.com"]["hardware"]["gpu_count"] == 3
+    assert by_name["dl345.example.com"]["hardware"]["inventory_available"] is False
+    assert detail["hardware"]["gpus"][0]["serial_numbers"] == ["GSN3", "GSN4"]

@@ -18,7 +18,8 @@ Pass `appliance` / `account` only when more than one is configured.
 | Question | Tool |
 |---|---|
 | Fleet health report (counts, needs attention, disconnected, alerts) | `com_get_overview` |
-| Find or filter COM servers (health, connected, name) | `com_list_servers` |
+| Find or filter COM servers (health, connected, name); add `include_hardware` for CPU/GPU columns | `com_list_servers` |
+| GPUs across the fleet (model, iLO firmware, CPU, GPU per server, totals) | `com_list_gpus` |
 | One COM server: subsystem health, firmware, last update, its alerts | `com_get_server` (name, serial, iLO IP or id) |
 | COM alerts, newest first | `com_list_alerts` (`server`, `severity`, `include_cleared`) |
 | What COM did recently (firmware updates, inventory, OneView sync) | `com_list_jobs` (`state`) |
@@ -67,6 +68,12 @@ deepest detail.
   COM's health and power data may be stale. Say so.
 - Report tool errors as they come back (403 = the API client has no COM role).
   Never fill in values from memory.
+- For any table or comparison across servers (iLO firmware, model, CPU, GPU) use
+  `com_list_servers` (set `include_hardware` for CPU/GPU) or `com_list_gpus`: one call
+  returns the whole fleet. Never loop `com_get_server` or `com_api_get` over servers.
+- A server listed in `inventory_unavailable` has no cached hardware inventory in COM
+  (never collected, or not connected). Say its GPUs are unknown, not that it has none.
+  GPU names are what iLO reports, e.g. an unnamed "Intel Video Controller".
 - If a `com_` tool says no COM account is configured or the login failed, call
   `com_login`: it signs the user in with pop-ups. Never ask for a password in chat.
 - All tools are read-only. Changes (power, firmware updates, profile edits)
