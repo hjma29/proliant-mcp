@@ -16,7 +16,7 @@ dependencies = [
 proliant-mcp = "proliant_mcp.server:main"
 
 [project.urls]
-Repository = "https://github.com/hjma29/proliant-mcp"
+Repository = "https://github.com/hjma29/hpe-proliant-mcp"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.12"]

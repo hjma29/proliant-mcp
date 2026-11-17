@@ -1,4 +1,4 @@
-# Agent instructions for proliant-mcp
+# Agent instructions for hpe-proliant-mcp
 
 Public repository. Read this before changing anything.
 

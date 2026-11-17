@@ -46,20 +46,20 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp 0.1.0: 12 tools`):
 
 ```powershell
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
+uvx --from https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
 ```
 
 ### macOS / Linux
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
+uvx --from https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
 ```
 
 Configure at least one iLO (next section), then check that each iLO accepts the login:
 
 ```bash
-uvx --from https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check --connect
+uvx --from https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check --connect
 ```
 
 It prints each server with its model and iLO version, or the reason a login failed.
@@ -71,7 +71,7 @@ VS Code / GitHub Copilot (**MCP: Open User Configuration**), Claude Desktop
 
 ```json
 {"servers": {"proliant": {"type": "stdio", "command": "uvx",
-  "args": ["--from", "https://github.com/hjma29/proliant-mcp/archive/refs/heads/main.zip", "proliant-mcp"]}}}
+  "args": ["--from", "https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip", "proliant-mcp"]}}}
 ```
 
 Claude Desktop uses the top-level key `mcpServers` instead of `servers`. Credentials come from
@@ -79,7 +79,7 @@ your inventory file (next section), so none go in this JSON. If the client canno
 restart it after installing uv, or use the full path (`%USERPROFILE%\.local\bin\uvx.exe`).
 
 To pin a version instead of `main`, use a release or commit archive URL.
-To hack on it: `git clone https://github.com/hjma29/proliant-mcp && cd proliant-mcp && uv sync && uv run pytest`.
+To hack on it: `git clone https://github.com/hjma29/hpe-proliant-mcp && cd hpe-proliant-mcp && uv sync && uv run pytest`.
 
 ## Configure your iLOs
 
@@ -166,7 +166,7 @@ To use it from any workspace, add the same entry to your user MCP config
 with an absolute path in `--directory`.
 
 Claude Desktop / Claude Code / other clients use the same command:
-`uv run --directory /path/to/proliant-mcp proliant-mcp`.
+`uv run --directory /path/to/hpe-proliant-mcp proliant-mcp`.
 
 ### 5. Over HTTP
 
