@@ -45,18 +45,18 @@ jobs:
       - name: Install from the archive and self-check
         shell: pwsh
         run: |
-          $out = uvx --from $env:PKG proliant-mcp --check | Out-String
+          $out = uvx --from $env:PKG hpe-compute-mcp --check | Out-String
           Write-Output $out
-          if ($out -notmatch '12 tools') { throw "unexpected --check output" }
+          if ($out -notmatch '29 tools') { throw "unexpected --check output" }
       - name: Windows inventory written by PowerShell 5.1 (UTF-16), locked with icacls
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Continue'
-          $d = "$env:USERPROFILE\.config\proliant-mcp"
+          $d = "$env:USERPROFILE\.config\hpe-compute-mcp"
           New-Item -ItemType Directory -Force $d | Out-Null
           "[defaults]`r`npassword = changeme`r`n`r`n[lab]`r`nhost = 192.0.2.10" > "$d\inventory.ini"
           icacls "$d\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
-          $out = uvx --from $env:PKG proliant-mcp --check 2>&1 | Out-String
+          $out = uvx --from $env:PKG hpe-compute-mcp --check 2>&1 | Out-String
           Write-Output $out
           if ($out -notmatch 'lab\s+192\.0\.2\.10') { throw "inventory was not read" }

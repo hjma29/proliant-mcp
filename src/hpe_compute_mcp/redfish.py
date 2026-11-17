@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from proliant_mcp.config import Server
+from hpe_compute_mcp.config import Server
 
 _TIMEOUT = httpx.Timeout(timeout=60.0, connect=10.0)
 _LOGIN_TIMEOUT = httpx.Timeout(timeout=15.0, connect=8.0)

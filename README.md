@@ -1,23 +1,38 @@
-# proliant-mcp
+# HPE Compute MCP server
 
-An [MCP](https://modelcontextprotocol.io) server for **HPE ProLiant** servers,
-built with [FastMCP](https://gofastmcp.com). It lets AI assistants and agents
-(GitHub Copilot, Claude, Google ADK, ...) read server inventory and health
-straight from each server's **iLO** through the Redfish API.
+An [MCP](https://modelcontextprotocol.io) server for **HPE compute**, built with
+[FastMCP](https://gofastmcp.com). It gives AI assistants and agents (GitHub
+Copilot, Claude, Google ADK, ...) live, read-only access to three HPE
+management sources:
 
-Tested against iLO 6 (ProLiant DL380 Gen11) and iLO 7 (ProLiant Compute DL325 /
-DL345 Gen12). iLO 5 (Gen10) uses the same Redfish paths.
+| Source | What it is | Scope | Tools |
+|---|---|---|---|
+| **HPE iLO** (Redfish) | The management processor in every ProLiant server | One server, deepest detail | unprefixed (`get_server_summary`, ...) |
+| **HPE Compute Ops Management** (COM) | HPE GreenLake cloud service for ProLiant fleets | Whole fleet, any site | `com_*` |
+| **HPE OneView** | On-prem appliance for ProLiant / Synergy (Synergy Composer) | Servers, profiles, frames, interconnects | `oneview_*` |
 
-> Status: **v0.1, iLO, read-only.** HPE Compute Ops Management (COM) and
-> OneView are next; see [Roadmap](#roadmap).
+Ask things like *"which servers in COM are critical and why"*, *"any active
+OneView alerts on the Synergy frame"*, or *"what switch port is dl345-gen12's
+NIC on"*, and the assistant answers from live data. Every tool returns
+compact JSON shaped for an AI model, not a human table.
+
+Tested against iLO 5/6/7 (Synergy 480 Gen10, DL380 Gen11, DL325/DL345 Gen12),
+Synergy Composer2 running OneView 11.10, and COM (`us-west`). The COM and OneView
+logic comes from [proliant-cli](https://github.com/hjma29/proliant-cli), the
+human-facing CLI for the same three sources.
+
+> Status: **v0.2, read-only.** Nothing in this version changes a server.
 
 ## Tools
 
+**Start here:** `list_servers` returns every configured iLO, OneView appliance and COM account.
+
+### iLO (one server)
+
 | Tool | What it returns |
 |---|---|
-| `list_servers` | Configured server names and iLO hosts (never credentials) |
 | `get_server_summary` | Model, product ID, serial, power and POST state, health, UID, BIOS and iLO version, CPU/memory totals |
-| `get_fleet_summary` | `get_server_summary` for all servers in parallel; failures are per server |
+| `get_fleet_summary` | `get_server_summary` for all configured iLOs in parallel; failures are per server |
 | `get_ilo_info` | iLO model and firmware version/date, license, COM connection status, iLO IP/MAC/DHCP/DNS |
 | `get_health` | Overall and per-subsystem health, fan and power-supply redundancy |
 | `get_firmware_inventory` | Every firmware component and version |
@@ -28,7 +43,34 @@ DL345 Gen12). iLO 5 (Gen10) uses the same Redfish paths.
 | `get_event_log` | Newest IML (hardware) or IEL (iLO) entries, filter by severity |
 | `redfish_get` | Raw read-only GET of any `/redfish/v1/...` resource |
 
-Every tool is annotated `readOnlyHint`. Nothing in this version changes a server.
+### HPE Compute Ops Management (fleet)
+
+| Tool | What it returns |
+|---|---|
+| `com_get_overview` | Fleet report: counts by health, power, connection, generation, model; servers needing attention; disconnected servers; soonest subscription expirations; active alerts by severity |
+| `com_list_servers` | Every COM server (filter by health, connected, name): serial, model, health, power, iLO, OS, subscription, firmware bundle |
+| `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, last firmware update, active alerts |
+| `com_list_alerts` | Newest alerts, uncleared by default; filter by server and severity |
+| `com_list_jobs` | Newest jobs (firmware updates, inventory, OneView sync) with state and result |
+| `com_list_groups` | Server groups, members and firmware / iLO-settings compliance |
+| `com_list_firmware_bundles` | SPPs and patch bundles available in COM |
+| `com_api_get` | Raw read-only GET of any `/compute-ops-mgmt/...` resource (secrets redacted) |
+
+### HPE OneView / Synergy
+
+| Tool | What it returns |
+|---|---|
+| `oneview_get_appliance` | Appliance model and version, appliance resource health, resource counts, server status, active alerts by severity |
+| `oneview_list_server_hardware` | Servers: status, power, profile, enclosure/bay, CPU, memory, ROM, OS, iLO |
+| `oneview_get_server_hardware` | One server by name, OS hostname, serial or iLO IP: firmware components and active alerts |
+| `oneview_list_server_profiles` | Profiles: assigned hardware, template and compliance, firmware baseline |
+| `oneview_list_alerts` | Newest alerts (active by default) with corrective action |
+| `oneview_list_enclosures` | Synergy frames: status, bays, Composers, power, PSUs, failed fans |
+| `oneview_list_interconnects` | Virtual Connect / switch modules: model, firmware, status, IP |
+| `oneview_list_firmware_baselines` | SPP / Synergy Service Packs uploaded to OneView |
+| `oneview_rest_get` | Raw read-only GET of any `/rest/...` resource (sessions and users blocked, secrets redacted) |
+
+Every tool is annotated `readOnlyHint`.
 
 ## Install
 
@@ -43,26 +85,27 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp 0.1.0: 12 tools`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `hpe-compute-mcp 0.2.0: 29 tools`):
 
 ```powershell
-uvx --from https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
+uvx --from https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip hpe-compute-mcp --check
 ```
 
 ### macOS / Linux
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check
+uvx --from https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip hpe-compute-mcp --check
 ```
 
-Configure at least one iLO (next section), then check that each iLO accepts the login:
+Configure at least one iLO, OneView appliance or COM account (next section), then check that each one accepts the login:
 
 ```bash
-uvx --from https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip proliant-mcp --check --connect
+uvx --from https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip hpe-compute-mcp --check --connect
 ```
 
-It prints each server with its model and iLO version, or the reason a login failed.
+It prints each iLO (model, iLO version), OneView appliance (model, software version) and
+COM account (server count), or the reason a login failed.
 
 ### Add it to your AI client (stdio)
 
@@ -70,8 +113,8 @@ VS Code / GitHub Copilot (**MCP: Open User Configuration**), Claude Desktop
 (**Settings > Developer > Edit Config**) and other clients all take the same command:
 
 ```json
-{"servers": {"proliant": {"type": "stdio", "command": "uvx",
-  "args": ["--from", "https://github.com/hjma29/hpe-proliant-mcp/archive/refs/heads/main.zip", "proliant-mcp"]}}}
+{"servers": {"hpe-compute": {"type": "stdio", "command": "uvx",
+  "args": ["--from", "https://github.com/hjma29/hpe-compute-mcp/archive/refs/heads/main.zip", "hpe-compute-mcp"]}}}
 ```
 
 Claude Desktop uses the top-level key `mcpServers` instead of `servers`. Credentials come from
@@ -79,51 +122,89 @@ your inventory file (next section), so none go in this JSON. If the client canno
 restart it after installing uv, or use the full path (`%USERPROFILE%\.local\bin\uvx.exe`).
 
 To pin a version instead of `main`, use a release or commit archive URL.
-To hack on it: `git clone https://github.com/hjma29/hpe-proliant-mcp && cd hpe-proliant-mcp && uv sync && uv run pytest`.
+To hack on it: `git clone https://github.com/hjma29/hpe-compute-mcp && cd hpe-compute-mcp && uv sync && uv run pytest`.
 
-## Configure your iLOs
+## Configure
 
-Credentials are read from the machine running the server, never from this repository,
-and never sent to the AI model. That machine must reach each iLO over HTTPS (port 443).
+Credentials are read from the machine running the server, never from this
+repository, and never sent to the AI model. That machine must reach each iLO
+and OneView appliance over HTTPS (443), and `*.api.greenlake.hpe.com` /
+`sso.common.cloud.hpe.com` for COM. Configure any mix of the three.
 
-**Option A: inventory file (several servers).** Copy
-[examples/inventory.example.ini](examples/inventory.example.ini) to
-`~/.config/proliant-mcp/inventory.ini` (Windows: `%USERPROFILE%\.config\proliant-mcp\inventory.ini`),
-fill in hosts and passwords, and restrict it to your user. Or point `PROLIANT_MCP_CONFIG` at any path.
+### Inventory file
+
+Copy [examples/inventory.example.ini](examples/inventory.example.ini) to
+`~/.config/hpe-compute-mcp/inventory.ini` (Windows: `%USERPROFILE%\.config\hpe-compute-mcp\inventory.ini`),
+fill it in, and restrict it to your user. Or point `HPE_COMPUTE_MCP_CONFIG` at any path.
 The file can be saved by Notepad or PowerShell (UTF-8 or UTF-16).
+
+```ini
+[defaults]
+username = Administrator
+password = changeme
+
+; an iLO (type = ilo is the default)
+[dl380-gen11]
+host = 192.0.2.10
+
+; a OneView appliance / Synergy Composer
+[synergy]
+type = oneview
+host = 192.0.2.100
+
+; a Compute Ops Management workspace
+[greenlake]
+type = com
+client_id = ...
+client_secret = ...
+region = us-west
+```
+
+Keep comments on their own lines; a `#` or `;` after a value becomes part of the value.
 
 ```powershell
 # Windows: create, edit, then lock to your user
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.config\proliant-mcp" | Out-Null
-notepad "$env:USERPROFILE\.config\proliant-mcp\inventory.ini"
-icacls "$env:USERPROFILE\.config\proliant-mcp\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.config\hpe-compute-mcp" | Out-Null
+notepad "$env:USERPROFILE\.config\hpe-compute-mcp\inventory.ini"
+icacls "$env:USERPROFILE\.config\hpe-compute-mcp\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
 ```
 
 ```bash
 # macOS / Linux
-chmod 600 ~/.config/proliant-mcp/inventory.ini
+chmod 600 ~/.config/hpe-compute-mcp/inventory.ini
 ```
 
-An existing [proliant-cli](https://github.com/hjma29/proliant-cli) inventory at
-`~/.config/proliant-cli/inventory.ini` is picked up automatically.
+Older locations still work: `~/.config/proliant-mcp/inventory.ini`, `PROLIANT_MCP_CONFIG`, and a
+[proliant-cli](https://github.com/hjma29/proliant-cli) inventory at `~/.config/proliant-cli/inventory.ini`.
 
-**Option B: one server from environment variables.**
+### iLO
 
-```powershell
-# Windows (PowerShell)
-$env:ILO_HOST = "192.0.2.10"; $env:ILO_USERNAME = "Administrator"; $env:ILO_PASSWORD = "..."
-```
+A read-only iLO account (Login privilege only) is enough for every tool. iLO uses a
+self-signed certificate by default, so TLS verification is off unless you set
+`verify_ssl = true`. One iLO can also come from environment variables:
+`ILO_HOST`, `ILO_USERNAME`, `ILO_PASSWORD` (`ILO_NAME` sets its name, default `default`).
 
 ```bash
-# macOS / Linux
 export ILO_HOST=192.0.2.10 ILO_USERNAME=Administrator ILO_PASSWORD='...'
 ```
 
-`ILO_NAME` sets the server's name (default `default`).
+### HPE OneView
 
-iLO uses a self-signed certificate by default, so TLS verification is off
-unless you set `verify_ssl = true` (ini) or `ILO_VERIFY_SSL=1`. A read-only
-iLO account (Login privilege only) is enough for every tool.
+A OneView user with the read-only role is enough. One appliance can also come from
+environment variables: `ONEVIEW_HOST`, `ONEVIEW_USERNAME`, `ONEVIEW_PASSWORD`
+(`ONEVIEW_NAME`). The REST API version is negotiated automatically.
+
+### HPE Compute Ops Management
+
+COM needs a GreenLake **API client** with a Compute Ops Management role (an
+observer role is enough for these read-only tools). In HPE GreenLake open
+**Manage Workspace > API**, create a personal API client for the Compute Ops
+Management service in your region, and copy the client ID and secret. Region is
+`us-west`, `eu-central` or `ap-northeast`.
+
+Put it in the inventory (`type = com`) or set `HPECOM_CLIENT_ID`,
+`HPECOM_CLIENT_SECRET` and `HPECOM_REGION`. If neither is set and you already
+use proliant-cli, its COM login (`proliant com login`) is reused automatically.
 
 ## Test it
 
@@ -133,20 +214,23 @@ iLO account (Login privilege only) is enough for every tool.
 uv run pytest
 ```
 
-Runs the tools against a fake iLO (`httpx.MockTransport`) through a real MCP client.
+Runs the tools against a fake iLO, OneView appliance and COM API (`httpx.MockTransport`)
+through a real MCP client. No hardware or GreenLake account needed.
 
 ### 2. From the terminal
 
 ```bash
-uv run fastmcp list src/proliant_mcp/server.py                     # tools and schemas
-uv run fastmcp call src/proliant_mcp/server.py list_servers
-uv run fastmcp call src/proliant_mcp/server.py get_ilo_info server=dl380-gen11
+uv run fastmcp list src/hpe_compute_mcp/server.py                     # tools and schemas
+uv run fastmcp call src/hpe_compute_mcp/server.py list_servers
+uv run fastmcp call src/hpe_compute_mcp/server.py get_ilo_info server=dl380-gen11
+uv run fastmcp call src/hpe_compute_mcp/server.py com_get_overview
+uv run fastmcp call src/hpe_compute_mcp/server.py oneview_list_alerts
 ```
 
 ### 3. MCP Inspector (web UI)
 
 ```bash
-npx @modelcontextprotocol/inspector uv run --directory "$PWD" proliant-mcp
+npx @modelcontextprotocol/inspector uv run --directory "$PWD" hpe-compute-mcp
 ```
 
 Open the printed URL, click **Connect**, then **Tools** to call each tool by hand.
@@ -154,11 +238,14 @@ Open the printed URL, click **Connect**, then **Tools** to call each tool by han
 ### 4. VS Code / GitHub Copilot
 
 Open this folder in VS Code. [.vscode/mcp.json](.vscode/mcp.json) registers
-the server as `proliant`; start it from the MCP view (or the code lens in that
+the server as `hpe-compute`; start it from the MCP view (or the code lens in that
 file), switch Copilot Chat to **Agent** mode, and ask:
 
-- "List my ProLiant servers and their iLO versions"
-- "Which servers have a GPU?"
+- "Give me a COM fleet health report. Which servers need attention and why?"
+- "Which COM servers are not connected, and when do subscriptions expire?"
+- "Any active OneView alerts? What's the corrective action?"
+- "Show the Synergy frame: power, Composers, interconnect firmware"
+- "Which OneView profiles are not on the newest Synergy Service Pack?"
 - "Any critical IML events on dl380-gen11?"
 - "Which switch port is each NIC on dl345-gen12 connected to?"
 
@@ -166,12 +253,14 @@ To use it from any workspace, add the same entry to your user MCP config
 with an absolute path in `--directory`.
 
 Claude Desktop / Claude Code / other clients use the same command:
-`uv run --directory /path/to/hpe-proliant-mcp proliant-mcp`.
+`uv run --directory /path/to/hpe-compute-mcp hpe-compute-mcp`.
+
+The old command name `proliant-mcp` still works, so existing client configs keep running.
 
 ### 5. Over HTTP
 
 ```bash
-uv run proliant-mcp --http --host 127.0.0.1 --port 8000   # endpoint: http://127.0.0.1:8000/mcp
+uv run hpe-compute-mcp --http --host 127.0.0.1 --port 8000   # endpoint: http://127.0.0.1:8000/mcp
 ```
 
 The HTTP endpoint has **no authentication**. Keep it on localhost or a
@@ -194,28 +283,37 @@ instead, swap `StdioConnectionParams` for
 
 ## Skills
 
-[skills/proliant-ilo/SKILL.md](skills/proliant-ilo/SKILL.md) is an agent skill
-that tells an assistant which tool to use for which question, plus workflows
-(fleet firmware audit, health triage, finding a server's switch port). Copy
-it into your agent's skills folder (for example `~/.copilot/skills/` or
+Agent skills that tell an assistant which tool to use for which question, plus workflows:
+
+- [skills/proliant-ilo/SKILL.md](skills/proliant-ilo/SKILL.md): one server through its iLO
+  (firmware audit, health triage, finding a server's switch port).
+- [skills/hpe-compute-fleet/SKILL.md](skills/hpe-compute-fleet/SKILL.md): fleets through
+  Compute Ops Management and OneView (fleet health report, alert triage, firmware
+  baseline drift, finding one server across all three sources).
+
+Copy them into your agent's skills folder (for example `~/.copilot/skills/` or
 `.github/skills/`).
 
 ## Roadmap
 
-1. **iLO (now):** read-only inventory and health.
-2. **iLO actions:** power, UID, one-time boot, opt-in and gated as destructive.
-3. **HPE Compute Ops Management (GreenLake):** fleet inventory, firmware
-   baselines and jobs.
-4. **HPE OneView / Synergy.**
-5. **Skills** for deploying and managing ProLiant servers (OS deployment,
+1. **Read-only (now):** iLO, Compute Ops Management and OneView inventory, health,
+   alerts, jobs and firmware baselines.
+2. **Actions,** opt-in and annotated destructive: power and UID (iLO, COM, OneView),
+   one-time boot, COM firmware update jobs.
+3. **More reports:** COM server inventory (storage, NICs, PCI), OneView networks and
+   uplink sets, COM sustainability / energy reports.
+4. **Skills** for deploying and managing ProLiant servers (OS deployment,
    firmware updates, BIOS baselines).
 
 ## Security
 
 - No credentials are stored in this repository; `.gitignore` blocks `*.ini`
   (except the example) and `.env` files.
-- Tools never return passwords; `redfish_get` refuses session and account resources.
-- Each tool call opens and closes its own Redfish session.
+- Tools never return passwords or client secrets. `redfish_get` refuses session and
+  account resources; `oneview_rest_get` refuses sessions and users; the raw COM and
+  OneView GET tools redact keys such as `activationKey` and `password`.
+- Each iLO and OneView tool call opens and closes its own session. COM access tokens
+  are cached in memory only, until they expire.
 
 ## License
 

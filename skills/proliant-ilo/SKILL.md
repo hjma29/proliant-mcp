@@ -1,18 +1,20 @@
 ---
 name: proliant-ilo
-description: "Read HPE ProLiant server state through the proliant-mcp iLO tools: identity, power/POST state, health, iLO version and license, firmware, CPUs/GPUs, memory, storage, NICs with LLDP neighbors, and IML/iLO event logs. Use for questions like 'what iLO version is on X', 'which servers have GPUs', 'is the server healthy', 'what switch port is this NIC on', 'show recent hardware errors', or a fleet firmware audit."
+description: "Read HPE ProLiant server state through the hpe-compute-mcp iLO tools: identity, power/POST state, health, iLO version and license, firmware, CPUs/GPUs, memory, storage, NICs with LLDP neighbors, and IML/iLO event logs. Use for questions like 'what iLO version is on X', 'which servers have GPUs', 'is the server healthy', 'what switch port is this NIC on', 'show recent hardware errors', or a fleet firmware audit."
 ---
 
-# ProLiant iLO (proliant-mcp)
+# ProLiant iLO (hpe-compute-mcp)
 
 All data comes live from each server's iLO Redfish API through the
-`proliant-mcp` MCP server. Every tool is read-only.
+`hpe-compute-mcp` MCP server. Every tool is read-only. For fleet-wide
+questions through Compute Ops Management or OneView, use the
+`hpe-compute-fleet` skill.
 
 ## Pick the tool
 
 | Question | Tool |
 |---|---|
-| Which servers exist? | `list_servers` (always call first; use the exact names) |
+| Which servers exist? | `list_servers` (always call first; use the exact names from `servers`) |
 | Model, serial, power, POST, health, UID, BIOS/iLO version, CPU/memory totals | `get_server_summary` |
 | Same, for every server at once | `get_fleet_summary` |
 | iLO generation, firmware and date, license, COM connection, iLO IP/MAC/DHCP | `get_ilo_info` |

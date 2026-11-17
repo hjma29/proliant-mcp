@@ -1,22 +1,24 @@
 [project]
-name = "proliant-mcp"
-version = "0.1.0"
-description = "MCP server for HPE ProLiant servers: iLO Redfish inventory and health tools (Compute Ops Management and OneView planned)"
+name = "hpe-compute-mcp"
+version = "0.2.0"
+description = "MCP server for HPE compute: read-only tools for ProLiant iLO (Redfish), HPE Compute Ops Management (GreenLake) and HPE OneView / Synergy"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "hjma29" }]
-keywords = ["mcp", "hpe", "proliant", "ilo", "redfish", "fastmcp", "ai-agent"]
+keywords = ["mcp", "hpe", "proliant", "ilo", "redfish", "oneview", "synergy", "compute-ops-management", "greenlake", "fastmcp", "ai-agent"]
 dependencies = [
     "fastmcp>=4.2.0",
     "httpx>=0.27",
 ]
 
 [project.scripts]
-proliant-mcp = "proliant_mcp.server:main"
+hpe-compute-mcp = "hpe_compute_mcp.server:main"
+# Older name, kept so existing MCP client configs keep working.
+proliant-mcp = "hpe_compute_mcp.server:main"
 
 [project.urls]
-Repository = "https://github.com/hjma29/hpe-proliant-mcp"
+Repository = "https://github.com/hjma29/hpe-compute-mcp"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.12"]
