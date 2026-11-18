@@ -14,20 +14,33 @@ from typing import Any
 
 import httpx
 
-from proliant_mcp.config import ComAccount
+from proliant_mcp.config import COM_REGIONS, ComAccount
 from proliant_mcp.util import matches
 
 TOKEN_URL = "https://sso.common.cloud.hpe.com/as/token.oauth2"
 API = "/compute-ops-mgmt/v1"
 _TIMEOUT = httpx.Timeout(timeout=60.0, connect=10.0)
 _PAGE = 500
+REGIONS = ("us-west", "eu-central", "ap-northeast")
 
 # client_id -> (token, monotonic expiry); tokens last ~2 h, reuse them across tool calls.
 _tokens: dict[str, tuple[str, float]] = {}
+# client_id -> region actually used, when the configured one has no COM for that workspace.
+_regions: dict[str, str] = {}
 
 
 class ComError(RuntimeError):
     pass
+
+
+def _routing_404(resp: httpx.Response) -> bool:
+    """GreenLake's answer when COM is not set up in this region for the token's workspace."""
+    if resp.status_code != 404:
+        return False
+    try:
+        return "routing details" in str(resp.json().get("message", "")).lower()
+    except ValueError:
+        return False
 
 
 def _http_error(resp: httpx.Response, what: str) -> ComError:
@@ -50,11 +63,13 @@ class ComClient:
         self.account = account
         self._transport = transport
         self._http: httpx.AsyncClient | None = None
+        self.region = _regions.get(account.client_id, account.region)
 
     async def __aenter__(self) -> "ComClient":
         try:
-            base = self.account.base_url
-        except ValueError as exc:
+            self.account.base_url  # noqa: B018 - validates the configured region
+            base = COM_REGIONS[self.region]
+        except (ValueError, KeyError) as exc:
             raise ComError(str(exc)) from exc
         self._http = httpx.AsyncClient(base_url=base, timeout=_TIMEOUT, transport=self._transport)
         try:
@@ -95,15 +110,54 @@ class ComClient:
     async def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         assert self._http is not None
         url = path if path.startswith("/compute-ops-mgmt/") else API + path
-        try:
-            resp = await self._http.get(url, params=params)
-        except httpx.TransportError as exc:
-            raise ComError(f"COM GET {url} failed ({exc.__class__.__name__})") from exc
+        for attempt in range(2):
+            try:
+                resp = await self._http.get(url, params=params)
+            except httpx.TransportError as exc:
+                raise ComError(f"COM GET {url} failed ({exc.__class__.__name__})") from exc
+            if attempt == 0 and _routing_404(resp):
+                await self._switch_region()
+                continue
+            break
         if resp.status_code == 401:
             _tokens.pop(self.account.client_id, None)
         if resp.status_code >= 400:
             raise _http_error(resp, f"GET {url}")
         return resp.json() if resp.content else {}
+
+    async def region_totals(self) -> dict[str, int | None]:
+        """Server count per region for this login's workspace; None where COM is not set up."""
+        assert self._http is not None
+        auth = {"Authorization": self._http.headers["Authorization"]}
+
+        async def one(client: httpx.AsyncClient, region: str) -> tuple[str, int | None]:
+            try:
+                resp = await client.get(f"{COM_REGIONS[region]}{API}/servers", params={"limit": 1}, headers=auth)
+            except httpx.TransportError:
+                return region, None
+            if resp.status_code == 200:
+                return region, int(resp.json().get("total") or 0)
+            return region, None
+
+        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
+            return dict(await asyncio.gather(*(one(client, r) for r in REGIONS)))
+
+    async def _switch_region(self) -> None:
+        """The configured region has no COM for this workspace: use the region that has the most servers."""
+        assert self._http is not None
+        totals = {r: n for r, n in (await self.region_totals()).items() if n is not None}
+        if not totals:
+            ws = f" '{self.account.workspace}'" if self.account.workspace else ""
+            raise ComError(
+                f"Compute Ops Management is not set up for this GreenLake workspace{ws} in any region "
+                f"({', '.join(REGIONS)}). The COM login in use comes from {self.account.source or 'the configuration'}. "
+                "Sign in again with the com_login tool (or `proliant-mcp login` in a terminal) and choose a "
+                "workspace that has Compute Ops Management."
+            )
+        best = max(totals, key=lambda r: (totals[r], r == self.account.region))
+        _regions[self.account.client_id] = best
+        self.region = best
+        self._http.base_url = httpx.URL(COM_REGIONS[best])
 
     async def get_all(self, path: str, params: dict[str, Any] | None = None, max_items: int = 5000) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []

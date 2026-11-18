@@ -255,3 +255,63 @@ async def test_com_list_servers_with_hardware_and_server_detail(mcp_client):
     assert by_name["gpu1.example.com"]["hardware"]["gpu_count"] == 3
     assert by_name["dl345.example.com"]["hardware"]["inventory_available"] is False
     assert detail["hardware"]["gpus"][0]["serial_numbers"] == ["GSN3", "GSN4"]
+
+
+def _greenlake_by_region(totals):
+    """Fake GreenLake where COM answers only in the regions listed in *totals* (others: routing 404)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "sso.common.cloud.hpe.com":
+            return httpx.Response(200, json={"access_token": "comtok", "expires_in": 7200})
+        region = request.url.host.split(".")[0]
+        if region not in totals:
+            return httpx.Response(404, json={"httpStatusCode": 404, "errorCode": "HPE_GL_ERROR_NOT_FOUND",
+                                             "message": "Routing details for the customer not found."})
+        servers = [{"id": f"{region}-{i}", "name": f"{region}-srv{i}"} for i in range(totals[region])]
+        return httpx.Response(200, json={"items": servers, "total": len(servers), "count": len(servers)})
+
+    return handler
+
+
+@pytest.fixture
+def com_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("PROLIANT_MCP_CONFIG", str(tmp_path / "none.ini"))
+    (tmp_path / "none.ini").write_text("")
+    monkeypatch.setenv("HPECOM_CLIENT_ID", "cid-region-test")
+    monkeypatch.setenv("HPECOM_CLIENT_SECRET", "s")
+    monkeypatch.setenv("HPECOM_REGION", "us-west")
+    com._tokens.clear()
+    com._regions.clear()
+    yield monkeypatch
+    com._regions.clear()
+
+
+async def test_com_uses_the_region_where_the_workspace_has_com(com_only, capsys):
+    com_only.setattr(srv, "_transport", httpx.MockTransport(_greenlake_by_region({"eu-central": 3, "ap-northeast": 1})))
+    async with Client(srv.mcp) as c:
+        rows = (await c.call_tool("com_list_servers", {})).structured_content["result"]
+        accounts = (await c.call_tool("list_servers", {})).data["com_accounts"]
+    assert [r["name"] for r in rows] == ["eu-central-srv0", "eu-central-srv1", "eu-central-srv2"]  # most servers wins
+    assert accounts == [{"name": "com", "region": "eu-central", "configured_region": "us-west", "workspace": None, "source": "environment"}]
+
+    com._regions.clear()
+    assert await srv._check(connect=True) == 0
+    assert "com  us-west  OK  3 servers in eu-central (this workspace has no COM in us-west); login: environment" in capsys.readouterr().out
+
+
+async def test_com_in_no_region_says_to_sign_in_again(com_only):
+    com_only.setattr(srv, "_transport", httpx.MockTransport(_greenlake_by_region({})))
+    async with Client(srv.mcp) as c:
+        result = await c.call_tool("com_get_overview", {}, raise_on_error=False)
+    text = result.content[0].text
+    assert result.is_error and "not set up for this GreenLake workspace in any region" in text
+    assert "comes from environment" in text and "com_login" in text
+
+
+async def test_com_keeps_a_working_region(com_only):
+    com_only.setattr(srv, "_transport", httpx.MockTransport(_greenlake_by_region({"us-west": 1, "eu-central": 5})))
+    async with Client(srv.mcp) as c:
+        rows = (await c.call_tool("com_list_servers", {})).structured_content["result"]
+    assert [r["name"] for r in rows] == ["us-west-srv0"] and com._regions == {}

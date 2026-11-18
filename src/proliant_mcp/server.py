@@ -126,7 +126,13 @@ def list_servers() -> dict[str, Any]:
         "servers": [{"name": s.name, "ilo_host": s.host} for s in load_servers().values()],
         "oneview_appliances": [{"name": a.name, "host": a.host} for a in load_oneview().values()],
         "com_accounts": [
-            {"name": a.name, "region": a.region, "workspace": a.workspace or None, "source": a.source or None}
+            {
+                "name": a.name,
+                "region": com._regions.get(a.client_id, a.region),
+                **({"configured_region": a.region} if a.client_id in com._regions else {}),
+                "workspace": a.workspace or None,
+                "source": a.source or None,
+            }
             for a in load_com().values()
         ],
     }
@@ -534,7 +540,12 @@ async def _check(connect: bool) -> int:
     async def com_line(a: ComAccount) -> str:
         async with ComClient(a, transport=_transport) as client:
             total = (await client.get("/servers", {"limit": 1})).get("total")
-        return f"{total} servers"
+        line = f"{total} servers"
+        if client.region != a.region:
+            line += f" in {client.region} (this workspace has no COM in {a.region})"
+        if a.workspace:
+            line += f"; workspace '{a.workspace}'"
+        return line + f"; login: {a.source or 'configuration'}"
 
     if servers:
         print("iLO servers:")

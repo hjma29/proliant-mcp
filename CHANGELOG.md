@@ -6,6 +6,17 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.6.2 — 2026-11-17
+
+### Bug Fixes
+- Compute Ops Management no longer fails with "HTTP 404 Routing details for the customer not found" when the login's region has no COM for its workspace (for example a proliant-cli login last used on another workspace). The server checks the other regions with the same login and uses the one where the workspace has the most servers. If no region has COM, the error names the workspace and the login file in use and says to sign in again with `com_login`.
+- `com_login` and `proliant-mcp login` choose the region where the workspace's servers are, not us-west by default, when COM is set up in several regions.
+
+### Enhancements
+- `proliant-mcp --check --connect` shows, per COM account, the region actually used, the workspace and which login file it came from; `list_servers` shows the region in use.
+
+---
+
 ## v0.6.1 — 2026-11-17
 
 ### Enhancements

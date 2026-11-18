@@ -288,6 +288,9 @@ observer role is enough for these read-only tools), and copy the client ID and s
 
 Order of use: inventory / environment variables, then the saved `proliant-mcp login`, then
 proliant-cli's COM login (`proliant com login`), which is reused automatically if you have it.
+`proliant-mcp --check --connect` shows which one is in use, its workspace and the region. If the
+login's region has no COM for that workspace, the server uses the region that has it; if no region
+does, sign in again and pick a workspace with Compute Ops Management.
 
 ## Test it
 

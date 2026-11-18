@@ -646,11 +646,25 @@ async def _resolve_region(access_token: str, ccs_session: str, wanted: str | Non
     if not provisioned:
         say("Could not see where Compute Ops Management is provisioned; assuming us-west (use --region to change).")
         return "us-west"
-    if len(provisioned) > 1:
-        chosen = "us-west" if "us-west" in provisioned else provisioned[0]
-        say(f"Compute Ops Management is provisioned in {', '.join(provisioned)}; using {chosen} (use --region to change).")
-        return chosen
-    return provisioned[0]
+    return "us-west" if "us-west" in provisioned else provisioned[0]
+
+
+async def _region_with_servers(api_client: dict[str, str], guess: str, say: Say) -> str:
+    """Pick the region where this workspace's COM servers are, using the new API client."""
+    account = ComAccount("com", api_client["client_id"], api_client["client_secret"], guess, "login")
+    try:
+        async with ComClient(account, transport=_transport) as client:
+            totals = {r: n for r, n in (await client.region_totals()).items() if n is not None}
+    except ComError:
+        return guess
+    if not totals:
+        say("Compute Ops Management did not answer in any region for this workspace yet; using " + guess + ".")
+        return guess
+    best = max(totals, key=lambda r: (totals[r], r == guess))
+    if len(totals) > 1:
+        per = ", ".join(f"{r}: {n} servers" for r, n in totals.items())
+        say(f"Compute Ops Management is set up in several regions ({per}); using {best}. Use --region to choose another.")
+    return best
 
 
 def _install_id() -> str:
@@ -734,8 +748,10 @@ async def login(email: str, ui: LoginUI, workspace: str | None = None, region: s
     workspace_id, workspace_name = chosen["platform_customer_id"], chosen.get("company_name", "")
     ccs_session = await _load_workspace(access_token, workspace_id, ccs_session)
     resolved = await _resolve_region(access_token, ccs_session, region, ui.say)
-    ui.say(f"Creating a GreenLake API client in '{workspace_name}' ({resolved})...")
+    ui.say(f"Creating a GreenLake API client in '{workspace_name}'...")
     api_client = await _create_api_client(access_token, ccs_session)
+    if not region:
+        resolved = await _region_with_servers(api_client, resolved, ui.say)
     data = {
         "client_id": api_client["client_id"],
         "client_secret": api_client["client_secret"],
