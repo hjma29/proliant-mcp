@@ -30,6 +30,20 @@ FAKE_IEL = [
     _iel("2039-12-09T02:25:35Z", "Browser login: Administrator - 192.0.2.70(wrong-clock.example.com)."),
 ]
 
+
+def _iml(created: str, severity: str, message: str, updated: str | None = None) -> dict:
+    return {"Created": created, "Message": message, "Severity": severity,
+            "Oem": {"Hpe": {"Count": 1, "Updated": updated or created, "Repaired": False, "ClassDescription": "System Error"}}}
+
+
+FAKE_IML = [
+    _iml(_ago(days=3), "Critical", "Server Critical Fault (Fan Board e-fuse failure)"),
+    _iml(_ago(days=2), "Critical", "Server Critical Fault  (Fan Board e-fuse failure)"),  # iLO spacing varies
+    _iml(_ago(days=1), "Critical", "Server Critical Fault (Fan Board e-fuse failure)"),
+    _iml(_ago(hours=5), "Warning", "Unsupported DIMM Configuration Detected"),
+    _iml(_ago(hours=4), "OK", "Server power restored."),
+]
+
 FAKE_ILO: dict[str, dict] = {
     "/redfish/v1/": {
         "Systems": {"@odata.id": "/redfish/v1/Systems/"},
@@ -49,9 +63,18 @@ FAKE_ILO: dict[str, dict] = {
         "LocationIndicatorActive": False,
         "ProcessorSummary": {"Count": 1, "Model": "AMD EPYC 9375F 32-Core Processor     "},
         "MemorySummary": {"TotalSystemMemoryGiB": 768},
-        "Oem": {"Hpe": {"PostState": "FinishedPost"}},
+        "Oem": {"Hpe": {"PostState": "InPostDiscoveryComplete"}},
+        "BootProgress": {"LastState": "SetupEntered", "LastStateTime": "2026-11-18T16:06:21Z"},
+        "Boot": {"BootOrder": ["Boot000C", "Boot0010"], "BootOptions": {"@odata.id": "/redfish/v1/Systems/1/BootOptions/"}},
+        "LogServices": {"@odata.id": "/redfish/v1/Systems/1/LogServices/"},
         "Processors": {"@odata.id": "/redfish/v1/Systems/1/Processors/"},
     },
+    "/redfish/v1/Systems/1/BootOptions/": {"Members": [{"@odata.id": "/redfish/v1/Systems/1/BootOptions/2/"}, {"@odata.id": "/redfish/v1/Systems/1/BootOptions/1/"}]},
+    "/redfish/v1/Systems/1/BootOptions/1/": {"Id": "1", "BootOptionReference": "Boot000C", "DisplayName": "Generic USB Boot"},
+    "/redfish/v1/Systems/1/BootOptions/2/": {"Id": "2", "BootOptionReference": "Boot0010", "DisplayName": "UEFI HTTPv4 (Embedded LOM 1)"},
+    "/redfish/v1/Systems/1/LogServices/": {"Members": [{"@odata.id": "/redfish/v1/Systems/1/LogServices/IML/"}]},
+    "/redfish/v1/Systems/1/LogServices/IML/": {"Entries": {"@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/"}},
+    "/redfish/v1/Systems/1/LogServices/IML/Entries/": {"Members": FAKE_IML},
     "/redfish/v1/Systems/1/Processors/": {
         "Members": [{"@odata.id": "/redfish/v1/Systems/1/Processors/1/"}, {"@odata.id": "/redfish/v1/Systems/1/Processors/2/"}]
     },

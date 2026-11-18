@@ -32,13 +32,16 @@ human-facing CLI for the same three sources.
 ## Tools
 
 **Start here:** `list_servers` returns every configured iLO, OneView appliance and COM account.
+`find_server` tells you which server a name, iLO IP or hostname, serial or OS hostname belongs to,
+searching the iLO inventory, every COM account and every OneView appliance at once; for an address
+none of them knows, it reads that iLO's login-free identity pages (iLO model, server model, serial).
 
 ### iLO (one server)
 
 | Tool | What it returns |
 |---|---|
-| `get_server_summary` | Model, product ID, serial, power and POST state, health, UID, BIOS and iLO version, CPU/memory totals |
-| `get_fleet_summary` | `get_server_summary` for all configured iLOs in parallel; failures are per server |
+| `get_server_summary` | Model, product ID, serial, power and POST state, health, UID, BIOS and iLO version, CPU/memory totals, and the OS: whether one is running and which (from the HPE agent), boot progress (stuck in POST or BIOS setup), OS loader entries (`Ubuntu`, `VMware ESXi`) and the UEFI boot order |
+| `get_fleet_summary` | `get_server_summary` (with OS and boot state) for all configured iLOs in parallel; failures are per server |
 | `get_ilo_info` | iLO model and firmware version/date, license, COM connection status, iLO IP/MAC/DHCP/DNS |
 | `get_health` | Overall and per-subsystem health, fan and power-supply redundancy |
 | `get_firmware_inventory` | Every firmware component and version |
@@ -46,8 +49,9 @@ human-facing CLI for the same three sources.
 | `get_memory` | Total, populated/empty slots, each DIMM |
 | `get_storage` | Controllers, drives, RAID volumes |
 | `get_network_adapters` | NICs, ports, MACs, link, LLDP neighbor (switch and port) |
-| `get_event_log` | Newest IML (hardware) or IEL (iLO) entries, filter by severity, time window (`since`/`until`: `7d`, `24h`, a date) and message text; entries with a wrong iLO clock are flagged and listed last |
-| `get_ilo_logins` | Who logged in to the iLOs, for many servers in one call: logins per day, by type, user and source IP/host, failed logins and lockout alerts; says when a log wrapped before the window start and marks proliant-mcp's own sessions |
+| `get_event_log` | Newest IML (hardware), IEL (iLO) or Security Log entries, filter by severity (exact or `min_severity`), time window (`since`/`until`: `7d`, `24h`, a date) and message text; entries with a wrong iLO clock are flagged and listed last; `summary` groups identical messages with counts and first/last time |
+| `get_fleet_event_summary` | Significant events for many iLOs in one call: per server, Warning and Critical (by default) IML, IEL or Security Log entries grouped by message, most severe first |
+| `get_ilo_logins` | Who logged in to the iLOs, for many servers in one call: logins per day, by type, user and source IP/host, failed logins and lockout alerts; says when a log wrapped before the window start; proliant-mcp's own sessions are counted separately (`include_this_computer` to count them) |
 | `redfish_get` | Raw read-only GET of any `/redfish/v1/...` resource |
 
 ### HPE Compute Ops Management (fleet)
@@ -57,7 +61,7 @@ human-facing CLI for the same three sources.
 | `com_get_overview` | Fleet report: counts by health, power, connection, generation, model; servers needing attention; disconnected servers; soonest subscription expirations; active alerts by severity |
 | `com_list_servers` | Every COM server (filter by health, connected, name): serial, model, health, power, iLO, OS, subscription, firmware bundle. `include_hardware` adds CPU, GPU and storage controller / drive columns |
 | `com_hardware_report` | Whole-fleet hardware table, compact: servers with identical hardware grouped, with model, CPU, storage controllers and drives, direct-attached drives, GPUs and NICs (with mode), plus NIC mode totals |
-| `com_list_nics` | NIC / HBA report for the whole fleet in one call: per server each adapter's mode (Ethernet, InfiniBand, FibreChannel), ports up and link speeds; totals by mode (and the most used), adapter model and link speed |
+| `com_list_nics` | NIC / HBA report for the whole fleet in one call: per server each adapter's mode (Ethernet, InfiniBand, FibreChannel), ports up and link speeds; totals by mode (and the most used), by adapter model (cards, ports, ports up, speeds) and link speed |
 | `com_list_gpus` | GPU report for the whole fleet in one call: per server model, iLO firmware, CPU and GPUs, totals by GPU model, servers with no cached inventory |
 | `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, CPU and GPUs (with serial numbers), NIC ports (mode, link, speed, MAC), last firmware update, active alerts |
 | `com_list_alerts` | Newest alerts, uncleared by default; filter by server and severity |
@@ -77,6 +81,7 @@ human-facing CLI for the same three sources.
 | `oneview_list_alerts` | Newest alerts (active by default) with corrective action |
 | `oneview_list_enclosures` | Synergy frames: status, bays, Composers, power, PSUs, failed fans |
 | `oneview_list_interconnects` | Virtual Connect / switch modules: model, firmware, status, IP |
+| `oneview_list_uplink_sets` | Synergy uplink status in one call: each uplink set's status, networks (with VLAN) and ports (module, port, linked, Active / StandBy role, speed, LLDP neighbor switch and port), with issues (no networks, unlinked ports, no module redundancy) and related alerts |
 | `oneview_list_firmware_baselines` | SPP / Synergy Service Packs uploaded to OneView |
 | `oneview_rest_get` | Raw read-only GET of any `/rest/...` resource (sessions and users blocked, secrets redacted) |
 
@@ -108,7 +113,7 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 40 tools` and `(up to date)`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 43 tools` and `(up to date)`):
 
 ```powershell
 uvx proliant-mcp@latest --check

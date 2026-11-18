@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+from collections import Counter
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
 import httpx
@@ -29,6 +30,10 @@ Start with list_servers: it returns the configured iLO server names, OneView app
 and COM accounts. For a fleet-wide question start with com_get_overview or
 oneview_get_appliance. The same physical server can appear in all three; match by
 serial number. If a tool returns an error, report it; never invent values.
+To find which server an IP, hostname or serial belongs to, call find_server (all sources at once).
+For the OS a server runs or why it isn't booting, see `os` in get_server_summary / get_fleet_summary.
+For significant events on several servers use get_fleet_event_summary. For Synergy uplinks use
+oneview_list_uplink_sets.
 For tables or comparisons across servers use com_list_servers (add include_hardware for CPU, GPU
 and storage controller columns) or com_list_gpus; they return the whole fleet in one call. For a
 table of each server's storage controllers, drives, GPUs and NICs use com_hardware_report: it is compact and
@@ -150,6 +155,23 @@ def list_servers() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+async def find_server(
+    query: Annotated[str, Field(description="Server name, iLO IP or hostname, serial number or OS hostname.")],
+    probe: Annotated[
+        bool, Field(description="If nothing matches and the query is an address, read the iLO's login-free identity pages.")
+    ] = True,
+) -> dict[str, Any]:
+    """Which server is this? Looks one name, iLO IP/hostname, serial or OS hostname up in the iLO
+    inventory, every COM account and every OneView appliance (servers and interconnect modules) in
+    one call. If nothing matches and the query is an IP or hostname, it reads that iLO's
+    unauthenticated identity pages to report its iLO model, firmware, hostname, server model and
+    serial. Use it instead of searching com_list_servers or oneview_list_server_hardware by hand."""
+    from proliant_mcp import find
+
+    return await find.find_server(query, probe, _transport)
+
+
+@mcp.tool(annotations=READ_ONLY)
 async def get_ilo_info(server: ServerName) -> dict[str, Any]:
     """iLO details: model (iLO 5/6/7), firmware version and date, license, Compute Ops
     Management connection status, and the iLO's own network (hostname, IP, MAC, DHCP)."""
@@ -159,14 +181,16 @@ async def get_ilo_info(server: ServerName) -> dict[str, Any]:
 @mcp.tool(annotations=READ_ONLY)
 async def get_server_summary(server: ServerName) -> dict[str, Any]:
     """Server identity and state: model, product ID, serial, power and POST state, health,
-    UID light, BIOS and iLO versions, CPU count/model and total memory."""
+    UID light, BIOS and iLO versions, CPU count/model, total memory, and `os`: whether an OS is
+    running and which (name and version when the HPE agent reports it), boot progress (e.g. stuck
+    in POST or BIOS setup) and the UEFI boot order."""
     return await _run(server, ilo.server_summary)
 
 
 @mcp.tool(annotations=READ_ONLY)
 async def get_fleet_summary() -> list[dict[str, Any]]:
-    """get_server_summary for every configured server at once. Unreachable servers are
-    returned with an `error` field instead of failing the whole call."""
+    """get_server_summary (including the OS and boot state) for every configured server at once.
+    Unreachable servers are returned with an `error` field instead of failing the whole call."""
 
     async def one(s: Server) -> dict[str, Any]:
         try:
@@ -225,27 +249,76 @@ When = Annotated[
 ]
 
 
+LogName = Annotated[
+    Literal["iml", "iel", "sl"],
+    Field(description="iml = Integrated Management Log (server hardware events); iel = iLO Event Log; sl = Security Log (iLO 6 and later)."),
+]
+MinSeverity = Annotated[
+    Literal["Warning", "Critical"] | None, Field(description="Only entries at least this severe (Warning = Warning and Critical).")
+]
+
+
+def _window(since: str | None, until: str | None, now: dt.datetime) -> tuple[dt.datetime | None, dt.datetime | None]:
+    try:
+        return (ilo.parse_when(since, now) if since else None, ilo.parse_when(until, now, end_of_day=True) if until else None)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
 @mcp.tool(annotations=READ_ONLY)
 async def get_event_log(
     server: ServerName,
-    log: Annotated[Literal["iml", "iel"], Field(description="iml = Integrated Management Log (server hardware events); iel = iLO Event Log.")] = "iml",
+    log: LogName = "iml",
     limit: Annotated[int, Field(ge=1, le=500)] = 20,
-    severity: Annotated[Literal["OK", "Warning", "Critical"] | None, Field(description="Only entries of this severity.")] = None,
+    severity: Annotated[Literal["OK", "Warning", "Critical"] | None, Field(description="Only entries of exactly this severity.")] = None,
     since: When = None,
     until: When = None,
     contains: Annotated[str | None, Field(description="Only entries whose message contains this text (any case), e.g. 'login'.")] = None,
+    min_severity: MinSeverity = None,
+    summary: Annotated[
+        bool, Field(description="Group identical messages into one row with count and first/last time, most severe first.")
+    ] = False,
 ) -> list[dict[str, Any]]:
-    """Newest entries from the IML or iLO event log, filtered by severity, time window and message
-    text. Entries the iLO stamped with a wrong clock (0000 or far-future dates after an RTC reset) are
-    marked `time_invalid`, listed last, and left out when since/until is given. For who logged in to
-    iLOs use get_ilo_logins instead."""
+    """Newest entries from the IML, iLO event log or Security Log, filtered by severity, time window
+    and message text; with summary, identical messages are grouped (compact; use it for "what
+    happened" or "significant events"). Entries the iLO stamped with a wrong clock (0000 or far-future
+    dates after an RTC reset) are marked `time_invalid`, listed last, and left out when since/until
+    is given. For several servers use get_fleet_event_summary; for who logged in use get_ilo_logins."""
     now = dt.datetime.now(dt.UTC)
-    try:
-        start = ilo.parse_when(since, now) if since else None
-        end = ilo.parse_when(until, now, end_of_day=True) if until else None
-    except ValueError as exc:
-        raise ToolError(str(exc)) from exc
-    return await _run(server, lambda c: ilo.event_log(c, log, limit, severity, start, end, contains, now))
+    start, end = _window(since, until, now)
+    return await _run(server, lambda c: ilo.event_log(c, log, limit, severity, start, end, contains, now, min_severity, summary))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_fleet_event_summary(
+    servers: Annotated[list[str] | None, Field(description="Server names from list_servers; omit for every configured iLO.")] = None,
+    log: LogName = "iml",
+    min_severity: MinSeverity = "Warning",
+    since: When = None,
+    until: When = None,
+    contains: Annotated[str | None, Field(description="Only entries whose message contains this text (any case).")] = None,
+    limit: Annotated[int, Field(ge=1, le=200, description="Most groups per server.")] = 30,
+) -> dict[str, Any]:
+    """Significant events for many servers in one call: per server, the IML, iLO event log or
+    Security Log grouped by message (count, first/last time, repaired), Warning and Critical by
+    default, most severe first. Use it for "significant events / errors on these servers".
+    Unreachable iLOs return an `error`."""
+    targets = [_resolve(n) for n in servers] if servers else list(_servers().values())
+    now = dt.datetime.now(dt.UTC)
+    start, end = _window(since, until, now)
+
+    async def one(s: Server) -> dict[str, Any]:
+        try:
+            async with RedfishClient(s, transport=_transport) as client:
+                groups = await ilo.event_log(client, log, limit, None, start, end, contains, now, min_severity, True)
+        except RedfishError as exc:
+            return {"server": s.name, "error": str(exc)}
+        by_severity: Counter[str] = Counter()
+        for g in groups:
+            by_severity[g["severity"] or "Unknown"] += g["count"]
+        return {"server": s.name, "entries_by_severity": dict(by_severity), "groups": groups}
+
+    return {"log": log, "min_severity": min_severity, "servers": list(await asyncio.gather(*(one(s) for s in targets)))}
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -255,13 +328,16 @@ async def get_ilo_logins(
     utc_offset_hours: Annotated[
         float | None, Field(ge=-12, le=14, description="Time zone for by_day, e.g. -8 for PST; omit for this computer's zone.")
     ] = None,
+    include_this_computer: Annotated[
+        bool, Field(description="Also count logins from the computer running proliant-mcp (its own Redfish sessions).")
+    ] = False,
 ) -> dict[str, Any]:
     """Who logged in to the iLOs, from each iLO Event Log, in one call for many servers: logins
     per day (total and per server), by login type, user and source IP/host, failed logins and
     lockout alerts. Says when an iLO's log does not reach back to the start of the window (the log
     wrapped, so counts are a minimum) and how many entries have an invalid iLO clock. The iLO logs
-    Redfish/API sessions, including this server's own, as Browser logins; sources marked
-    `this_computer` are the computer running proliant-mcp. Unreachable iLOs return an `error`."""
+    Redfish/API sessions as Browser logins, including proliant-mcp's own: those are counted only in
+    `this_computer_logins` unless include_this_computer. Unreachable iLOs return an `error`."""
     configured = _servers()
     targets = [_resolve(n) for n in servers] if servers else list(configured.values())
     now = dt.datetime.now(dt.UTC)
@@ -273,7 +349,7 @@ async def get_ilo_logins(
     async def one(s: Server) -> dict[str, Any]:
         try:
             async with RedfishClient(s, transport=_transport) as client:
-                return {"server": s.name, **await ilo.logins(client, since, now, tz, now)}
+                return {"server": s.name, **await ilo.logins(client, since, now, tz, now, include_this_computer)}
         except RedfishError as exc:
             return {"server": s.name, "error": str(exc)}
 
@@ -297,15 +373,22 @@ async def get_ilo_logins(
         notes.append("Some iLOs have entries with an invalid clock (0000 or far-future dates, after an RTC reset); they are not counted.")
     if any(src.get("this_computer") for r in ok for src in r["sources"]):
         notes.append("Sources marked this_computer include proliant-mcp's own Redfish sessions, logged by the iLO as Browser logins.")
+    elif any(r["this_computer_logins"] for r in ok):
+        notes.append(
+            f"{sum(r['this_computer_logins'] for r in ok)} logins from this computer (proliant-mcp's own Redfish sessions) "
+            "are not counted; set include_this_computer to count them."
+        )
     return {
         "window": {
             "from": since.isoformat().replace("+00:00", "Z"),
             "to": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
             "days": days,
             "utc_offset_hours": offset.total_seconds() / 3600,
+            "this_computer_included": include_this_computer,
         },
         "totals": {
             "logins": sum(r["logins"] for r in ok),
+            "this_computer_logins": sum(r["this_computer_logins"] for r in ok),
             "failed_logins": sum(r["failed_logins"] for r in ok),
             "security_alerts": sum(len(r["security_alerts"]) for r in ok),
             "servers": len(ok),
@@ -629,8 +712,17 @@ async def oneview_list_enclosures(appliance: ApplianceName = None) -> list[dict[
 @mcp.tool(annotations=READ_ONLY)
 async def oneview_list_interconnects(appliance: ApplianceName = None) -> list[dict[str, Any]]:
     """Interconnect modules (Virtual Connect, switches): model, firmware, status, power,
-    enclosure, hostname and IP."""
+    enclosure, hostname and IP. For uplink and port status use oneview_list_uplink_sets."""
     return await _ov(appliance, oneview.list_interconnects)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def oneview_list_uplink_sets(appliance: ApplianceName = None) -> dict[str, Any]:
+    """Synergy / Virtual Connect uplink status in one call: every uplink set with its status,
+    type, networks (with VLAN), reachability and each uplink port (module, port, linked or not,
+    Active / StandBy role, speed, LLDP neighbor switch and port), plus issues such as no networks,
+    unlinked ports or no module redundancy, and related active alerts. Use it for "uplink status"."""
+    return await _ov(appliance, oneview.list_uplink_sets)
 
 
 @mcp.tool(annotations=READ_ONLY)

@@ -15,7 +15,8 @@ questions through Compute Ops Management or OneView, use the
 | Question | Tool |
 |---|---|
 | Which servers exist? | `list_servers` (always call first; use the exact names from `servers`) |
-| Model, serial, power, POST, health, UID, BIOS/iLO version, CPU/memory totals | `get_server_summary` |
+| Which server is this IP / hostname / serial? | `find_server` (iLO inventory, COM and OneView at once) |
+| Model, serial, power, POST, health, UID, BIOS/iLO version, CPU/memory totals, OS and boot state | `get_server_summary` |
 | Same, for every server at once | `get_fleet_summary` |
 | iLO generation, firmware and date, license, COM connection, iLO IP/MAC/DHCP | `get_ilo_info` |
 | Per-subsystem health, fan / PSU redundancy | `get_health` |
@@ -24,7 +25,9 @@ questions through Compute Ops Management or OneView, use the
 | DIMMs, populated/empty slots | `get_memory` |
 | Controllers, drives, RAID volumes | `get_storage` |
 | Host NICs, MACs, link, switch/port via LLDP | `get_network_adapters` |
-| Hardware events / iLO events | `get_event_log` (`log="iml"` or `"iel"`, `severity`, `since`/`until` like `7d` or `2026-11-12`, `contains`) |
+| Hardware events / iLO events / security log | `get_event_log` (`log="iml"`, `"iel"` or `"sl"`, `severity` or `min_severity`, `since`/`until` like `7d` or `2026-11-12`, `contains`, `summary=true` to group repeats) |
+| Significant events on several servers | `get_fleet_event_summary` (Warning+ grouped per server, one call) |
+| Which OS is installed / running | `os` in `get_server_summary` / `get_fleet_summary` |
 | Who logged in to the iLOs (per day, user, source IP, failed logins) | `get_ilo_logins` (all iLOs in one call; `days`, `utc_offset_hours`) |
 | Anything else (BIOS attributes, boot order, thermal, power) | `redfish_get` with a `/redfish/v1/...` path |
 
@@ -35,8 +38,9 @@ then `get_firmware_inventory` per server for NIC/storage/CPLD. Present a
 table: rows = component, columns = servers; call out mismatches.
 
 **Health triage:** `get_health` -> for any subsystem not `OK`, read
-`get_event_log` with `severity="Critical"` then `"Warning"` and quote the
-newest messages with timestamps. Check `repaired` before calling an event
+`get_event_log` with `min_severity="Warning"` and `summary=true` (or
+`get_fleet_event_summary` for several servers) and quote the messages with
+counts and first/last times. Check `repaired` before calling an event
 current.
 
 **Which switch port is this server on?** `get_network_adapters`: each port's
@@ -58,7 +62,10 @@ current.
 - Entries with `time_invalid` were stamped while the iLO clock was wrong (RTC
   reset); don't date them. In `get_ilo_logins`, `log_covers_window: false`
   means the log wrapped, so counts are a minimum: say so. The iLO logs API
-  sessions (including proliant-mcp's own, `this_computer`) as Browser logins.
+  sessions as Browser logins; proliant-mcp's own are counted in
+  `this_computer_logins` and left out of the totals by default.
+- `os.state` says whether an OS runs. Without the HPE agent (AMS) the iLO can't
+  name it: say so, and quote `os_boot_entries` (loaders such as `Ubuntu`) as a hint only.
 - Never count logins or filter log entries with a script: use `get_ilo_logins`
   or `get_event_log`'s `since`/`until`/`contains`.
 - `part_number: null` means iLO did not report one, not that it's missing.

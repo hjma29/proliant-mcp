@@ -12,6 +12,20 @@ COM_SSO = "sso.common.cloud.hpe.com"
 
 _SH_URI = "/rest/server-hardware/HW1"
 
+
+def _port(ic: str, name: str, status: str, role: str, uplink_set: str, switch: str | None, switch_port: str | None) -> dict:
+    return {"uri": f"/rest/interconnects/{ic}/ports/{ic}:{name}", "portName": name, "portType": "Uplink", "portStatus": status,
+            "portStatusReason": role, "portHealthStatus": "Normal", "operationalSpeed": "Speed10G" if status == "Linked" else "Speed0M",
+            "associatedUplinkSetUri": uplink_set,
+            "neighbor": {"remoteSystemName": switch, "remotePortId": switch_port} if switch else None}
+
+
+def _uplink_set(uid: str, name: str, status: str, networks: list[str], ports: list[tuple[str, str]]) -> dict:
+    return {"uri": f"/rest/uplink-sets/{uid}", "name": name, "status": status, "state": "Active", "networkType": "Ethernet",
+            "ethernetNetworkType": "Tagged", "connectionMode": "Auto", "reachability": "Reachable", "networkUris": networks,
+            "portConfigInfos": [{"portUri": f"/rest/interconnects/{ic}/ports/{ic}:{p}",
+                                 "location": {"locationEntries": [{"type": "Port", "value": p}]}} for ic, p in ports]}
+
 FAKE_OV: dict[str, dict] = {
     "/rest/appliance/nodeinfo/version": {"modelNumber": "Synergy Composer2", "softwareVersion": "11.10.00-1", "family": "Synergy Composer"},
     "/rest/appliance/health-status": {"members": [{"resourceType": "DISK", "severity": "INFO", "available": "17 GB", "capacity": "894 GB ", "statusMessage": "SUFFICIENT_DISK_SPACE"}]},
@@ -28,8 +42,35 @@ FAKE_OV: dict[str, dict] = {
     "/rest/server-profiles": {"members": [{"uri": "/rest/server-profiles/P1", "name": "esx2-profile", "status": "OK", "serverHardwareUri": _SH_URI, "serverProfileTemplateUri": "/rest/server-profile-templates/T1", "templateCompliance": "Compliant"}]},
     "/rest/server-profile-templates": {"members": [{"uri": "/rest/server-profile-templates/T1", "name": "esx-template"}]},
     "/rest/enclosures": {"members": [{"uri": "/rest/enclosures/E1", "name": "Enclosure-01", "status": "OK"}]},
-    "/rest/interconnects": {"members": []},
-    "/rest/alerts": {"members": [{"uri": "/rest/alerts/7761", "severity": "Warning", "alertState": "Active", "description": "POST errors occurred.", "resourceUri": _SH_URI, "associatedResource": {"resourceName": "Enclosure-01, bay 2"}}]},
+    "/rest/interconnects": {"members": [
+        {"uri": "/rest/interconnects/IC3", "name": "Enclosure-01, interconnect 3", "model": "Virtual Connect SE 100Gb F32 Module for Synergy",
+         "status": "OK", "hostName": "VC100-bay3", "serialNumber": "7C9M0003", "ipAddressList": [{"ipAddress": "192.0.2.103", "ipAddressType": "Ipv4Static"}]},
+        {"uri": "/rest/interconnects/IC6", "name": "Enclosure-01, interconnect 6", "model": "Virtual Connect SE 100Gb F32 Module for Synergy",
+         "status": "OK", "hostName": "VC100-bay6", "serialNumber": "7C9M0006", "ipAddressList": [{"ipAddress": "192.0.2.106", "ipAddressType": "Ipv4Static"}]},
+    ]},
+    "/rest/interconnects/IC3/ports": {"members": [
+        _port("IC3", "Q1:1", "Linked", "Active", "/rest/uplink-sets/US1", "tor-01", "Eth1/11"),
+        _port("IC3", "Q5:2", "Linked", "None", "/rest/uplink-sets/US2", "switch", "Eth1/6"),
+        _port("IC3", "X1", "Linked", "Active", "/rest/uplink-sets/US3", "switch", "Eth1/10"),
+    ]},
+    "/rest/interconnects/IC6/ports": {"members": [
+        _port("IC6", "Q1:1", "Linked", "StandBy", "/rest/uplink-sets/US1", "tor-02", "Eth1/11"),
+        _port("IC6", "Q5:2", "Unlinked", "None", "/rest/uplink-sets/US2", None, None),
+    ]},
+    "/rest/uplink-sets": {"members": [
+        _uplink_set("US1", "prod-uplinks", "OK", ["/rest/ethernet-networks/N1"], [("IC3", "Q1:1"), ("IC6", "Q1:1")]),
+        _uplink_set("US2", "ACI-MAP", "Critical", [], [("IC3", "Q5:2"), ("IC6", "Q5:2")]),
+        _uplink_set("US3", "span", "OK", ["/rest/ethernet-networks/N2"], [("IC3", "X1")]),
+    ]},
+    "/rest/ethernet-networks": {"members": [{"uri": "/rest/ethernet-networks/N1", "name": "prod", "vlanId": 160},
+                                            {"uri": "/rest/ethernet-networks/N2", "name": "mirror", "vlanId": 0}]},
+    "/rest/fc-networks": {"members": []},
+    "/rest/network-sets": {"members": []},
+    "/rest/alerts": {"members": [
+        {"uri": "/rest/alerts/7761", "severity": "Warning", "alertState": "Active", "description": "POST errors occurred.", "resourceUri": _SH_URI, "associatedResource": {"resourceName": "Enclosure-01, bay 2"}},
+        {"uri": "/rest/alerts/8909", "severity": "Critical", "alertState": "Active", "description": "Uplink set ACI-MAP does not contain any networks.",
+         "resourceUri": "/rest/logical-interconnects/LI1", "associatedResource": {"resourceName": "LE01-LIG"}},
+    ]},
 }
 
 

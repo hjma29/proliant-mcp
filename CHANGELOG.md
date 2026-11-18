@@ -6,6 +6,21 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.12.0 — 2026-11-18
+
+### New Features
+- `oneview_list_uplink_sets`: Synergy / Virtual Connect uplink status in one call (about 2 s and 6 KB, against 176 KB of raw port data). Per uplink set: status, type, networks with VLAN, reachability, and each uplink port with its module, link, Active / StandBy role, speed and LLDP neighbor switch and port. Issues are spelled out (no networks, unlinked ports, all ports on one module) next to the related active alerts.
+- `find_server`: which server is this name, iLO IP or hostname, serial or OS hostname? Searches the iLO inventory, every COM account and every OneView appliance (servers and interconnect modules) at once. For an address none of them knows, it reads that iLO's login-free identity pages and reports its iLO model, firmware, hostname, server model and serial, or that it can't be reached from this computer.
+- `get_fleet_event_summary`: significant events for many iLOs in one call, from the IML, iLO Event Log or Security Log, Warning and Critical by default, grouped by message with counts and first/last times.
+
+### Enhancements
+- `get_server_summary` and `get_fleet_summary` report the OS: a plain `state` (running which OS, OS booted without the HPE agent, stopped in BIOS setup, still in POST, no boot entries), name and version when the HPE agent (AMS) reports them, boot progress, OS loader entries such as `Ubuntu` or `VMware ESXi`, and the UEFI boot order.
+- `get_event_log` reads the Security Log (`log="sl"`, iLO 6 and later), filters by `min_severity`, and with `summary` groups identical messages (most severe and most frequent first).
+- `get_ilo_logins` no longer counts proliant-mcp's own Redfish sessions as logins: they are reported in `this_computer_logins` (`include_this_computer` counts them again).
+- `com_list_nics` reports cards, ports, ports up and link speeds per adapter model, and the most used model by cards and by linked ports.
+
+---
+
 ## v0.11.0 — 2026-11-18
 
 ### New Features

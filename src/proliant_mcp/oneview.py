@@ -354,3 +354,115 @@ async def list_interconnects(c: OneViewClient) -> list[dict[str, Any]]:
 async def list_baselines(c: OneViewClient) -> list[dict[str, Any]]:
     rows = [baseline_row(b) for b in await c.get_all("/rest/firmware-drivers")]
     return sorted(rows, key=lambda r: r["release_date"] or "", reverse=True)
+
+
+async def _optional(coro: Any) -> list[dict[str, Any]]:
+    """A lookup used only for names: an appliance without that resource type gives an empty list."""
+    try:
+        return await coro
+    except OneViewError:
+        return []
+
+
+def _speed(value: str | None) -> str | None:
+    """'Speed10G' -> '10G'; 'Speed0M', 'Auto' and missing mean no negotiated speed."""
+    if not value or not value.startswith("Speed") or value in ("Speed0M", "Speed0G"):
+        return None
+    return value[len("Speed"):]
+
+
+def _neighbor(n: dict[str, Any] | None) -> str | None:
+    if not n:
+        return None
+    text = " ".join(x for x in (n.get("remoteSystemName"), n.get("remotePortId")) if x)
+    return text or n.get("remoteChassisId")
+
+
+async def list_uplink_sets(c: OneViewClient) -> dict[str, Any]:
+    """Uplink sets with their networks and each uplink port's link, role, speed and LLDP neighbor."""
+    uplink_sets, interconnects, eth, fc, net_sets, alerts = await asyncio.gather(
+        c.get_all("/rest/uplink-sets"),
+        c.get_all("/rest/interconnects"),
+        _optional(c.get_all("/rest/ethernet-networks")),
+        _optional(c.get_all("/rest/fc-networks")),
+        _optional(c.get_all("/rest/network-sets")),
+        _optional(c.get_all("/rest/alerts", [("filter", "\"alertState='Active'\"")])),
+    )
+    ic_names = {i["uri"]: i.get("name") for i in interconnects if i.get("uri")}
+    ic_uris = sorted({p.get("portUri", "").split("/ports/")[0] for us in uplink_sets for p in us.get("portConfigInfos") or [] if p.get("portUri")})
+    port_lists = await asyncio.gather(*(c.get_all(f"{uri}/ports") for uri in ic_uris))
+    ports = {p["uri"]: p for plist in port_lists for p in plist if p.get("uri")}
+    networks = {n["uri"]: n for n in [*eth, *fc] if n.get("uri")}
+    set_names = _names(net_sets)
+
+    rows = []
+    for us in uplink_sets:
+        name = us.get("name")
+        net_uris = [*(us.get("networkUris") or []), *(us.get("fcNetworkUris") or []), *(us.get("fcoeNetworkUris") or [])]
+        nets = []
+        for uri in net_uris:
+            n = networks.get(uri) or {}
+            label = n.get("name") or uri.rsplit("/", 1)[-1]
+            nets.append(f"{label} (VLAN {n['vlanId']})" if n.get("vlanId") else label)
+        port_rows = []
+        for cfg in us.get("portConfigInfos") or []:
+            p = ports.get(cfg.get("portUri") or "") or {}
+            ic = (cfg.get("portUri") or "").split("/ports/")[0]
+            port_rows.append({
+                "interconnect": ic_names.get(ic) or p.get("interconnectName"),
+                "port": p.get("portName") or next(
+                    (e.get("value") for e in (cfg.get("location") or {}).get("locationEntries") or [] if e.get("type") == "Port"), None
+                ),
+                "link": p.get("portStatus"),
+                # Active / StandBy for failover uplinks; None when the port carries nothing (e.g. an uplink set without networks)
+                "role": p.get("portStatusReason"),
+                "speed": _speed(p.get("operationalSpeed")),
+                "health": p.get("portHealthStatus"),
+                "lag": p.get("lagName") or None,
+                "neighbor": _neighbor(p.get("neighbor")),
+            })
+        port_rows.sort(key=lambda r: (r["interconnect"] or "", r["port"] or ""))
+        linked = [r for r in port_rows if r["link"] == "Linked"]
+        issues = []
+        if not net_uris and not us.get("networkSetUris"):
+            issues.append("no networks: the uplink set carries no traffic")
+        if not port_rows:
+            issues.append("no uplink ports")
+        elif not linked:
+            issues.append("no linked ports")
+        else:
+            down = [f"{r['interconnect']} {r['port']}" for r in port_rows if r["link"] != "Linked"]
+            if down:
+                issues.append(f"not linked: {', '.join(down)}")
+            if len({r["interconnect"] for r in linked}) < 2:
+                issues.append("no interconnect redundancy: all linked ports are on one module")
+        related = [
+            a.get("description") for a in alerts if name and f"Uplink set {name} " in (a.get("description") or "") + " "
+        ]
+        rows.append({
+            "name": name,
+            "status": us.get("status"),
+            "state": us.get("state"),
+            "network_type": us.get("networkType"),
+            "ethernet_network_type": us.get("ethernetNetworkType"),
+            "connection_mode": us.get("connectionMode"),
+            "reachability": us.get("reachability"),
+            "network_count": len(net_uris),
+            "networks": nets[:20] + ([f"...and {len(nets) - 20} more"] if len(nets) > 20 else []),
+            "network_sets": [set_names.get(u) or u.rsplit("/", 1)[-1] for u in us.get("networkSetUris") or []],
+            "ports": port_rows,
+            "ports_linked": len(linked),
+            "ports_active": sum(1 for r in linked if (r["role"] or "").lower() == "active"),
+            "issues": issues,
+            "alerts": related,
+        })
+    rows.sort(key=lambda r: ({"Critical": 0, "Warning": 1}.get(r["status"] or "", 2), r["name"] or ""))
+    return {
+        "uplink_sets": len(rows),
+        "by_status": dict(Counter(r["status"] or "Unknown" for r in rows)),
+        "ports": {"total": sum(len(r["ports"]) for r in rows), "linked": sum(r["ports_linked"] for r in rows)},
+        "with_issues": [r["name"] for r in rows if r["issues"] or (r["status"] or "OK") != "OK"],
+        "sets": rows,
+        "note": "role is the failover state of a linked port: Active carries traffic, StandBy takes over if the active "
+        "ports fail; None on a linked port means it carries nothing. neighbor is the switch and port seen over LLDP.",
+    }

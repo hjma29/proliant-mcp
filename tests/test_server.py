@@ -54,7 +54,7 @@ async def test_server_summary(mcp_client):
     assert data["ilo_version"] == "iLO 7 1.21.00 Apr 07 2026"
     assert data["processors"]["model"] == "AMD EPYC 9375F 32-Core Processor"
     assert data["uid_light"] == "Off"
-    assert data["post_state"] == "FinishedPost"
+    assert data["post_state"] == "InPostDiscoveryComplete"
 
 
 async def test_processors_split_gpus(mcp_client):
@@ -111,17 +111,56 @@ async def test_event_log_filters_and_puts_wrong_clock_entries_last(mcp_client):
 async def test_ilo_logins_summarises_the_fleet_in_one_call(mcp_client):
     async with mcp_client as c:
         data = (await c.call_tool("get_ilo_logins", {"days": 7, "utc_offset_hours": 0})).structured_content
-    assert data["totals"] == {"logins": 4, "failed_logins": 1, "security_alerts": 1, "servers": 1, "unreachable": 1}
+        mine = (await c.call_tool("get_ilo_logins", {"servers": ["gen12"], "include_this_computer": True})).structured_content
+    # proliant-mcp's own session (192.0.2.50, this computer) is left out unless asked for
+    assert data["totals"] == {"logins": 3, "this_computer_logins": 1, "failed_logins": 1, "security_alerts": 1, "servers": 1, "unreachable": 1}
     gen12 = next(s for s in data["servers"] if s["server"] == "gen12")
-    assert gen12["by_type"] == {"Browser": 3, "Host REST": 1}
-    assert gen12["users"] == {"admin": 2, "Administrator": 1, "System Administrator": 1}
-    assert gen12["sources"][0] == {"ip": "192.0.2.60", "host": None, "logins": 2, "last_login": gen12["sources"][0]["last_login"]}
-    assert gen12["sources"][1]["this_computer"] is True and gen12["sources"][1]["host"] == "admin-pc.example.com"
+    assert gen12["by_type"] == {"Browser": 2, "Host REST": 1}
+    assert gen12["users"] == {"admin": 2, "System Administrator": 1}
+    assert gen12["sources"] == [{"ip": "192.0.2.60", "host": None, "logins": 2, "last_login": gen12["sources"][0]["last_login"]}]
     assert gen12["failures"][0]["ip"] == "192.0.2.66" and "unauthorized" in gen12["security_alerts"][0]["message"]
     assert gen12["entries_with_invalid_time"] == 2 and gen12["log_covers_window"] is True
-    assert len(data["by_day"]) == 7 and sum(d["total"] for d in data["by_day"]) == 4 and "gen12" in data["by_day"][0]
+    assert len(data["by_day"]) == 7 and sum(d["total"] for d in data["by_day"]) == 3 and "gen12" in data["by_day"][0]
     assert "UnauthorizedLoginAttempt" in next(s for s in data["servers"] if s["server"] == "badpass")["error"]
-    assert any("this_computer" in n for n in data["notes"]) and any("invalid clock" in n for n in data["notes"])
+    assert any("1 logins from this computer" in n for n in data["notes"]) and any("invalid clock" in n for n in data["notes"])
+    assert mine["totals"]["logins"] == 4 and mine["window"]["this_computer_included"] is True
+    src = mine["servers"][0]["sources"][1]
+    assert src["this_computer"] is True and src["host"] == "admin-pc.example.com"
+
+
+async def test_event_log_severity_floor_summary_and_fleet_summary(mcp_client):
+    async with mcp_client as c:
+        floor = (await c.call_tool("get_event_log", {"server": "gen12", "min_severity": "Warning"})).structured_content["result"]
+        grouped = (await c.call_tool("get_event_log", {"server": "gen12", "summary": True})).structured_content["result"]
+        fleet = (await c.call_tool("get_fleet_event_summary", {})).structured_content
+    assert {e["severity"] for e in floor} == {"Critical", "Warning"} and len(floor) == 4
+    # identical messages fold into one row: most severe first, counts summed
+    assert [(g["severity"], g["message"], g["count"]) for g in grouped] == [
+        ("Critical", "Server Critical Fault (Fan Board e-fuse failure)", 3),
+        ("Warning", "Unsupported DIMM Configuration Detected", 1),
+        ("OK", "Server power restored.", 1),
+    ]
+    assert grouped[0]["first"] < grouped[0]["last"] and grouped[0]["repaired"] is False
+    gen12 = next(s for s in fleet["servers"] if s["server"] == "gen12")
+    assert gen12["entries_by_severity"] == {"Critical": 3, "Warning": 1} and len(gen12["groups"]) == 2
+    assert "error" in next(s for s in fleet["servers"] if s["server"] == "badpass")
+
+
+async def test_server_summary_says_whether_an_os_runs(mcp_client, monkeypatch):
+    import fake_ilo
+
+    async with mcp_client as c:
+        stuck = (await c.call_tool("get_server_summary", {"server": "gen12"})).structured_content["os"]
+        system = {**fake_ilo.FAKE_ILO["/redfish/v1/Systems/1/"], "BootProgress": {"LastState": "OSRunning"},
+                  "Oem": {"Hpe": {"PostState": "FinishedPost", "HostOS": {"OsName": "VMware ESXi", "OsVersion": "8.0.3"},
+                                  "AggregateHealthStatus": {"AgentlessManagementService": "Ready"}}}}
+        monkeypatch.setitem(fake_ilo.FAKE_ILO, "/redfish/v1/Systems/1/", system)
+        running = (await c.call_tool("get_server_summary", {"server": "gen12"})).structured_content["os"]
+    assert stuck["state"] == "stopped in BIOS setup (RBSU); no OS booted"
+    assert stuck["boot_order"] == ["Generic USB Boot", "UEFI HTTPv4 (Embedded LOM 1)"] and stuck["name"] is None
+    assert stuck["os_boot_entries"] == []  # devices and network boot are not OS loaders
+    assert (running["state"], running["name"], running["version"], running["hpe_agent"]) == (
+        "running VMware ESXi (reported by the HPE agent)", "VMware ESXi", "8.0.3", "Ready")
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
@@ -138,7 +177,7 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
 async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert await srv._check(connect=False) == 0
     out = capsys.readouterr().out
-    assert "40 tools" in out
+    assert "43 tools" in out
     assert "latest release:" in out
 
     assert await srv._check(connect=True) == 1
@@ -221,7 +260,7 @@ async def test_oneview_profiles_and_appliance(mcp_client):
     assert profiles[0]["server_hardware"] == "Enclosure-01, bay 2"
     assert profiles[0]["template"] == "esx-template"
     assert info["api_version"] == 8400
-    assert info["active_alerts"] == {"count": 1, "by_severity": {"Warning": 1}}
+    assert info["active_alerts"] == {"count": 2, "by_severity": {"Warning": 1, "Critical": 1}}
 
 
 @pytest.mark.parametrize(
@@ -388,6 +427,8 @@ async def test_com_list_nics_reports_modes_ports_and_speeds_for_the_fleet(mcp_cl
     }
     assert data["most_used_nic_mode"] == "Ethernet"  # ties on linked ports go to the mode with more adapters
     assert data["linked_ports_by_speed"] == {"16Gb FibreChannel": 2, "25Gb Ethernet": 1, "100Gb Ethernet": 1}
+    assert data["adapters_by_model"]["HPE SN1620E 32Gb 2p FC HBA (FibreChannel)"] == {"adapters": 1, "ports": 2, "ports_up": 2, "speeds_up": ["2 x 16Gb"]}
+    assert data["most_used_model"]["by_linked_ports"] == "HPE SN1620E 32Gb 2p FC HBA (FibreChannel)"
     assert data["nic_unknown"] == ["old-t4.example.com", "dl345.example.com"]  # no network inventory: unknown, not none
     gpu1 = next(s for s in data["servers"] if s["name"] == "gpu1.example.com")["adapters"]
     assert gpu1[0]["name"] == "10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter"  # SKU, not the bare 'BCM57414'
@@ -415,3 +456,54 @@ async def test_com_hardware_report_merges_identical_hardware(mcp_client, monkeyp
     async with mcp_client as c:
         data = (await c.call_tool("com_hardware_report", {"name_contains": "esx"})).structured_content
     assert [(g["count"], g["servers"]) for g in data["configurations"]] == [(2, ["esx2.example.com", "esx3.example.com"])]
+
+
+async def test_oneview_uplink_sets_report_ports_roles_neighbors_and_issues(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("oneview_list_uplink_sets", {})).structured_content
+    assert (data["uplink_sets"], data["by_status"], data["ports"]) == (3, {"Critical": 1, "OK": 2}, {"total": 5, "linked": 4})
+    assert data["with_issues"] == ["ACI-MAP", "span"]
+    aci, prod, span = data["sets"]  # Critical first
+    assert aci["name"] == "ACI-MAP" and aci["alerts"] == ["Uplink set ACI-MAP does not contain any networks."]
+    assert aci["issues"] == [
+        "no networks: the uplink set carries no traffic",
+        "not linked: Enclosure-01, interconnect 6 Q5:2",
+        "no interconnect redundancy: all linked ports are on one module",
+    ]
+    assert prod["networks"] == ["prod (VLAN 160)"] and prod["issues"] == [] and (prod["ports_linked"], prod["ports_active"]) == (2, 1)
+    assert [(p["interconnect"], p["port"], p["link"], p["role"], p["speed"], p["neighbor"]) for p in prod["ports"]] == [
+        ("Enclosure-01, interconnect 3", "Q1:1", "Linked", "Active", "10G", "tor-01 Eth1/11"),
+        ("Enclosure-01, interconnect 6", "Q1:1", "Linked", "StandBy", "10G", "tor-02 Eth1/11"),
+    ]
+    assert span["issues"] == ["no interconnect redundancy: all linked ports are on one module"]
+
+
+async def test_find_server_searches_every_source_and_probes_unknown_ilos(mcp_client, monkeypatch):
+    def world(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "192.0.2.99":
+            raise httpx.ConnectError("no route to host")
+        if request.url.host == "192.0.2.77":
+            if request.url.path == "/xmldata":
+                return httpx.Response(200, text="<RIMP><HSI><SBSN>VG13525009</SBSN><SPN>ProLiant DL525 Gen13</SPN></HSI>"
+                                                 "<MP><PN>Integrated Lights-Out 8 (iLO 8)</PN><FWRI>1.10</FWRI></MP></RIMP>")
+            return httpx.Response(200, json={"Product": "ProLiant DL525 Gen13", "Vendor": "HPE",
+                                             "Oem": {"Hpe": {"Manager": [{"ManagerType": "iLO 8", "ManagerFirmwareVersion": "1.10", "HostName": "ILOVG13525009"}]}}})
+        return _fake(request)
+
+    monkeypatch.setattr(srv, "_transport", httpx.MockTransport(world))
+    async with mcp_client as c:
+        by_ip = (await c.call_tool("find_server", {"query": "192.0.2.50"})).structured_content
+        module = (await c.call_tool("find_server", {"query": "vc100-bay6"})).structured_content
+        inventory = (await c.call_tool("find_server", {"query": "192.0.2.10"})).structured_content
+        unknown = (await c.call_tool("find_server", {"query": "192.0.2.77"})).structured_content
+        gone = (await c.call_tool("find_server", {"query": "192.0.2.99"})).structured_content
+    assert by_ip["found"] and by_ip["compute_ops_management"][0]["matches"][0]["name"] == "esx2.example.com"
+    assert by_ip["oneview"][0]["server_hardware"][0]["name"] == "Enclosure-01, bay 2" and "probe" not in by_ip
+    assert module["oneview"][0]["interconnects"][0]["hostname"] == "VC100-bay6"
+    assert inventory["ilo_inventory"] == [{"name": "gen12", "ilo_host": "192.0.2.10"}]
+    assert not unknown["found"] and unknown["probe"] == {
+        "host": "192.0.2.77", "reachable": True, "redfish_product": "ProLiant DL525 Gen13", "redfish_vendor": "HPE",
+        "ilo_type": "iLO 8", "ilo_firmware": "1.10", "ilo_hostname": "ILOVG13525009",
+        "serial_number": "VG13525009", "server_model": "ProLiant DL525 Gen13", "ilo_model": "Integrated Lights-Out 8 (iLO 8)",
+    }
+    assert gone["probe"]["reachable"] is False and "cannot reach" in gone["probe"]["error"]

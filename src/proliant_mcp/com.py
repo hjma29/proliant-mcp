@@ -657,7 +657,7 @@ async def hardware_report(c: ComClient, name_contains: str | None, connected: bo
 async def list_nics(c: ComClient, name_contains: str | None, connected: bool | None, linked_only: bool) -> dict[str, Any]:
     """Fleet network adapter report: per server its adapters with mode, ports and link speeds, plus totals."""
     rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True)
-    by_model: Counter[str] = Counter()
+    by_model: dict[str, dict[str, Any]] = {}
     speeds: Counter[str] = Counter()
     report, unknown = [], []
     for r in rows:
@@ -667,10 +667,14 @@ async def list_nics(c: ComClient, name_contains: str | None, connected: bool | N
             continue
         adapters = [a for a in net["adapters"] if a["ports_up"] or not linked_only]
         for a in net["adapters"]:
-            by_model[f"{a['name']} ({a['mode'] or 'unknown mode'})"] += 1
+            m = by_model.setdefault(f"{a['name']} ({a['mode'] or 'unknown mode'})", {"adapters": 0, "ports": 0, "ports_up": 0, "speeds_up": Counter()})
+            m["adapters"] += 1
+            m["ports"] += a["ports"]
+            m["ports_up"] += a["ports_up"]
             for s in a["speeds_up"]:
                 n, _, speed = s.partition(" x ")
                 speeds[speed if a.get("port_modes") else f"{speed} {a['mode'] or 'unknown'}"] += int(n)
+                m["speeds_up"][speed] += int(n)
         report.append({
             "name": r["name"],
             "model": r["model"],
@@ -683,7 +687,14 @@ async def list_nics(c: ComClient, name_contains: str | None, connected: bool | N
         "servers_with_nic_data": len(report),
         "nic_modes": modes,
         "most_used_nic_mode": next(iter(modes), None),
-        "adapters_by_model": dict(by_model.most_common()),
+        "adapters_by_model": {
+            k: {**v, "speeds_up": [f"{n} x {s}" for s, n in v["speeds_up"].most_common()]}
+            for k, v in sorted(by_model.items(), key=lambda kv: (-kv[1]["adapters"], -kv[1]["ports_up"]))
+        },
+        "most_used_model": {
+            "by_adapters": max(by_model, key=lambda k: (by_model[k]["adapters"], by_model[k]["ports_up"]), default=None),
+            "by_linked_ports": max(by_model, key=lambda k: (by_model[k]["ports_up"], by_model[k]["adapters"]), default=None),
+        },
         "linked_ports_by_speed": dict(speeds.most_common()),
         "nic_unknown": unknown,
         "note": "COM's cached inventory. Mode is each port's network technology (Ethernet, InfiniBand, FibreChannel), "

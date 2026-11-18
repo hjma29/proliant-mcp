@@ -111,6 +111,49 @@ async def ilo_info(c: RedfishClient) -> dict[str, Any]:
     }
 
 
+async def _boot_order(c: RedfishClient, system: dict[str, Any]) -> list[str] | None:
+    """UEFI boot entries by display name, in boot order (entries not in BootOrder last)."""
+    uri = _link(system, "BootOptions") or _link(system.get("Boot") or {}, "BootOptions")
+    if not uri:
+        return None
+    try:
+        options = await c.members(uri)
+    except RedfishError:
+        return None
+    by_ref = {o.get("BootOptionReference"): o.get("DisplayName") or o.get("Alias") or o.get("Id") for o in options}
+    order = [by_ref.pop(ref) for ref in (system.get("Boot") or {}).get("BootOrder") or [] if ref in by_ref]
+    return [n for n in [*order, *by_ref.values()] if n]
+
+
+_NOT_OS_ENTRY = re.compile(r" : |usb|pxe|http|shell|network|iscsi|embedded|cd/dvd|cdrom|virtual|diagnos|setup|\bmac:", re.I)
+
+
+def _os_entries(boot_order: list[str] | None) -> list[str]:
+    """Boot entries an OS installer created ('Ubuntu', 'VMware ESXi', 'Windows Boot Manager'), not devices or network boot."""
+    return [n for n in boot_order or [] if not _NOT_OS_ENTRY.search(n)]
+
+
+def _os_state(system: dict[str, Any], hpe: dict[str, Any], boot_order: list[str] | None) -> str:
+    """One plain line on whether an OS is running, for answers like 'which OS do they run'."""
+    host_os = hpe.get("HostOS") or {}
+    progress = (system.get("BootProgress") or {}).get("LastState") or ""
+    post = str(hpe.get("PostState") or "")
+    loaders = _os_entries(boot_order)
+    hint = f"; boot entries suggest {', '.join(loaders)}" if loaders else ""
+    if str(system.get("PowerState") or "").lower() != "on":
+        return f"server is powered off{hint}"
+    if host_os.get("OsName"):
+        return f"running {host_os['OsName']} (reported by the HPE agent)"
+    if progress == "SetupEntered":
+        return f"stopped in BIOS setup (RBSU); no OS booted{hint}"
+    if post.startswith("InPost") or progress in ("SystemHardwareInitializationComplete", "PrimaryProcessorInitializationStarted"):
+        note = "; no boot entries at all" if boot_order == [] else hint
+        return f"still in POST ({post or progress}); no OS booted{note}"
+    if progress in ("OSRunning", "OSBootStarted") or post == "FinishedPost":
+        return f"OS booted, but no HPE agent (AMS) reports its name{hint}"
+    return f"unknown (POST state {post or '?'}, boot progress {progress or '?'}){hint}"
+
+
 async def server_summary(c: RedfishClient) -> dict[str, Any]:
     system = await c.system()
     manager = await c.manager()
@@ -118,6 +161,11 @@ async def server_summary(c: RedfishClient) -> dict[str, Any]:
     proc = system.get("ProcessorSummary") or {}
     mem = system.get("MemorySummary") or {}
     uid = system.get("LocationIndicatorActive")
+    host_os = hpe.get("HostOS") or {}
+    progress = system.get("BootProgress") or {}
+    boot_order = await _boot_order(c, system)
+    ams = ((hpe.get("AggregateHealthStatus") or {}).get("AgentlessManagementService")
+           or (hpe.get("DeviceDiscoveryComplete") or {}).get("AMSDeviceDiscovery"))
     return {
         "model": system.get("Model"),
         "product_id": system.get("SKU"),
@@ -133,6 +181,17 @@ async def server_summary(c: RedfishClient) -> dict[str, Any]:
         "ilo_version": _ilo_version(manager),
         "processors": {"count": proc.get("Count"), "model": _clean(proc.get("Model"))},
         "memory_gib": mem.get("TotalSystemMemoryGiB"),
+        "os": {
+            "state": _os_state(system, hpe, boot_order),
+            "name": _clean(host_os.get("OsName")),
+            "version": _clean(host_os.get("OsVersion")),
+            "fqdn": hpe.get("ServerFQDN") or None,
+            "hpe_agent": ams,
+            "boot_progress": progress.get("LastState"),
+            "boot_progress_time": progress.get("LastStateTime"),
+            "os_boot_entries": _os_entries(boot_order),
+            "boot_order": None if boot_order is None else boot_order[:8] + ([f"...and {len(boot_order) - 8} more"] if len(boot_order) > 8 else []),
+        },
     }
 
 
@@ -364,7 +423,7 @@ def parse_when(value: str, now: dt.datetime, end_of_day: bool = False) -> dt.dat
 
 
 async def _log_entries(c: RedfishClient, log: str) -> list[dict[str, Any]]:
-    owner = await c.system() if log == "iml" else await c.manager()
+    owner = await c.manager() if log == "iel" else await c.system()
     services = await c.get(_link(owner, "LogServices") or "")
     log_uri = next(
         (m["@odata.id"] for m in services.get("Members", []) if m.get("@odata.id", "").rstrip("/").upper().endswith("/" + log.upper())),
@@ -398,6 +457,30 @@ def _span(e: dict[str, Any], now: dt.datetime) -> tuple[dt.datetime | None, dt.d
     return first or last, last
 
 
+_SEVERITY_RANK = {"ok": 0, "warning": 1, "critical": 2}
+
+
+def _summarize(entries: list[tuple[dt.datetime | None, dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Identical messages folded into one row with the total count and first/last valid time."""
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for last, e in entries:
+        key = (e["severity"] or "", " ".join((e["message"] or "").split()))
+        g = groups.setdefault(key, {"severity": key[0] or None, "message": key[1], "count": 0, "first": None, "last": None,
+                                    "class": e.get("class"), "repaired": e.get("repaired")})
+        g["count"] += int(e.get("count") or 1)
+        if last is not None:
+            stamp = last.isoformat().replace("+00:00", "Z")
+            first = parse_time(e.get("created"))
+            first_stamp = first.isoformat().replace("+00:00", "Z") if first and first <= last else stamp
+            g["last"] = max(g["last"] or stamp, stamp)
+            g["first"] = min(g["first"] or first_stamp, first_stamp)
+        else:
+            g["time_invalid"] = True
+        if e.get("repaired") is False:
+            g["repaired"] = False
+    return sorted(groups.values(), key=lambda g: (-_SEVERITY_RANK.get((g["severity"] or "").lower(), 0), -g["count"], g["message"]))
+
+
 async def event_log(
     c: RedfishClient,
     log: str,
@@ -407,14 +490,20 @@ async def event_log(
     until: dt.datetime | None = None,
     contains: str | None = None,
     now: dt.datetime | None = None,
+    min_severity: str | None = None,
+    summary: bool = False,
 ) -> list[dict[str, Any]]:
-    """Newest-first entries of the IML (server) or IEL (iLO event log). Entries whose time the
-    iLO got wrong (clock reset) are marked ``time_invalid``, sorted last and left out of time filters."""
+    """Newest-first entries of the IML (server), IEL (iLO event log) or SL (security log). Entries whose
+    time the iLO got wrong (clock reset) are marked ``time_invalid``, sorted last and left out of time
+    filters. With *summary*, identical messages are grouped (most severe and most frequent first)."""
     now = now or dt.datetime.now(dt.UTC)
     needle = (contains or "").lower()
+    floor = _SEVERITY_RANK.get((min_severity or "").lower(), 0)
     out = []
     for e in await _log_entries(c, log):
         if severity and (e["severity"] or "").lower() != severity.lower():
+            continue
+        if floor and _SEVERITY_RANK.get((e["severity"] or "").lower(), 0) < floor:
             continue
         if needle and needle not in (e["message"] or "").lower():
             continue
@@ -426,6 +515,8 @@ async def event_log(
         elif (since and last < since) or (until and first > until):
             continue
         out.append((last, e))
+    if summary:
+        return _summarize(out)[:limit]
     out.sort(key=lambda x: (x[0] is not None, x[0] or now), reverse=True)
     return [e for _, e in out[:limit]]
 
@@ -448,12 +539,21 @@ async def own_ip(c: RedfishClient) -> str | None:
         return None
 
 
-async def logins(c: RedfishClient, since: dt.datetime, until: dt.datetime, tz: dt.tzinfo, now: dt.datetime | None = None) -> dict[str, Any]:
-    """Who logged in to this iLO between *since* and *until*, from the iLO Event Log."""
+async def logins(
+    c: RedfishClient,
+    since: dt.datetime,
+    until: dt.datetime,
+    tz: dt.tzinfo,
+    now: dt.datetime | None = None,
+    include_this_computer: bool = True,
+) -> dict[str, Any]:
+    """Who logged in to this iLO between *since* and *until*, from the iLO Event Log. Logins from
+    the computer running proliant-mcp (its own Redfish sessions) are counted in ``this_computer_logins``
+    and left out of the other counts unless *include_this_computer*."""
     now = now or dt.datetime.now(dt.UTC)
     entries = await _log_entries(c, "iel")
     me = await own_ip(c)
-    total = failed = invalid = 0
+    total = failed = invalid = mine = 0
     by_day: Counter[str] = Counter()
     by_type: Counter[str] = Counter()
     users: Counter[str] = Counter()
@@ -483,6 +583,10 @@ async def logins(c: RedfishClient, since: dt.datetime, until: dt.datetime, tz: d
         m = _LOGIN.match(msg)
         if not m:
             continue
+        if me and m["ip"] == me:
+            mine += n
+            if not include_this_computer:
+                continue
         total += n
         by_day[first.astimezone(tz).date().isoformat()] += n
         by_type[m["kind"]] += n
@@ -499,6 +603,7 @@ async def logins(c: RedfishClient, since: dt.datetime, until: dt.datetime, tz: d
     alerts.sort(key=lambda f: f["time"], reverse=True)
     result: dict[str, Any] = {
         "logins": total,
+        "this_computer_logins": mine,
         "failed_logins": failed,
         "by_day": dict(sorted(by_day.items())),
         "by_type": dict(by_type.most_common()),

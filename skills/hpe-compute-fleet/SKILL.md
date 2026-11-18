@@ -71,6 +71,9 @@ deepest detail.
 - For any table or comparison across servers (iLO firmware, model, CPU, GPU, NIC) use
   `com_list_servers` (set `include_hardware` for CPU/GPU), `com_list_gpus`, `com_list_nics`
   or `com_hardware_report`: one call returns the whole fleet.
+- Synergy uplink status: `oneview_list_uplink_sets` (ports, Active/StandBy role, LLDP neighbor,
+  issues). Role `None` on a linked port means it carries nothing (e.g. an uplink set without networks).
+- "Which server is this IP/hostname/serial?": `find_server`, not a search through list output.
 - NIC mode is each port's network technology (Ethernet, InfiniBand, FibreChannel); an
   NVIDIA/Mellanox VPI card reports the mode it runs in, so `Ethernet+InfiniBand` is one card
   with a port in each. `nic_unknown` servers have no network inventory in COM: unknown, not none. Never loop `com_get_server` or `com_api_get` over servers.
