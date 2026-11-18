@@ -6,7 +6,7 @@ import pytest
 from fastmcp import Client
 from mcp_types import ElicitRequestURLParams, ElicitResult
 
-from proliant_mcp import chat, com, login
+from proliant_mcp import chat, chat_login, com, login
 from proliant_mcp import server as srv
 from proliant_mcp.config import load_com
 
@@ -294,7 +294,7 @@ async def test_com_login_cancelled_or_without_popups(greenlake):
     assert result.is_error and "cancelled" in result.content[0].text.lower()
     async with Client(srv.mcp) as client:
         result = await client.call_tool("com_login", {}, raise_on_error=False)
-    assert result.is_error and "proliant-mcp login" in result.content[0].text
+    assert result.is_error and "com_login_start" in result.content[0].text
     assert not (login.com_login_path()).exists()
 
 
@@ -308,3 +308,43 @@ def test_api_client_names_are_unique_per_install(home, monkeypatch):
     second = login._credential_prefix()
     assert first.startswith("GLP-proliant-mcp-SAMEHOST-") and second.startswith("GLP-proliant-mcp-SAMEHOST-")
     assert first != second  # same hostname, different install: cleanup of one never matches the other
+
+
+# ── com_login_start / com_login_status: sign-in without pop-ups ───────────────
+
+async def test_relay_sign_in_hpe_account_with_workspace_choice(greenlake):
+    greenlake(workspaces=("Lab", "Other"))
+    async with Client(srv.mcp) as client:  # no elicitation handler: a client without pop-ups
+        first = (await client.call_tool("com_login_start", {"email": "you@hpe.com"})).structured_content
+        assert (first["status"], first["number"]) == ("approve_push", 21) and "tap 21" in first["next_step"]
+        step = (await client.call_tool("com_login_status", {})).structured_content
+        assert (step["status"], step["workspaces"]) == ("choose_workspace", ["Lab", "Other"])
+        done = (await client.call_tool("com_login_status", {"workspace": "Other"})).structured_content
+        listed = (await client.call_tool("list_servers", {})).data["com_accounts"]
+    assert (done["status"], done["workspace"], done["servers"]) == ("signed_in", "Other", 7)
+    assert listed[0]["workspace"] == "Other" and "csecret" not in json.dumps(done)
+
+
+async def test_relay_sign_in_password_on_local_page(greenlake):
+    greenlake()
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("com_login_start", {"email": "you@gmail.com"})).structured_content
+        assert first["status"] == "enter_password" and first["url"].startswith("http://127.0.0.1:")
+        await browser.post(first["url"], data={"password": "wrong"})
+        retry = (await client.call_tool("com_login_status", {})).structured_content
+        assert retry["status"] == "enter_password" and "Incorrect password" in retry["next_step"] and retry["url"] != first["url"]
+        await browser.post(retry["url"], data={"password": "right-password"})
+        done = (await client.call_tool("com_login_status", {})).structured_content
+    assert done["status"] == "signed_in" and "right-password" not in json.dumps(done)
+
+
+async def test_relay_status_says_when_nothing_changed(greenlake, monkeypatch):
+    greenlake(workspaces=("Lab", "Other"))
+    monkeypatch.setattr(chat_login, "STATUS_WAIT", 0.2)
+    async with Client(srv.mcp) as client:
+        await client.call_tool("com_login_start", {"email": "you@hpe.com"})
+        await client.call_tool("com_login_status", {})  # now choose_workspace
+        again = (await client.call_tool("com_login_status", {})).structured_content
+        assert again["status"] == "choose_workspace" and again["waiting"] is True
+        bad = await client.call_tool("com_login_start", {"email": "not-an-email"}, raise_on_error=False)
+    assert bad.is_error and "email" in bad.content[0].text

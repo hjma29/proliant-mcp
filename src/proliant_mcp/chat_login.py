@@ -15,6 +15,7 @@ import asyncio
 from typing import Any
 
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 
 from proliant_mcp import login
 from proliant_mcp.chat import FlowError, Prompter, SecretPrompt, _Flow, accepted, form_params, run_flow
@@ -22,9 +23,9 @@ from proliant_mcp.com import ComError
 from proliant_mcp.config import com_login_path, load_com
 
 UNSUPPORTED = (
-    "This AI client cannot show sign-in pop-ups (MCP elicitation). Ask the user to run "
-    "`proliant-mcp login` in a terminal on the machine running this server, or to configure a GreenLake "
-    "API client (README: HPE Compute Ops Management)."
+    "This AI client cannot show sign-in pop-ups (MCP elicitation). Sign the user in here instead: ask for their "
+    "HPE GreenLake email, call com_login_start, relay what it returns (the Okta Verify number, or a password page "
+    "link), and call com_login_status until it says signed_in."
 )
 
 
@@ -85,13 +86,7 @@ class ChatUI(Prompter):
         return str(answer.get("workspace", ""))
 
 
-async def _sign_in(flow: _Flow, email: str | None, workspace: str | None, region: str | None) -> dict[str, Any]:
-    ui = ChatUI(flow)
-    try:
-        address = await ui.email(email or login.load_login().get("email", ""))
-        data = await login.login(address, ui, workspace, region)
-    except (login.LoginError, FlowError) as exc:
-        raise FlowError(f"GreenLake sign-in failed: {exc}") from exc
+async def _signed_in(address: str, data: dict[str, Any], notes: list[str]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "status": "signed_in",
         "email": address,
@@ -103,17 +98,173 @@ async def _sign_in(flow: _Flow, email: str | None, workspace: str | None, region
     try:
         result["servers"] = await login.server_count(data)
     except ComError as exc:
-        flow.notes.append(f"Saved, but the first Compute Ops Management call failed: {exc}")
+        notes.append(f"Saved, but the first Compute Ops Management call failed: {exc}")
     first = next(iter(load_com().values()), None)
     if first is not None and first.source != str(com_login_path()):
-        flow.notes.append(
-            f"COM account '{first.name}' from {first.source} is configured and is used first; remove it to use this login."
-        )
+        notes.append(f"COM account '{first.name}' from {first.source} is configured and is used first; remove it to use this login.")
     else:
-        flow.notes.append("The com_ tools use this login now; no restart needed.")
-    result["notes"] = flow.notes
+        notes.append("The com_ tools use this login now; no restart needed.")
+    result["notes"] = notes
     return result
+
+
+async def _sign_in(flow: _Flow, email: str | None, workspace: str | None, region: str | None) -> dict[str, Any]:
+    ui = ChatUI(flow)
+    try:
+        address = await ui.email(email or login.load_login().get("email", ""))
+        data = await login.login(address, ui, workspace, region)
+    except (login.LoginError, FlowError) as exc:
+        raise FlowError(f"GreenLake sign-in failed: {exc}. If no pop-up was shown, use com_login_start instead.") from exc
+    return await _signed_in(address, data, flow.notes)
 
 
 async def com_login(ctx: Context, email: str | None, workspace: str | None, region: str | None) -> Any:
     return await run_flow(ctx, lambda flow: _sign_in(flow, email, workspace, region), UNSUPPORTED)
+
+
+# ── Sign-in without pop-ups: com_login_start + com_login_status ───────────────
+#
+# For clients that cannot show pop-ups (Claude Desktop, some Codex versions, harnesses that
+# auto-cancel them). Each tool call returns at once with what the user must do next (the
+# Okta Verify number, a link to the password page, or the workspaces to choose from); the
+# assistant relays it in the chat and calls com_login_status until the sign-in ends. Calls
+# return within about 45 seconds, inside the 60 s default tool timeout of clients like Codex.
+
+STATUS_WAIT = 45.0
+START_WAIT = 40.0
+
+
+class RelayUI:
+    """``login.LoginUI`` that publishes each step as a state for the next tool call to return."""
+
+    def __init__(self, session: _Relay) -> None:
+        self.session = session
+
+    def say(self, message: str) -> None:
+        self.session.notes.append(message)
+
+    async def password(self, email: str, error: str | None) -> str:
+        from proliant_mcp.chat import _PasswordPage
+
+        page = _PasswordPage(
+            SecretPrompt(
+                message=f"Type your HPE GreenLake password for {email}.",
+                title="Sign in to HPE GreenLake",
+                who=email,
+                label="GreenLake password",
+                button="Sign in",
+                note="For the proliant-mcp Compute Ops Management tools. The password is used once to sign in and is not stored.",
+            ),
+            error,
+        )
+        try:
+            self.session.publish(
+                "enter_password",
+                f"{error + ' ' if error else ''}Ask the user to open {page.url} in a browser on the computer running this "
+                f"server and type the GreenLake password for {email} there (never in the chat). Then call com_login_status.",
+                url=page.url,
+            )
+            return await asyncio.wait_for(page.password, login.POLL_TIMEOUT)
+        except TimeoutError as exc:
+            raise login.LoginError("No password entered within 5 minutes") from exc
+        finally:
+            page.close()
+
+    async def approve(self, number: Any, approval: asyncio.Task[str]) -> str:
+        tap = f"tap {number}" if number is not None else "approve the push"
+        self.session.publish(
+            "approve_push",
+            f"Tell the user: open Okta Verify on your phone and {tap} on the newest request. Then call com_login_status.",
+            number=number,
+        )
+        return await approval
+
+    async def workspace(self, names: list[str]) -> str:
+        self.session.choice = asyncio.get_running_loop().create_future()
+        self.session.publish(
+            "choose_workspace",
+            "Ask the user which HPE GreenLake workspace to use, then call com_login_status with workspace set to their choice.",
+            workspaces=names,
+        )
+        try:
+            return await asyncio.wait_for(self.session.choice, login.POLL_TIMEOUT)
+        except TimeoutError as exc:
+            raise login.LoginError("No workspace chosen within 5 minutes") from exc
+
+
+class _Relay:
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {"status": "starting"}
+        self.version = 0
+        self.seen = 0
+        self.changed = asyncio.Event()
+        self.notes: list[str] = []
+        self.choice: asyncio.Future[str] | None = None
+        self.task: asyncio.Task[dict[str, Any]] | None = None
+
+    def publish(self, status: str, next_step: str, **fields: Any) -> None:
+        self.state = {"status": status, **fields, "next_step": next_step}
+        self.version += 1
+        self.changed.set()
+
+    def current(self) -> dict[str, Any]:
+        assert self.task is not None
+        if self.task.done():
+            if self.task.cancelled():
+                return {"status": "failed", "error": "Sign-in cancelled"}
+            exc = self.task.exception()
+            if exc is not None:
+                return {"status": "failed", "error": f"GreenLake sign-in failed: {exc}", "next_step": "Call com_login_start to try again."}
+            return self.task.result()
+        self.seen = self.version
+        return {**self.state, "notes": list(self.notes)} if self.notes else dict(self.state)
+
+    async def wait_for_news(self, timeout: float) -> None:
+        """Until a step the caller has not seen yet is published, the sign-in ends, or *timeout*."""
+        assert self.task is not None
+        deadline = asyncio.get_running_loop().time() + timeout
+        while self.version == self.seen and not self.task.done():
+            self.changed.clear()
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return
+            waiter = asyncio.ensure_future(self.changed.wait())
+            await asyncio.wait({waiter, self.task}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+            waiter.cancel()
+
+
+_relay: _Relay | None = None
+
+
+async def _relay_sign_in(session: _Relay, email: str, workspace: str | None, region: str | None) -> dict[str, Any]:
+    data = await login.login(email, RelayUI(session), workspace, region)
+    return await _signed_in(email, data, session.notes)
+
+
+async def com_login_start(email: str, workspace: str | None, region: str | None) -> dict[str, Any]:
+    global _relay
+    if "@" not in email:
+        raise ToolError("Ask the user for their HPE GreenLake email address and pass it as email.")
+    if _relay is not None and _relay.task is not None and not _relay.task.done():
+        _relay.task.cancel()
+    session = _Relay()
+    session.task = asyncio.create_task(_relay_sign_in(session, email.strip(), workspace, region))
+    _relay = session
+    await session.wait_for_news(START_WAIT)
+    return session.current()
+
+
+async def com_login_status(workspace: str | None) -> dict[str, Any]:
+    session = _relay
+    if session is None or session.task is None:
+        raise ToolError("No sign-in in progress. Call com_login_start first.")
+    if workspace and session.choice is not None and not session.choice.done():
+        session.choice.set_result(workspace)
+    if not session.task.done():
+        await session.wait_for_news(STATUS_WAIT)
+    news = session.version != session.seen
+    result = session.current()
+    if result.get("status") not in ("signed_in", "failed") and not news:
+        result["waiting"] = True
+        result["next_step"] = "Still waiting for the user. " + str(result.get("next_step", "")) + " Call com_login_status again."
+    return result

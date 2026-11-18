@@ -100,8 +100,9 @@ class ComClient:
             raise ComError(f"COM: cannot reach GreenLake SSO ({exc.__class__.__name__})") from exc
         if resp.status_code >= 400:
             raise ComError(
-                f"COM login failed for account '{self.account.name}' (HTTP {resp.status_code}). "
-                "Check the GreenLake API client ID/secret, or sign in again with the com_login tool."
+                f"COM login failed for account '{self.account.name}' (HTTP {resp.status_code}): the GreenLake API client "
+                f"from {self.account.source or 'the configuration'} was deleted or its secret is wrong. Sign the user in "
+                "again now with com_login (pop-ups) or com_login_start (no pop-ups)."
             )
         data = resp.json()
         _tokens[self.account.client_id] = (data["access_token"], time.monotonic() + float(data.get("expires_in", 7200)))
@@ -151,7 +152,7 @@ class ComClient:
             raise ComError(
                 f"Compute Ops Management is not set up for this GreenLake workspace{ws} in any region "
                 f"({', '.join(REGIONS)}). The COM login in use comes from {self.account.source or 'the configuration'}. "
-                "Sign in again with the com_login tool (or `proliant-mcp login` in a terminal) and choose a "
+                "Sign the user in again now with com_login (pop-ups) or com_login_start (no pop-ups) and choose a "
                 "workspace that has Compute Ops Management."
             )
         best = max(totals, key=lambda r: (totals[r], r == self.account.region))

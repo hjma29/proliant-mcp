@@ -31,8 +31,10 @@ Public repository. Read this before changing anything.
    caveat) and stores only the API client it creates, in
    `~/.config/proliant-mcp/com/login.json`. Two front ends share it through
    `LoginUI`: `com_login` (MCP elicitation; must work on both 2025-11-25 live
-   pop-ups and 2026-07-28 `InputRequiredResult` rounds, test both) and the
-   `proliant-mcp login` terminal command. Passwords never go through a form
+   pop-ups and 2026-07-28 `InputRequiredResult` rounds, test both),
+   `com_login_start` + `com_login_status` (no pop-ups: each call returns the
+   next step for the assistant to relay, within Codex's 60 s tool timeout) and
+   the `proliant-mcp login` terminal command. Passwords never go through a form
    elicitation or the AI: URL-mode elicitation to a one-time 127.0.0.1 page.
 5. **Releases** (proliant-cli style, no binaries): the version lives only in
    `pyproject.toml`. For each customer-visible change add a line under a
@@ -45,3 +47,21 @@ Public repository. Read this before changing anything.
    GitHub environment `pypi`; a version can never be re-uploaded, so a bad
    release is fixed by the next version), and installs it on Windows/Linux/macOS.
    Customers on `uvx proliant-mcp@latest` get it on their next AI client restart.
+6. **Keep improving the MCP server from real use.** The goal is that a customer
+   never leaves the AI chat: when something is missing, the server guides them
+   (sign-in, adding servers) in the chat, and errors tell the assistant the
+   exact tool to call next, never "open a browser" or "run a terminal command".
+   Whenever you (or a customer's assistant, in a screenshot or log) had to do
+   any of these, treat it as a missing feature and fix it in this repo, with a
+   test, before or alongside the answer:
+   - ran a raw script, `curl`, `uv run python -c ...` or `com_api_get` /
+     `redfish_get` / `oneview_rest_get` to get data a user asked for: add or
+     extend a tool so it is one call next time (e.g. `com_list_gpus`);
+   - looped a per-server tool over many servers: add a fleet tool or option;
+   - read a credential file or worked around a login by hand, or asked the user
+     to do something outside the chat: make a tool (or tool error) guide it;
+   - saw an unclear error (raw HTTP code, stack trace, a message that sends the
+     assistant the wrong way): make it say what happened and what to call next;
+   - a client (Codex, Claude Desktop, opencode, VS Code) behaved differently:
+     make the tools work there too and note it in the README.
+   Always prefer the server's own tools over scripts when answering a user.

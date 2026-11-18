@@ -31,8 +31,12 @@ serial number. If a tool returns an error, report it; never invent values.
 For tables or comparisons across servers use com_list_servers (add include_hardware for CPU and
 GPU columns) or com_list_gpus; they return the whole fleet in one call. Never loop com_get_server
 or com_api_get over many servers.
-If a com_ tool says no COM account is configured or the COM login failed, call com_login:
-it signs the user in to HPE GreenLake with pop-ups in this chat. If no iLO or OneView is
+If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
+set up for the workspace, sign the user in right away in this chat; do not send them to a
+browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fails or is
+cancelled without the user seeing a pop-up, ask the user for their GreenLake email, call
+com_login_start, tell the user exactly what it returns (the Okta Verify number to tap, or the
+link to the password page), and call com_login_status until it says signed_in. If no iLO or OneView is
 configured, or the user wants to add servers, call add_server (one iLO or OneView) or
 import_inventory (a .ini or .csv file the user names in a pop-up). Never ask the user to type
 a password into the chat; these tools collect it on a secure page."""
@@ -88,7 +92,7 @@ def _pick(kind: str, items: dict[str, Any], name: str | None) -> Any:
         hint = (
             "Add one with the add_server tool (pop-ups in the chat), import a file with import_inventory, add a section with `type = oneview` (host/username/password) to the inventory file, or set ONEVIEW_HOST/ONEVIEW_USERNAME/ONEVIEW_PASSWORD."
             if kind == "OneView appliance"
-            else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or sign the user in with the com_login tool (pop-ups in the chat)."
+            else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or sign the user in now with com_login (pop-ups) or com_login_start (no pop-ups)."
         )
         raise ToolError(f"No {kind} configured. {hint}")
     if not name:
@@ -352,6 +356,35 @@ async def com_login(
     Call it when a com_ tool says no COM account is configured or login failed, or when the
     user asks to sign in. Never ask for the password in chat; the pop-ups collect everything."""
     return await chat_login.com_login(ctx, email, workspace, region)
+
+
+SIGN_IN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
+
+
+@mcp.tool(annotations=SIGN_IN)
+async def com_login_start(
+    email: Annotated[str, Field(description="The user's HPE GreenLake email. Ask the user for it; it is not a secret.")],
+    workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
+    region: Annotated[Literal["us-west", "eu-central", "ap-northeast"] | None, Field(description="COM region; detected if omitted.")] = None,
+) -> dict[str, Any]:
+    """Sign the user in to HPE GreenLake without pop-ups, for clients where com_login's pop-ups
+    do not appear. Returns the first step for the user, which you must relay in the chat:
+    `approve_push` with the `number` to tap in Okta Verify (@hpe.com accounts), or
+    `enter_password` with a `url` of a secure page on this computer for the password (other
+    accounts; never ask for the password in chat). Then call com_login_status until it returns
+    `signed_in` (the com_ tools work immediately) or `failed`."""
+    return await chat_login.com_login_start(email, workspace, region)
+
+
+@mcp.tool(annotations=SIGN_IN)
+async def com_login_status(
+    workspace: Annotated[str | None, Field(description="The user's choice when the last status was choose_workspace.")] = None,
+) -> dict[str, Any]:
+    """Next step of the sign-in begun by com_login_start. Waits up to 45 seconds for the user,
+    then returns the current step (`approve_push`, `enter_password`, `choose_workspace` with
+    `workspaces`), `signed_in` with the server count, or `failed`. If `waiting` is true nothing
+    changed yet: remind the user of the step and call it again."""
+    return await chat_login.com_login_status(workspace)
 
 
 @mcp.tool(

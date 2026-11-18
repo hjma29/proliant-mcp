@@ -6,6 +6,17 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.7.0 — 2026-11-18
+
+### New Features
+- `com_login_start` and `com_login_status`: sign in to HPE GreenLake in clients that show no MCP pop-ups (Claude Desktop, some Codex versions, harnesses that cancel pop-ups). Each call returns the next step for the assistant to tell the user in the chat: the number to tap in Okta Verify, a link to the one-time password page on the computer running the server, or the workspaces to choose from. Calls return within 45 seconds, inside Codex's default 60 s tool timeout.
+
+### Enhancements
+- When a COM login fails (HTTP 401, for example after the API client was deleted in GreenLake), is missing, or the workspace has no COM, the error and the server instructions tell the assistant to sign the user in right away in the chat with `com_login` or `com_login_start`, not to send them to a browser or terminal.
+- `com_login` errors suggest `com_login_start` when no pop-up was shown.
+
+---
+
 ## v0.6.2 — 2026-11-17
 
 ### Bug Fixes

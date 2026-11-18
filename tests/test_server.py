@@ -108,7 +108,7 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
 async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert await srv._check(connect=False) == 0
     out = capsys.readouterr().out
-    assert "33 tools" in out
+    assert "35 tools" in out
     assert "latest release:" in out
 
     assert await srv._check(connect=True) == 1

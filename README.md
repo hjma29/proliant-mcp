@@ -84,6 +84,7 @@ human-facing CLI for the same three sources.
 | `add_server` | Add one iLO or OneView: pop-up for type, address, name and user name, then a secure page for the password; the login is checked before saving |
 | `import_inventory` | Import many from an `.ini` or `.csv` file whose path you type in a pop-up; optional shared password and login checks |
 | `com_login` | Sign in to HPE GreenLake with pop-ups (email, then Okta Verify number or a secure password page); creates a GreenLake API client for you (see Configure > HPE Compute Ops Management) |
+| `com_login_start`, `com_login_status` | The same sign-in for clients that show no pop-ups: the assistant asks for your email and tells you the Okta Verify number (or gives you the password page link) in the chat |
 
 Every other tool is annotated `readOnlyHint`. The setup tools change no server: `add_server` and
 `import_inventory` only edit the inventory file on this computer, and `com_login` also creates a
@@ -103,7 +104,7 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 33 tools` and `(up to date)`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 35 tools` and `(up to date)`):
 
 ```powershell
 uvx proliant-mcp@latest --check
@@ -266,8 +267,17 @@ and saves its ID and secret to `~/.config/proliant-mcp/com/login.json` (readable
 `com_*` tools use it straight away, no restart. Your email, password and session are never stored.
 Signing in again replaces this computer's previous client.
 
-This needs an AI client that supports MCP pop-ups (elicitation), such as VS Code with GitHub
-Copilot. Otherwise run the same sign-in in a terminal:
+**AI clients without pop-ups** (Claude Desktop, some Codex versions): the assistant signs you in
+with `com_login_start` / `com_login_status` instead. It asks for your email in the chat, tells you the
+number to tap in Okta Verify (or gives you a link to the password page, which opens on the computer
+running the server), and confirms when you are signed in. You never leave the chat. When a COM
+login stops working (for example after you delete the API client in GreenLake), the assistant
+starts this sign-in by itself.
+
+Codex ends tool calls after 60 seconds by default; the sign-in tools stay under that, but you can
+raise it with `tool_timeout_sec = 300` in the `[mcp_servers.proliant]` section of `config.toml`.
+
+The same sign-in also runs in a terminal:
 
 ```bash
 uvx proliant-mcp@latest login
