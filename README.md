@@ -1,5 +1,11 @@
 # proliant-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/proliant-mcp)](https://pypi.org/project/proliant-mcp/)
+
+**Install / run:** `uvx proliant-mcp@latest` (from [PyPI](https://pypi.org/project/proliant-mcp/); needs only
+[uv](https://docs.astral.sh/uv/), no git). MCP client config: `"command": "uvx", "args": ["proliant-mcp@latest"]`.
+Supports **HPE iLO, Compute Ops Management and OneView**, all read-only. Details: [Install](#install).
+
 An [MCP](https://modelcontextprotocol.io) server for **HPE compute**, built with
 [FastMCP](https://gofastmcp.com). It gives AI assistants and agents (GitHub
 Copilot, Claude, Google ADK, ...) live, read-only access to three HPE
