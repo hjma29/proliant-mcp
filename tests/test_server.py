@@ -138,7 +138,7 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
 async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert await srv._check(connect=False) == 0
     out = capsys.readouterr().out
-    assert "39 tools" in out
+    assert "40 tools" in out
     assert "latest release:" in out
 
     assert await srv._check(connect=True) == 1
@@ -374,6 +374,32 @@ async def test_com_hardware_report_groups_identical_servers_in_a_compact_answer(
     gpu = next(g for g in data["configurations"] if g["servers"] == ["gpu1.example.com"])
     assert gpu["gpus"] == ["2 x NVIDIA L40S", "1 x Intel Video Controller"] and gpu["storage_controllers"] is None  # unknown, not none
     assert next(g for g in data["configurations"] if g["servers"] == ["dl345.example.com"])["gpus"] is None
+
+
+async def test_com_list_nics_reports_modes_ports_and_speeds_for_the_fleet(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("com_list_nics", {})).structured_content
+        report = (await c.call_tool("com_hardware_report", {})).structured_content
+        detail = (await c.call_tool("com_get_server", {"server": "gpu1.example.com"})).structured_content
+    assert data["nic_modes"] == {
+        "FibreChannel": {"adapters": 1, "ports": 2, "ports_up": 2},
+        "Ethernet": {"adapters": 2, "ports": 3, "ports_up": 2},  # the VPI card's Ethernet port counts here
+        "InfiniBand": {"adapters": 1, "ports": 1, "ports_up": 0},
+    }
+    assert data["most_used_nic_mode"] == "Ethernet"  # ties on linked ports go to the mode with more adapters
+    assert data["linked_ports_by_speed"] == {"16Gb FibreChannel": 2, "25Gb Ethernet": 1, "100Gb Ethernet": 1}
+    assert data["nic_unknown"] == ["old-t4.example.com", "dl345.example.com"]  # no network inventory: unknown, not none
+    gpu1 = next(s for s in data["servers"] if s["name"] == "gpu1.example.com")["adapters"]
+    assert gpu1[0]["name"] == "10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter"  # SKU, not the bare 'BCM57414'
+    assert (gpu1[1]["mode"], gpu1[1]["speeds_up"]) == ("Ethernet+InfiniBand", ["1 x 100Gb Ethernet"])
+    gpu_config = next(g for g in report["configurations"] if g["servers"] == ["gpu1.example.com"])
+    assert gpu_config["nics"] == [
+        "1 x 10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter (Ethernet, 2p)",
+        "1 x HPE InfiniBand HDR/Ethernet 200Gb 2-port QSFP56 MCX653436A-HDAI Adapter (Ethernet+InfiniBand, 2p)",
+    ]
+    assert report["nic_unknown"] == ["old-t4.example.com", "dl345.example.com"] and report["most_used_nic_mode"] == "Ethernet"
+    ports = detail["hardware"]["network"]["adapters"][1]["port_detail"]
+    assert [(p["mode"], p["link"], p["mac"]) for p in ports] == [("Ethernet", "LinkUp", "02:00:00:00:00:01"), ("InfiniBand", "LinkDown", "02:00:00:00:00:02")]
 
 
 def _fake_com_server(server_id: str, name: str) -> dict:

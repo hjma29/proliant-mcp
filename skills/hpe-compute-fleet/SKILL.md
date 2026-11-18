@@ -68,9 +68,12 @@ deepest detail.
   COM's health and power data may be stale. Say so.
 - Report tool errors as they come back (403 = the API client has no COM role).
   Never fill in values from memory.
-- For any table or comparison across servers (iLO firmware, model, CPU, GPU) use
-  `com_list_servers` (set `include_hardware` for CPU/GPU) or `com_list_gpus`: one call
-  returns the whole fleet. Never loop `com_get_server` or `com_api_get` over servers.
+- For any table or comparison across servers (iLO firmware, model, CPU, GPU, NIC) use
+  `com_list_servers` (set `include_hardware` for CPU/GPU), `com_list_gpus`, `com_list_nics`
+  or `com_hardware_report`: one call returns the whole fleet.
+- NIC mode is each port's network technology (Ethernet, InfiniBand, FibreChannel); an
+  NVIDIA/Mellanox VPI card reports the mode it runs in, so `Ethernet+InfiniBand` is one card
+  with a port in each. `nic_unknown` servers have no network inventory in COM: unknown, not none. Never loop `com_get_server` or `com_api_get` over servers.
 - A server listed in `inventory_unavailable` has no cached hardware inventory in COM
   (never collected, or not connected). Say its GPUs are unknown, not that it has none.
   GPU names are what iLO reports, e.g. an unnamed "Intel Video Controller".

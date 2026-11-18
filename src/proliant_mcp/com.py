@@ -351,12 +351,79 @@ def storage_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]
     }
 
 
-def hardware_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]:
+_GENERIC_NIC_NAMES = {"", "network adapter", "networkadapter"}
+
+
+def _nic_label(a: dict[str, Any]) -> str:
+    """The most descriptive of Model / SKU / Name: iLOs put the marketing name in different fields
+    ('BCM57414' + SKU '10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter'; Mellanox 'P42046-001 / Mellanox ...')."""
+    names = [re.sub(r"^\s*P\d{5}-\d{3}\s*/\s*", "", str(a.get(k) or "")).strip() for k in ("Model", "SKU", "Name")]
+    useful = [n for n in names if n.lower() not in _GENERIC_NIC_NAMES and not re.fullmatch(r"[A-Z0-9#-]{4,20}", n)]
+    return max(useful, key=len) if useful else next((n for n in names if n), "?")
+
+
+def _gbps(value: Any) -> str:
+    return f"{value:g}Gb" if isinstance(value, (int, float)) else "unknown speed"
+
+
+def nic_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]:
+    """Network adapters from the cached Redfish ``networkAdapter`` inventory. The mode of a port is
+    its ``LinkNetworkTechnology`` (Ethernet, InfiniBand or FibreChannel); NVIDIA/Mellanox VPI cards can
+    run either Ethernet or InfiniBand, so it is the configured mode, not just the card type."""
+    adapters = []
+    for a in _section(inv, "networkAdapter"):
+        ports = a.get("Ports") or []
+        label = _nic_label(a)
+        if label == "?" and not ports:
+            continue
+        modes: Counter[str] = Counter(str(p.get("LinkNetworkTechnology") or "unknown") for p in ports)
+        up = [p for p in ports if str(p.get("LinkStatus") or "").lower() == "linkup"]
+        mixed = len(modes) > 1
+        ctrl = (a.get("Controllers") or [{}])[0]
+        entry: dict[str, Any] = {
+            "name": label,
+            "manufacturer": (a.get("Manufacturer") or "").strip() or None,
+            "part_number": (a.get("PartNumber") or "").strip() or None,
+            "mode": "+".join(sorted(modes)) if modes else None,
+            "ports": len(ports),
+            "ports_up": len(up),
+            # a VPI card can run one port as Ethernet and the other as InfiniBand: name each port's mode then
+            "speeds_up": [
+                f"{n} x {s}"
+                for s, n in Counter(
+                    _gbps(p.get("CurrentSpeedGbps")) + (f" {p.get('LinkNetworkTechnology') or 'unknown'}" if mixed else "") for p in up
+                ).most_common()
+            ],
+            "firmware": ctrl.get("FirmwarePackageVersion"),
+            "health": "OK" if _ok(a) else "NOT OK",
+        }
+        if mixed:
+            entry["port_modes"] = {
+                m: {"ports": n, "ports_up": sum(1 for p in up if str(p.get("LinkNetworkTechnology") or "unknown") == m)} for m, n in modes.items()
+            }
+        if detail:
+            entry["serial_number"] = a.get("SerialNumber")
+            entry["port_detail"] = [
+                {
+                    "port": p.get("PortId") or p.get("Id"),
+                    "mode": p.get("LinkNetworkTechnology"),
+                    "link": p.get("LinkStatus"),
+                    "speed_gbps": p.get("CurrentSpeedGbps"),
+                    "max_speed_gbps": p.get("MaxSpeedGbps"),
+                    "mac": ((p.get("Ethernet") or {}).get("AssociatedMACAddresses") or [None])[0],
+                }
+                for p in ports
+            ]
+        adapters.append(entry)
+    return {"known": bool(_section(inv, "networkAdapter")), "adapters": adapters}
+
+
+def hardware_summary(inv: dict[str, Any], detail: bool = False, network: bool = False) -> dict[str, Any]:
     """CPUs and GPUs from a server's cached COM inventory (``/servers/{id}/inventory``).
 
     GPUs are the ``processor`` entries iLO reports with ``ProcessorType: GPU``. Older iLOs
     may only list them as PCIe display controllers, which is the fallback. ``detail`` adds
-    serial numbers.
+    serial numbers; ``network`` adds the network adapters.
     """
     processors, pci = _section(inv, "processor"), _section(inv, "pciDevice")
     cpus = [p for p in processors if str(p.get("ProcessorType", "")).upper() == "CPU"]
@@ -388,7 +455,7 @@ def hardware_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any
             entry["serial_numbers"] = [i.get("SerialNumber") for i in items if i.get("SerialNumber")]
         gpus.append(entry)
     storage_known = bool(_section(inv, "storage") or _section(inv, "smartStorage"))
-    return {
+    summary = {
         "inventory_available": bool(processors or pci or storage_known),
         # COM can hold firmware and storage for a server whose full inventory (CPU, PCI) was never collected.
         "cpu_gpu_known": bool(processors or pci),
@@ -399,16 +466,19 @@ def hardware_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any
         "gpu_source": source if gpu_items else None,
         "storage": {**storage_summary(inv, detail), "known": storage_known},
     }
+    if network:
+        summary["network"] = nic_summary(inv, detail)
+    return summary
 
 
-async def _hardware_for(c: ComClient, ids: list[str], workers: int = 8) -> dict[str, dict[str, Any]]:
+async def _hardware_for(c: ComClient, ids: list[str], workers: int = 8, network: bool = False) -> dict[str, dict[str, Any]]:
     """Hardware summary per server id; a server whose inventory cannot be read gets an error entry."""
     gate = asyncio.Semaphore(workers)
 
     async def one(sid: str) -> tuple[str, dict[str, Any]]:
         async with gate:
             try:
-                return sid, hardware_summary(await c.get(f"/servers/{sid}/inventory"))
+                return sid, hardware_summary(await c.get(f"/servers/{sid}/inventory"), network=network)
             except ComError as exc:
                 return sid, {"inventory_available": False, "inventory_error": str(exc)}
 
@@ -461,7 +531,12 @@ async def overview(c: ComClient) -> dict[str, Any]:
 
 
 async def list_servers(
-    c: ComClient, health: str | None, connected: bool | None, name_contains: str | None, include_hardware: bool = False
+    c: ComClient,
+    health: str | None,
+    connected: bool | None,
+    name_contains: str | None,
+    include_hardware: bool = False,
+    network: bool = False,
 ) -> list[dict[str, Any]]:
     rows = [server_row(s) for s in await c.get_all("/servers")]
     if health:
@@ -471,7 +546,7 @@ async def list_servers(
     if name_contains:
         rows = [r for r in rows if name_contains.lower() in (r["name"] or "").lower()]
     if include_hardware:
-        hardware = await _hardware_for(c, [r["id"] for r in rows])
+        hardware = await _hardware_for(c, [r["id"] for r in rows], network=network)
         rows = [{**r, "hardware": hardware[r["id"]]} for r in rows]
     return rows
 
@@ -516,20 +591,40 @@ async def list_gpus(c: ComClient, name_contains: str | None, connected: bool | N
     }
 
 
+def _mode_totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Adapters, ports and linked ports per mode (Ethernet / InfiniBand / FibreChannel), most used first.
+    Ports count by their own mode; a VPI card running both modes counts as an adapter in each."""
+    modes: dict[str, dict[str, int]] = {}
+    for r in rows:
+        for a in ((r["hardware"].get("network") or {}).get("adapters") or []):
+            per_mode = a.get("port_modes") or {a["mode"] or "unknown": {"ports": a["ports"], "ports_up": a["ports_up"]}}
+            for mode, counts in per_mode.items():
+                m = modes.setdefault(mode, {"adapters": 0, "ports": 0, "ports_up": 0})
+                m["adapters"] += 1
+                m["ports"] += counts["ports"]
+                m["ports_up"] += counts["ports_up"]
+    return dict(sorted(modes.items(), key=lambda kv: (-kv[1]["ports_up"], -kv[1]["adapters"])))
+
+
 async def hardware_report(c: ComClient, name_contains: str | None, connected: bool | None) -> dict[str, Any]:
     """Fleet hardware table in one compact answer: servers with identical hardware share one row."""
-    rows = await list_servers(c, None, connected, name_contains, include_hardware=True)
+    rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True)
     groups: dict[str, dict[str, Any]] = {}
     storage_unknown: list[str] = []
     gpu_unknown: list[str] = []
+    nic_unknown: list[str] = []
     for r in rows:
         hw = r["hardware"]
         st = hw.get("storage") or {}
-        storage_known, gpu_known = bool(st.get("known")), bool(hw.get("cpu_gpu_known"))
+        net = hw.get("network") or {}
+        storage_known, gpu_known, nic_known = bool(st.get("known")), bool(hw.get("cpu_gpu_known")), bool(net.get("known"))
         if not storage_known:
             storage_unknown.append(r["name"])
         if not gpu_known:
             gpu_unknown.append(r["name"])
+        if not nic_known:
+            nic_unknown.append(r["name"])
+        nics: Counter[str] = Counter(f"{a['name']} ({a['mode'] or 'unknown mode'}, {a['ports']}p)" for a in net.get("adapters", []))
         config = {
             "model": r["model"],
             "cpu": [f"{c['count']} x {c['model']}" for c in hw.get("cpu", [])] if gpu_known else None,
@@ -539,17 +634,62 @@ async def hardware_report(c: ComClient, name_contains: str | None, connected: bo
             ] if storage_known else None,
             "direct_attached_drives": st.get("direct_drives", []) if storage_known else None,
             "gpus": [f"{g['count']} x {g['name']}" for g in hw.get("gpus", [])] if gpu_known else None,
+            "nics": [f"{n} x {label}" for label, n in nics.most_common()] if nic_known else None,
         }
         entry = groups.setdefault(json.dumps(config, sort_keys=True), {"servers": [], **config})
         entry["servers"].append(r["name"])
     configs = sorted(groups.values(), key=lambda g: (g["model"] or "~", g["servers"][0]))
+    modes = _mode_totals(rows)
     return {
         "servers_checked": len(rows),
         "configurations": [{"count": len(g["servers"]), **g} for g in configs],
+        "nic_modes": modes,
+        "most_used_nic_mode": next(iter(modes), None),
         "storage_unknown": storage_unknown,
         "gpu_unknown": gpu_unknown,
+        "nic_unknown": nic_unknown,
         "note": "Servers with identical hardware share one configuration. null means COM has no cached data for that part "
-        "(unknown, not absent); an empty list means none. Drive sizes are decimal GB.",
+        "(unknown, not absent); an empty list means none. Drive sizes are decimal GB. NIC mode is the port's network "
+        "technology (Ethernet, InfiniBand, FibreChannel); nic_modes counts adapters, ports and linked ports per mode.",
+    }
+
+
+async def list_nics(c: ComClient, name_contains: str | None, connected: bool | None, linked_only: bool) -> dict[str, Any]:
+    """Fleet network adapter report: per server its adapters with mode, ports and link speeds, plus totals."""
+    rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True)
+    by_model: Counter[str] = Counter()
+    speeds: Counter[str] = Counter()
+    report, unknown = [], []
+    for r in rows:
+        net = r["hardware"].get("network") or {}
+        if not net.get("known"):
+            unknown.append(r["name"])
+            continue
+        adapters = [a for a in net["adapters"] if a["ports_up"] or not linked_only]
+        for a in net["adapters"]:
+            by_model[f"{a['name']} ({a['mode'] or 'unknown mode'})"] += 1
+            for s in a["speeds_up"]:
+                n, _, speed = s.partition(" x ")
+                speeds[speed if a.get("port_modes") else f"{speed} {a['mode'] or 'unknown'}"] += int(n)
+        report.append({
+            "name": r["name"],
+            "model": r["model"],
+            "connected": r["connected"],
+            "adapters": [{k: v for k, v in a.items() if k not in ("manufacturer", "part_number")} for a in adapters],
+        })
+    modes = _mode_totals(rows)
+    return {
+        "servers_checked": len(rows),
+        "servers_with_nic_data": len(report),
+        "nic_modes": modes,
+        "most_used_nic_mode": next(iter(modes), None),
+        "adapters_by_model": dict(by_model.most_common()),
+        "linked_ports_by_speed": dict(speeds.most_common()),
+        "nic_unknown": unknown,
+        "note": "COM's cached inventory. Mode is each port's network technology (Ethernet, InfiniBand, FibreChannel), "
+        "so a VPI card shows the mode it runs in. Servers in nic_unknown have no cached network inventory "
+        "(full inventory never collected, common on Gen10 and Synergy), so their NICs are unknown, not absent.",
+        "servers": report,
     }
 
 
@@ -559,7 +699,7 @@ async def get_server(c: ComClient, query: str) -> dict[str, Any]:
     alerts = await c.get_all(f"/servers/{s['id']}/alerts", {"sort": "createdAt desc"}, max_items=200)
     detail["active_alerts"] = [alert_row(a) for a in alerts if not a.get("cleared")][:20]
     try:
-        detail["hardware"] = hardware_summary(await c.get(f"/servers/{s['id']}/inventory"), detail=True)
+        detail["hardware"] = hardware_summary(await c.get(f"/servers/{s['id']}/inventory"), detail=True, network=True)
     except ComError as exc:
         detail["hardware"] = {"inventory_available": False, "inventory_error": str(exc)}
     return detail

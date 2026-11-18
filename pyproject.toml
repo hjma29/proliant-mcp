@@ -1,6 +1,6 @@
 [project]
 name = "proliant-mcp"
-version = "0.10.0"
+version = "0.11.0"
 description = "MCP server for HPE compute: read-only tools for ProLiant iLO (Redfish), HPE Compute Ops Management (GreenLake) and HPE OneView / Synergy"
 readme = "README.md"
 requires-python = ">=3.12"

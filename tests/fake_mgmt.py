@@ -83,18 +83,35 @@ _RAID = {"Id": "DE07C000", "Name": "HPE Smart Array P408i-a SR Gen10",
 _NVME = [{"Id": f"DA00010{i}", "Name": "NVMe Storage System", "StorageControllers": [{"Model": "MO003200KXPTT"}],
           "Drives": [_drive(10 + i, 3200, "SSD", "NVMe")]} for i in range(2)]
 _EMBEDDED_VIDEO = {"Id": "273", "Name": "Embedded Video Controller", "PCIeFunctions": [{"DeviceClass": "DisplayController", "ClassCode": "0X000003"}]}
+
+
+def _port(i: int, tech: str, up: bool, speed: float | None) -> dict:
+    return {"Id": str(i), "PortId": str(i), "LinkNetworkTechnology": tech, "LinkStatus": "LinkUp" if up else "LinkDown",
+            "CurrentSpeedGbps": speed, "Ethernet": {"AssociatedMACAddresses": [f"02:00:00:00:00:0{i}"]}}
+
+
+# Field shapes seen in real COM inventory: the marketing name sits in Model, SKU or Name depending on the card.
+_BCM = {"Id": "DE07A000", "Name": "Network Adapter", "Model": "BCM57414", "SKU": "10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter",
+        "Manufacturer": "Broadcom", "PartNumber": "P10113-001", "Controllers": [{"FirmwarePackageVersion": "235.1.164.2"}],
+        "Ports": [_port(1, "Ethernet", True, 25.0), _port(2, "Ethernet", False, 0.0)]}
+_VPI = {"Id": "DE081000", "Name": "NetworkAdapter", "Model": "HPE InfiniBand HDR/Ethernet 200Gb 2-port QSFP56 MCX653436A-HDAI Adapter",
+        "SKU": "P36054-001", "Manufacturer": "MLNX", "Ports": [_port(1, "Ethernet", True, 100.0), _port(2, "InfiniBand", False, 0.0)]}
+_FC = {"Id": "DE085000", "Name": "HPE SN1620E 32Gb 2p FC HBA", "Model": "HPE SN1620E 32Gb 2p FC HBA", "SKU": "SN1620E2P",
+       "Ports": [_port(1, "FibreChannel", True, 16), _port(2, "FibreChannel", True, 16)]}
 FAKE_COM_INVENTORY: dict[str, dict] = {
     "/compute-ops-mgmt/v1/servers/P1+SN0001/inventory": {
         "lastFullInventoryCollectionAt": "2026-11-10T00:00:00Z",
         "processor": {"data": [_CPU, {**_CPU, "Id": "2"}]},
         "pciDevice": {"data": [_EMBEDDED_VIDEO]},
         "storage": {"data": [_RAID, *_NVME]},
+        "networkAdapter": {"data": [_FC]},
     },
     "/compute-ops-mgmt/v1/servers/P3+SN0003/inventory": {
         "lastFullInventoryCollectionAt": "2026-11-11T00:00:00Z",
         "processor": {"data": [_CPU, _gpu(3, "NVIDIA L40S", "NVIDIA", "900-2G133-0380-030"), _gpu(4, "NVIDIA L40S", "NVIDIA", "900-2G133-0380-030"),
                                 _gpu(5, "Intel Video Controller", "Intel", "")]},
         "pciDevice": {"data": [_EMBEDDED_VIDEO]},
+        "networkAdapter": {"data": [_BCM, _VPI]},
     },
     # an older iLO that lists the GPU only as a PCIe display controller
     "/compute-ops-mgmt/v1/servers/P4+SN0004/inventory": {

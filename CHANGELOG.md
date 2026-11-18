@@ -6,6 +6,18 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.11.0 — 2026-11-18
+
+### New Features
+- `com_list_nics`: network adapters (NICs and FC HBAs) for the whole COM fleet in one call (about 2 s and 14 KB for 49 servers). Per server each adapter's name, mode (Ethernet, InfiniBand or FibreChannel, from each port's network technology, so an NVIDIA/Mellanox VPI card shows the mode it runs in), ports, ports up, link speeds, firmware and health. Totals by mode (adapters, ports, linked ports and the most used mode), by adapter model and by link speed, and the servers COM has no network inventory for (unknown, not absent).
+
+### Enhancements
+- `com_hardware_report` lists each configuration's NICs with their mode and port count, and adds NIC mode totals, so one call answers "each server's GPU and NIC config".
+- `com_get_server` adds the network adapters with each port's mode, link state, speed and MAC address.
+- Adapter names come from whichever of Model, SKU or Name is descriptive (for example `10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter`, not `BCM57414`).
+
+---
+
 ## v0.10.0 — 2026-11-18
 
 ### New Features
