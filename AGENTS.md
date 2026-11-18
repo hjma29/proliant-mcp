@@ -19,7 +19,7 @@ Public repository. Read this before changing anything.
    `redfish.py` + `ilo.py` (iLO), `oneview.py` (OneView client + views),
    `com.py` (COM client + views), `login.py` (GreenLake sign-in engine),
    `chat.py` (pop-up and secure password page machinery shared by the setup tools),
-   `chat_login.py` (`com_login`), `chat_inventory.py` (`add_server`, `import_inventory`),
+   `chat_login.py` (`com_login`), `chat_inventory.py` (`add_server`, `add_server_start`, `import_inventory`),
    `inventory.py` (edit/parse the inventory file), `probe.py` (login checks),
    `server.py` (MCP tools only), `skills/`.
    COM/OneView logic is ported from proliant-cli (`proliant/com`,

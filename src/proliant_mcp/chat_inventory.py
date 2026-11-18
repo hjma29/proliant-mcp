@@ -7,14 +7,17 @@ secure local page (see ``chat.py``). Results never contain passwords.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 import httpx
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 
 from proliant_mcp import inventory
-from proliant_mcp.chat import FlowError, Prompter, SecretPrompt, _Flow, run_flow
+from proliant_mcp.chat import FlowError, Prompter, Relay, SecretPrompt, _Flow, run_flow
 from proliant_mcp.inventory import Entry, InventoryError
 from proliant_mcp.probe import LOGIN_ERRORS, PROBE_ERRORS, probe, probe_many
 
@@ -22,9 +25,9 @@ CHECK_LIMIT = 30
 LIST_LIMIT = 50
 
 UNSUPPORTED_ADD = (
-    "This AI client cannot show pop-ups (MCP elicitation). Ask the user to add the server by editing "
-    "~/.config/proliant-mcp/inventory.ini (README: Configure), or to put it in a .csv and run "
-    "`proliant-mcp import FILE` in a terminal."
+    "This AI client cannot show pop-ups (MCP elicitation). Add the server here instead: ask the user for the "
+    "type (ilo or oneview), address and user name, call add_server_start, relay the password page link it "
+    "returns, and call add_server_status until it says saved."
 )
 UNSUPPORTED_IMPORT = (
     "This AI client cannot show pop-ups (MCP elicitation). Ask the user to run `proliant-mcp import FILE` "
@@ -63,18 +66,24 @@ async def _add_server(flow: _Flow, kind: str | None, name: str | None, host: str
         fields["host"]["default"] = host
     if name:
         fields["name"]["default"] = name
-    answer = await ui.form(
-        "Add a server to your inventory. The password is asked next, on a secure page, and is checked before anything is saved.",
-        fields,
-        ["type", "host"],
-    )
+    try:
+        answer = await ui.form(
+            "Add a server to your inventory. The password is asked next, on a secure page, and is checked before anything is saved.",
+            fields,
+            ["type", "host"],
+        )
+    except FlowError as exc:
+        raise FlowError(f"{exc}. If no pop-up was shown, use add_server_start instead (no pop-ups).") from exc
     try:
         draft = inventory.make_entry(str(answer.get("name", "")), str(answer.get("type", "ilo")), str(answer.get("host", "")), str(answer.get("username", "")))
     except InventoryError as exc:
         raise FlowError(f"Add server failed: {exc}") from exc
-    label = "iLO" if draft.kind == "ilo" else "OneView"
+    return await _check_and_save(draft, lambda prompt, error: ui.secret(prompt, error))
 
-    prompt = SecretPrompt(
+
+def _password_prompt(draft: Entry) -> SecretPrompt:
+    label = "iLO" if draft.kind == "ilo" else "OneView"
+    return SecretPrompt(
         message=f"Type the {label} password for {draft.username} on {draft.host}.",
         title=f"{label} password for {draft.name}",
         who=f"{draft.username} @ {draft.host}",
@@ -83,9 +92,15 @@ async def _add_server(flow: _Flow, kind: str | None, name: str | None, host: str
         note="It is checked against the server, then saved in your proliant-mcp inventory file on this computer "
         "(readable only by you). It is not shared with the AI.",
     )
+
+
+async def _check_and_save(draft: Entry, ask: Callable[[SecretPrompt, str | None], Awaitable[str]]) -> dict[str, Any]:
+    """Ask for the password (up to three tries), log in with it, and only then save the entry."""
+    label = "iLO" if draft.kind == "ilo" else "OneView"
+    prompt = _password_prompt(draft)
     error: str | None = None
     for _ in range(3):
-        password = await ui.secret(prompt, error)
+        password = await ask(prompt, error)
         try:
             entry = inventory.make_entry(draft.name, draft.kind, draft.host, draft.username, password)
         except InventoryError as exc:
@@ -212,6 +227,40 @@ async def _import(flow: _Flow) -> dict[str, Any]:
 
 async def add_server(ctx: Context, kind: str | None, name: str | None, host: str | None, username: str | None) -> Any:
     return await run_flow(ctx, lambda flow: _add_server(flow, kind, name, host, username), UNSUPPORTED_ADD)
+
+
+# ── add_server_start / add_server_status: add a server without pop-ups ────────
+
+STATUS_WAIT = 45.0
+START_WAIT = 5.0
+
+_adding: Relay | None = None
+
+
+async def add_server_start(kind: str, host: str, name: str | None, username: str | None) -> dict[str, Any]:
+    global _adding
+    try:
+        draft = inventory.make_entry(name or "", kind, host, username or "")
+    except InventoryError as exc:
+        raise ToolError(f"Cannot add that server: {exc}") from exc
+    if _adding is not None and _adding.task is not None and not _adding.task.done():
+        _adding.task.cancel()
+    session = Relay("", "Call add_server_start to try again.")
+    step = (
+        "Ask the user to open {url} in a browser on the computer running this server and type the password for "
+        f"{draft.username} on {draft.host} there (never in the chat). Then call add_server_status."
+    )
+    session.task = asyncio.create_task(_check_and_save(draft, lambda prompt, error: session.secret(prompt, error, step)))
+    _adding = session
+    await session.wait_for_news(START_WAIT)
+    return session.current()
+
+
+async def add_server_status() -> dict[str, Any]:
+    session = _adding
+    if session is None or session.task is None:
+        raise ToolError("No server is being added. Call add_server_start first.")
+    return await session.status(STATUS_WAIT, "Call add_server_status again.")
 
 
 async def import_inventory(ctx: Context) -> Any:

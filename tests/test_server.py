@@ -95,6 +95,35 @@ async def test_errors(mcp_client, args):
             await c.call_tool(tool, args)
 
 
+async def test_event_log_filters_and_puts_wrong_clock_entries_last(mcp_client):
+    async with mcp_client as c:
+        newest = (await c.call_tool("get_event_log", {"server": "gen12", "log": "iel", "limit": 20})).structured_content["result"]
+        recent = (await c.call_tool("get_event_log", {"server": "gen12", "log": "iel", "since": "2d", "contains": "LOGIN"})).structured_content["result"]
+        bad = await c.call_tool("get_event_log", {"server": "gen12", "log": "iel", "since": "last week"}, raise_on_error=False)
+    # the 2039 entry would sort first by date; it goes last, flagged, with the 0000 one
+    assert newest[0]["message"].startswith("Browser logout") and "time_invalid" not in newest[0]
+    assert [e["created"][:4] for e in newest if e.get("time_invalid")] == ["0000", "2039"]
+    assert all(e.get("time_invalid") for e in newest[-2:])
+    assert len(recent) == 5 and not any("old.example.com" in e["message"] or e.get("time_invalid") for e in recent)
+    assert bad.is_error and "7d" in bad.content[0].text
+
+
+async def test_ilo_logins_summarises_the_fleet_in_one_call(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("get_ilo_logins", {"days": 7, "utc_offset_hours": 0})).structured_content
+    assert data["totals"] == {"logins": 4, "failed_logins": 1, "security_alerts": 1, "servers": 1, "unreachable": 1}
+    gen12 = next(s for s in data["servers"] if s["server"] == "gen12")
+    assert gen12["by_type"] == {"Browser": 3, "Host REST": 1}
+    assert gen12["users"] == {"admin": 2, "Administrator": 1, "System Administrator": 1}
+    assert gen12["sources"][0] == {"ip": "192.0.2.60", "host": None, "logins": 2, "last_login": gen12["sources"][0]["last_login"]}
+    assert gen12["sources"][1]["this_computer"] is True and gen12["sources"][1]["host"] == "admin-pc.example.com"
+    assert gen12["failures"][0]["ip"] == "192.0.2.66" and "unauthorized" in gen12["security_alerts"][0]["message"]
+    assert gen12["entries_with_invalid_time"] == 2 and gen12["log_covers_window"] is True
+    assert len(data["by_day"]) == 7 and sum(d["total"] for d in data["by_day"]) == 4 and "gen12" in data["by_day"][0]
+    assert "UnauthorizedLoginAttempt" in next(s for s in data["servers"] if s["server"] == "badpass")["error"]
+    assert any("this_computer" in n for n in data["notes"]) and any("invalid clock" in n for n in data["notes"])
+
+
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
 def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
     from proliant_mcp.config import load_servers
@@ -109,7 +138,7 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
 async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert await srv._check(connect=False) == 0
     out = capsys.readouterr().out
-    assert "36 tools" in out
+    assert "39 tools" in out
     assert "latest release:" in out
 
     assert await srv._check(connect=True) == 1

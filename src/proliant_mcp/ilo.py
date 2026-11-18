@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import re
+from collections import Counter
 from typing import Any
 
 from proliant_mcp.redfish import RedfishClient, RedfishError
@@ -327,8 +330,40 @@ async def network_adapters(c: RedfishClient) -> list[dict[str, Any]]:
     return result
 
 
-async def event_log(c: RedfishClient, log: str, limit: int, severity: str | None) -> list[dict[str, Any]]:
-    """Return newest-first entries of the IML (server) or IEL (iLO event log)."""
+def parse_time(value: str | None) -> dt.datetime | None:
+    """An iLO timestamp as an aware UTC datetime, or None if missing or unparseable."""
+    if not value or value.startswith("0000"):
+        return None
+    try:
+        t = dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=dt.UTC)
+
+
+def _valid(t: dt.datetime | None, now: dt.datetime) -> bool:
+    # iLO stamps 0000-00-00, an early default (2001) or a far-future date (2039) after an RTC reset
+    # or before it got NTP time. No iLO with Redfish predates 2012.
+    return t is not None and t.year >= 2012 and t <= now + dt.timedelta(days=1)
+
+
+def parse_when(value: str, now: dt.datetime, end_of_day: bool = False) -> dt.datetime:
+    """'7d', '24h', '30m', a date (2026-11-12) or an ISO 8601 time (UTC unless it has a zone).
+    With *end_of_day* a bare date means the end of that day (for 'until')."""
+    v = value.strip()
+    rel = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([dhm])", v, re.I)
+    if rel:
+        unit = {"d": "days", "h": "hours", "m": "minutes"}[rel.group(2).lower()]
+        return now - dt.timedelta(**{unit: float(rel.group(1))})
+    t = parse_time(v)
+    if t is None:
+        raise ValueError(f"'{value}' is not a time; use e.g. 7d, 24h, 2026-11-12 or 2026-11-12T08:00:00Z")
+    if end_of_day and re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        t += dt.timedelta(days=1) - dt.timedelta(microseconds=1)
+    return t
+
+
+async def _log_entries(c: RedfishClient, log: str) -> list[dict[str, Any]]:
     owner = await c.system() if log == "iml" else await c.manager()
     services = await c.get(_link(owner, "LogServices") or "")
     log_uri = next(
@@ -343,17 +378,139 @@ async def event_log(c: RedfishClient, log: str, limit: int, severity: str | None
     out = []
     for e in entries:
         hpe = _hpe(e)
-        sev = e.get("Severity") or hpe.get("Severity")
-        if severity and (sev or "").lower() != severity.lower():
-            continue
         out.append({
             "created": e.get("Created"),
             "updated": hpe.get("Updated"),
-            "severity": sev,
+            "severity": e.get("Severity") or hpe.get("Severity"),
             "message": e.get("Message"),
             "class": hpe.get("ClassDescription"),
             "count": hpe.get("Count"),
             "repaired": hpe.get("Repaired"),
         })
-    out.sort(key=lambda x: x.get("updated") or x.get("created") or "", reverse=True)
-    return out[:limit]
+    return out
+
+
+def _span(e: dict[str, Any], now: dt.datetime) -> tuple[dt.datetime | None, dt.datetime | None]:
+    """(first, last) valid time of an entry; iLO folds repeats into one entry with a Count."""
+    first, last = parse_time(e.get("created")), parse_time(e.get("updated"))
+    first = first if _valid(first, now) else None
+    last = last if _valid(last, now) else first
+    return first or last, last
+
+
+async def event_log(
+    c: RedfishClient,
+    log: str,
+    limit: int,
+    severity: str | None,
+    since: dt.datetime | None = None,
+    until: dt.datetime | None = None,
+    contains: str | None = None,
+    now: dt.datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Newest-first entries of the IML (server) or IEL (iLO event log). Entries whose time the
+    iLO got wrong (clock reset) are marked ``time_invalid``, sorted last and left out of time filters."""
+    now = now or dt.datetime.now(dt.UTC)
+    needle = (contains or "").lower()
+    out = []
+    for e in await _log_entries(c, log):
+        if severity and (e["severity"] or "").lower() != severity.lower():
+            continue
+        if needle and needle not in (e["message"] or "").lower():
+            continue
+        first, last = _span(e, now)
+        if first is None:
+            if since or until:
+                continue
+            e["time_invalid"] = True
+        elif (since and last < since) or (until and first > until):
+            continue
+        out.append((last, e))
+    out.sort(key=lambda x: (x[0] is not None, x[0] or now), reverse=True)
+    return [e for _, e in out[:limit]]
+
+
+# "Browser login: Administrator - 192.0.2.5(host.example.com)." / "Host REST login: System Administrator"
+_LOGIN = re.compile(r"^(?P<kind>.+?) login: (?P<user>.+?)(?: - (?P<ip>[0-9A-Fa-f:.]+)(?:\((?P<host>[^)]*)\))?)?\.?\s*$")
+_FAILED = re.compile(r"login fail|failed login|invalid (user|login|password)", re.I)
+_ALERT = re.compile(r"unauthori[sz]ed|locked out|lockout", re.I)
+_IP = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+LIST_CAP = 20
+
+
+async def own_ip(c: RedfishClient) -> str | None:
+    """The address this computer reaches the iLO from, as the iLO sees it (our own session)."""
+    if not c.session_uri:
+        return None
+    try:
+        return _hpe(await c.get(c.session_uri)).get("UserIP") or None
+    except RedfishError:
+        return None
+
+
+async def logins(c: RedfishClient, since: dt.datetime, until: dt.datetime, tz: dt.tzinfo, now: dt.datetime | None = None) -> dict[str, Any]:
+    """Who logged in to this iLO between *since* and *until*, from the iLO Event Log."""
+    now = now or dt.datetime.now(dt.UTC)
+    entries = await _log_entries(c, "iel")
+    me = await own_ip(c)
+    total = failed = invalid = 0
+    by_day: Counter[str] = Counter()
+    by_type: Counter[str] = Counter()
+    users: Counter[str] = Counter()
+    sources: dict[tuple[str, str | None], dict[str, Any]] = {}
+    failures: list[dict[str, Any]] = []
+    alerts: list[dict[str, Any]] = []
+    oldest: dt.datetime | None = None
+    for e in entries:
+        msg = (e.get("message") or "").strip()
+        first, last = _span(e, now)
+        if first is None:
+            invalid += 1
+            continue
+        oldest = first if oldest is None or first < oldest else oldest
+        if last < since or first > until:
+            continue
+        n = int(e.get("count") or 1)
+        stamp = last.isoformat().replace("+00:00", "Z")
+        if _ALERT.search(msg) and "login" in msg.lower():
+            alerts.append({"time": stamp, "message": msg, "count": n})
+            continue
+        if _FAILED.search(msg):
+            failed += n
+            ip = _IP.search(msg)
+            failures.append({"time": stamp, "message": msg, "count": n, **({"ip": ip.group(0)} if ip else {})})
+            continue
+        m = _LOGIN.match(msg)
+        if not m:
+            continue
+        total += n
+        by_day[first.astimezone(tz).date().isoformat()] += n
+        by_type[m["kind"]] += n
+        users[m["user"]] += n
+        if m["ip"]:
+            host = m["host"] if m["host"] and "not found" not in m["host"].lower() else None
+            src = sources.setdefault((m["ip"], host), {"ip": m["ip"], "host": host, "logins": 0, "last_login": None})
+            src["logins"] += n
+            src["last_login"] = max(src["last_login"] or stamp, stamp)
+            if me and m["ip"] == me:
+                src["this_computer"] = True
+    ranked = sorted(sources.values(), key=lambda s: -s["logins"])
+    failures.sort(key=lambda f: f["time"], reverse=True)
+    alerts.sort(key=lambda f: f["time"], reverse=True)
+    result: dict[str, Any] = {
+        "logins": total,
+        "failed_logins": failed,
+        "by_day": dict(sorted(by_day.items())),
+        "by_type": dict(by_type.most_common()),
+        "users": dict(users.most_common()),
+        "sources": ranked[:LIST_CAP],
+        "failures": failures[:LIST_CAP],
+        "security_alerts": alerts[:LIST_CAP],
+        "log_starts": oldest.isoformat().replace("+00:00", "Z") if oldest else None,
+        "log_covers_window": oldest is not None and oldest <= since,
+    }
+    if len(ranked) > LIST_CAP:
+        result["more_sources"] = len(ranked) - LIST_CAP
+    if invalid:
+        result["entries_with_invalid_time"] = invalid
+    return result

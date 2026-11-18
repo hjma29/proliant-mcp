@@ -75,7 +75,9 @@ deepest detail.
   (never collected, or not connected). Say its GPUs are unknown, not that it has none.
   GPU names are what iLO reports, e.g. an unnamed "Intel Video Controller".
 - No iLO or OneView configured, or the user wants to add servers: `add_server` (one) or
-  `import_inventory` (a .ini/.csv file the user names in a pop-up). Never ask for a password in chat.
+  `import_inventory` (a .ini/.csv file the user names in a pop-up). If `add_server`'s pop-up
+  does not appear, ask for the address and use `add_server_start`, relay the password page link,
+  and call `add_server_status` until `saved`. Never ask for a password in chat.
 - If a `com_` tool says no COM account is configured or the login failed, call
   `com_login` right away (pop-ups). If no pop-up appears (it fails or is cancelled at once),
   ask for the user's email and use `com_login_start`, relay the Okta number or password link it

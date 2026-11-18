@@ -46,7 +46,8 @@ human-facing CLI for the same three sources.
 | `get_memory` | Total, populated/empty slots, each DIMM |
 | `get_storage` | Controllers, drives, RAID volumes |
 | `get_network_adapters` | NICs, ports, MACs, link, LLDP neighbor (switch and port) |
-| `get_event_log` | Newest IML (hardware) or IEL (iLO) entries, filter by severity |
+| `get_event_log` | Newest IML (hardware) or IEL (iLO) entries, filter by severity, time window (`since`/`until`: `7d`, `24h`, a date) and message text; entries with a wrong iLO clock are flagged and listed last |
+| `get_ilo_logins` | Who logged in to the iLOs, for many servers in one call: logins per day, by type, user and source IP/host, failed logins and lockout alerts; says when a log wrapped before the window start and marks proliant-mcp's own sessions |
 | `redfish_get` | Raw read-only GET of any `/redfish/v1/...` resource |
 
 ### HPE Compute Ops Management (fleet)
@@ -86,9 +87,10 @@ human-facing CLI for the same three sources.
 | `import_inventory` | Import many from an `.ini` or `.csv` file whose path you type in a pop-up; optional shared password and login checks |
 | `com_login` | Sign in to HPE GreenLake with pop-ups (email, then Okta Verify number or a secure password page); creates a GreenLake API client for you (see Configure > HPE Compute Ops Management) |
 | `com_login_start`, `com_login_status` | The same sign-in for clients that show no pop-ups: the assistant asks for your email and tells you the Okta Verify number (or gives you the password page link) in the chat |
+| `add_server_start`, `add_server_status` | `add_server` for clients that show no pop-ups: the assistant asks for the address in the chat and gives you the secure password page link |
 
-Every other tool is annotated `readOnlyHint`. The setup tools change no server: `add_server` and
-`import_inventory` only edit the inventory file on this computer, and `com_login` also creates a
+Every other tool is annotated `readOnlyHint`. The setup tools change no server: `add_server`,
+`add_server_start` and `import_inventory` only edit the inventory file on this computer, and `com_login` also creates a
 GreenLake API client. None of them takes a password (or, for `import_inventory`, a file path) as an
 argument, so the AI cannot see a password or choose which file is read.
 
@@ -105,7 +107,7 @@ CI proves this on clean Windows, Linux and macOS machines.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 36 tools` and `(up to date)`):
+Open a **new** PowerShell window, then check that it installs and starts (should print `proliant-mcp <version>: 39 tools` and `(up to date)`):
 
 ```powershell
 uvx proliant-mcp@latest --check
@@ -175,7 +177,9 @@ calls the `add_server` tool, which shows a pop-up for the type, address, name an
 opens a secure page on your own computer (`127.0.0.1`) for the password. The password goes straight
 to proliant-mcp, never through the AI client or model. It is **checked against the server before
 anything is saved**, so a wrong password or address is caught at once. The tools use the new server
-immediately, no restart.
+immediately, no restart. In AI clients without pop-ups (Claude Desktop, some Codex versions) the
+assistant asks for the address in the chat and uses `add_server_start` / `add_server_status`
+instead: it gives you the same secure page link, and tells you when the server is saved.
 
 **Import a list** (many servers): ask your assistant to *"import my servers from a file"*. The
 `import_inventory` tool pops up for the **path** of an `.ini` or `.csv` file (the AI cannot choose the

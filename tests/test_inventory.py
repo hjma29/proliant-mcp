@@ -239,12 +239,30 @@ async def test_import_can_be_declined_and_needs_pop_ups(home):
 
     async with Client(srv.mcp) as client:
         result = await client.call_tool("add_server", {}, raise_on_error=False)
-    assert result.is_error and "proliant-mcp import" in result.content[0].text
+    assert result.is_error and "add_server_start" in result.content[0].text
 
     bad, _ = user({"path": {"path": str(home / "missing.csv")}}, passwords=[])
     async with Client(srv.mcp, elicitation_handler=bad) as client:
         result = await client.call_tool("import_inventory", {}, raise_on_error=False)
     assert result.is_error and "File not found" in result.content[0].text
+
+
+async def test_add_server_without_pop_ups_checks_the_password_on_a_local_page(home):
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:  # no elicitation handler
+        first = (await client.call_tool("add_server_start", {"host": "192.0.2.10", "name": "lab1"})).structured_content
+        assert first["status"] == "enter_password" and first["url"].startswith("http://127.0.0.1:")
+        assert "add_server_status" in first["next_step"] and not our_inventory(home).exists()
+        await browser.post(first["url"], data={"password": "wrong"})
+        retry = (await client.call_tool("add_server_status", {})).structured_content
+        assert retry["status"] == "enter_password" and "rejected" in retry["next_step"] and retry["url"] != first["url"]
+        await browser.post(retry["url"], data={"password": "good"})
+        done = (await client.call_tool("add_server_status", {})).structured_content
+        listed = (await client.call_tool("list_servers", {})).data
+        bad = await client.call_tool("add_server_start", {"host": "bad host name!"}, raise_on_error=False)
+    assert (done["status"], done["name"], done["checked"]) == ("saved", "lab1", "HPE ProLiant Compute DL345 Gen12, iLO 7 1.21.00 Apr 07 2026")
+    assert "wrong" not in json.dumps(done) and "good" not in json.dumps(done)
+    assert [s["name"] for s in listed["servers"]] == ["lab1"]
+    assert bad.is_error and "Cannot add that server" in bad.content[0].text
 
 
 def test_terminal_import(home, capsys):

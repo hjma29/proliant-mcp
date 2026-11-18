@@ -69,6 +69,10 @@ class RedfishClient:
         self._session_uri = resp.headers.get("Location") or (resp.json() or {}).get("@odata.id")
         return self
 
+    @property
+    def session_uri(self) -> str | None:
+        return self._session_uri
+
     async def __aexit__(self, *_exc: object) -> None:
         if self._http is None:
             return

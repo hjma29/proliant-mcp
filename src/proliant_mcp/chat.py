@@ -268,6 +268,82 @@ class Prompter:
 _flows: dict[str, _Flow] = {}
 
 
+# ── Flows without pop-ups (com_login_start, add_server_start) ─────────────────
+#
+# For clients that cannot show pop-ups (Claude Desktop, some Codex versions, harnesses that
+# auto-cancel them). The work runs in a background task that publishes each step for the user
+# (a number to tap, a password page link, a choice); every tool call returns at once with the
+# current step for the assistant to relay, within the 60 s default tool timeout of clients like Codex.
+
+
+class Relay:
+    """State of one flow without pop-ups, read by a pair of start/status tools."""
+
+    def __init__(self, failed: str, retry: str) -> None:
+        self.failed = failed  # prefix of the error when the task fails, e.g. "GreenLake sign-in failed: "
+        self.retry = retry  # next step after a failure, e.g. "Call com_login_start to try again."
+        self.state: dict[str, Any] = {"status": "starting"}
+        self.version = 0
+        self.seen = 0
+        self.changed = asyncio.Event()
+        self.notes: list[str] = []
+        self.choice: asyncio.Future[str] | None = None
+        self.task: asyncio.Task[dict[str, Any]] | None = None
+
+    def publish(self, status: str, next_step: str, **fields: Any) -> None:
+        self.state = {"status": status, **fields, "next_step": next_step}
+        self.version += 1
+        self.changed.set()
+
+    def current(self) -> dict[str, Any]:
+        assert self.task is not None
+        if self.task.done():
+            if self.task.cancelled():
+                return {"status": "failed", "error": "Cancelled"}
+            exc = self.task.exception()
+            if exc is not None:
+                return {"status": "failed", "error": f"{self.failed}{exc}", "next_step": self.retry}
+            return self.task.result()
+        self.seen = self.version
+        return {**self.state, "notes": list(self.notes)} if self.notes else dict(self.state)
+
+    async def wait_for_news(self, timeout: float) -> None:
+        """Until a step the caller has not seen yet is published, the task ends, or *timeout*."""
+        assert self.task is not None
+        deadline = asyncio.get_running_loop().time() + timeout
+        while self.version == self.seen and not self.task.done():
+            self.changed.clear()
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return
+            waiter = asyncio.ensure_future(self.changed.wait())
+            await asyncio.wait({waiter, self.task}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+            waiter.cancel()
+
+    async def status(self, wait: float, call_again: str) -> dict[str, Any]:
+        """What a status tool returns: the next step, the result, or that nothing changed yet."""
+        assert self.task is not None
+        if not self.task.done():
+            await self.wait_for_news(wait)
+        news = self.version != self.seen
+        result = self.current()
+        if not self.task.done() and not news:
+            result["waiting"] = True
+            result["next_step"] = f"Still waiting for the user. {result.get('next_step', '')} {call_again}"
+        return result
+
+    async def secret(self, prompt: SecretPrompt, error: str | None, step: str, timeout: float = ASK_TIMEOUT) -> str:
+        """Publish a one-time password page as an ``enter_password`` step; *step* may use {url}."""
+        page = _PasswordPage(prompt, error)
+        try:
+            self.publish("enter_password", f"{error + ' ' if error else ''}{step.replace('{url}', page.url)}", url=page.url)
+            return await asyncio.wait_for(page.password, timeout)
+        except TimeoutError as exc:
+            raise FlowError(f"No password entered within {int(timeout // 60)} minutes") from exc
+        finally:
+            page.close()
+
+
 def _elicitation_modes(ctx: Context) -> tuple[bool, bool]:
     params = ctx.session.client_params
     cap = params.capabilities.elicitation if params is not None else None

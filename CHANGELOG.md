@@ -6,6 +6,21 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.10.0 — 2026-11-18
+
+### New Features
+- `get_ilo_logins`: who logged in to the iLOs, for every configured iLO (or the ones named) in one call. It reports logins per day (total and per server, in this computer's time zone or `utc_offset_hours`), and by login type, user and source IP/host. It also lists failed logins and lockout alerts such as "more than 3 unauthorized login attempts". It says when an iLO Event Log no longer reaches back to the start of the window (the log wrapped, so counts are a minimum), and marks the sources that are the computer running proliant-mcp, since the iLO logs its own Redfish sessions as Browser logins.
+- `add_server_start` and `add_server_status`: add an iLO or OneView in AI clients that show no pop-ups (Claude Desktop, some Codex versions, harnesses that cancel pop-ups). The assistant asks for the address in the chat, then gives the user the link to the same secure password page on this computer. The login is checked before anything is saved, a wrong password is asked again, and each call returns within 45 seconds.
+
+### Enhancements
+- `get_event_log` filters by time (`since` and `until`: `7d`, `24h`, a date or an ISO time) and by message text (`contains`), applied before `limit`.
+- `add_server` errors, the "no iLO configured" error and the server instructions point to `add_server_start` when pop-ups do not appear, not to editing files in a terminal.
+
+### Bug Fixes
+- `get_event_log` no longer lists entries stamped while the iLO clock was wrong (`0000-00-00`, 2001 or 2039 dates after an RTC reset) as the newest. They are marked `time_invalid`, listed last, and left out of time filters.
+
+---
+
 ## v0.9.0 — 2026-11-18
 
 ### New Features

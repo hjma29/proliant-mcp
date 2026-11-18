@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
 import httpx
@@ -40,7 +41,10 @@ cancelled without the user seeing a pop-up, ask the user for their GreenLake ema
 com_login_start, tell the user exactly what it returns (the Okta Verify number to tap, or the
 link to the password page), and call com_login_status until it says signed_in. If no iLO or OneView is
 configured, or the user wants to add servers, call add_server (one iLO or OneView) or
-import_inventory (a .ini or .csv file the user names in a pop-up). Never ask the user to type
+import_inventory (a .ini or .csv file the user names in a pop-up). If add_server's pop-ups do not
+appear, ask the user for the address and call add_server_start, relay the password page link, and
+call add_server_status until it says saved. For who logged in to iLOs (per day, user, source IP,
+failed logins) use get_ilo_logins: one call for all iLOs. Never ask the user to type
 a password into the chat; these tools collect it on a secure page."""
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
@@ -63,8 +67,8 @@ def _servers() -> dict[str, Server]:
     servers = load_servers()
     if not servers:
         raise ToolError(
-            "No iLO servers configured. Add one with the add_server tool (pop-ups in the chat), import a file "
-            "with import_inventory, set ILO_HOST/ILO_USERNAME/ILO_PASSWORD, or edit "
+            "No iLO servers configured. Add one with the add_server tool (pop-ups in the chat; add_server_start if "
+            "pop-ups do not appear), import a file with import_inventory, set ILO_HOST/ILO_USERNAME/ILO_PASSWORD, or edit "
             "~/.config/proliant-mcp/inventory.ini (see examples/inventory.example.ini)."
         )
     return servers
@@ -92,7 +96,7 @@ async def _run(name: str, fn: Callable[[RedfishClient], Awaitable[Any]]) -> Any:
 def _pick(kind: str, items: dict[str, Any], name: str | None) -> Any:
     if not items:
         hint = (
-            "Add one with the add_server tool (pop-ups in the chat), import a file with import_inventory, add a section with `type = oneview` (host/username/password) to the inventory file, or set ONEVIEW_HOST/ONEVIEW_USERNAME/ONEVIEW_PASSWORD."
+            "Add one with the add_server tool (pop-ups in the chat; add_server_start if pop-ups do not appear), import a file with import_inventory, add a section with `type = oneview` (host/username/password) to the inventory file, or set ONEVIEW_HOST/ONEVIEW_USERNAME/ONEVIEW_PASSWORD."
             if kind == "OneView appliance"
             else "Add a section with `type = com` (client_id/client_secret/region) to the inventory file, set HPECOM_CLIENT_ID/HPECOM_CLIENT_SECRET/HPECOM_REGION, or sign the user in now with com_login (pop-ups) or com_login_start (no pop-ups)."
         )
@@ -214,15 +218,102 @@ async def get_network_adapters(server: ServerName) -> list[dict[str, Any]]:
     return await _run(server, ilo.network_adapters)
 
 
+When = Annotated[
+    str | None,
+    Field(description="Relative (7d, 24h, 30m), a date (2026-11-12) or an ISO 8601 time; UTC unless it has a zone."),
+]
+
+
 @mcp.tool(annotations=READ_ONLY)
 async def get_event_log(
     server: ServerName,
     log: Annotated[Literal["iml", "iel"], Field(description="iml = Integrated Management Log (server hardware events); iel = iLO Event Log.")] = "iml",
     limit: Annotated[int, Field(ge=1, le=500)] = 20,
     severity: Annotated[Literal["OK", "Warning", "Critical"] | None, Field(description="Only entries of this severity.")] = None,
+    since: When = None,
+    until: When = None,
+    contains: Annotated[str | None, Field(description="Only entries whose message contains this text (any case), e.g. 'login'.")] = None,
 ) -> list[dict[str, Any]]:
-    """Newest entries from the IML or iLO event log, optionally filtered by severity."""
-    return await _run(server, lambda c: ilo.event_log(c, log, limit, severity))
+    """Newest entries from the IML or iLO event log, filtered by severity, time window and message
+    text. Entries the iLO stamped with a wrong clock (0000 or far-future dates after an RTC reset) are
+    marked `time_invalid`, listed last, and left out when since/until is given. For who logged in to
+    iLOs use get_ilo_logins instead."""
+    now = dt.datetime.now(dt.UTC)
+    try:
+        start = ilo.parse_when(since, now) if since else None
+        end = ilo.parse_when(until, now, end_of_day=True) if until else None
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    return await _run(server, lambda c: ilo.event_log(c, log, limit, severity, start, end, contains, now))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_ilo_logins(
+    servers: Annotated[list[str] | None, Field(description="Server names from list_servers; omit for every configured iLO.")] = None,
+    days: Annotated[int, Field(ge=1, le=90, description="Look back this many days, including today.")] = 7,
+    utc_offset_hours: Annotated[
+        float | None, Field(ge=-12, le=14, description="Time zone for by_day, e.g. -8 for PST; omit for this computer's zone.")
+    ] = None,
+) -> dict[str, Any]:
+    """Who logged in to the iLOs, from each iLO Event Log, in one call for many servers: logins
+    per day (total and per server), by login type, user and source IP/host, failed logins and
+    lockout alerts. Says when an iLO's log does not reach back to the start of the window (the log
+    wrapped, so counts are a minimum) and how many entries have an invalid iLO clock. The iLO logs
+    Redfish/API sessions, including this server's own, as Browser logins; sources marked
+    `this_computer` are the computer running proliant-mcp. Unreachable iLOs return an `error`."""
+    configured = _servers()
+    targets = [_resolve(n) for n in servers] if servers else list(configured.values())
+    now = dt.datetime.now(dt.UTC)
+    tz = dt.timezone(dt.timedelta(hours=utc_offset_hours)) if utc_offset_hours is not None else now.astimezone().tzinfo or dt.UTC
+    today = now.astimezone(tz).date()
+    first_day = today - dt.timedelta(days=days - 1)
+    since = dt.datetime.combine(first_day, dt.time(), tz).astimezone(dt.UTC)
+
+    async def one(s: Server) -> dict[str, Any]:
+        try:
+            async with RedfishClient(s, transport=_transport) as client:
+                return {"server": s.name, **await ilo.logins(client, since, now, tz, now)}
+        except RedfishError as exc:
+            return {"server": s.name, "error": str(exc)}
+
+    rows = list(await asyncio.gather(*(one(s) for s in targets)))
+    ok = [r for r in rows if "error" not in r]
+    dates = [(first_day + dt.timedelta(days=i)).isoformat() for i in range(days)]
+    by_day = [
+        {"date": d, "total": sum(r["by_day"].get(d, 0) for r in ok), **{r["server"]: r["by_day"].get(d, 0) for r in ok}} for d in dates
+    ]
+    for r in ok:
+        del r["by_day"]
+    offset = tz.utcoffset(now) or dt.timedelta()
+    notes = []
+    short = [r["server"] for r in ok if not r["log_covers_window"]]
+    if short:
+        notes.append(
+            f"The iLO Event Log of {', '.join(short)} starts after the window begins (see log_starts): older entries "
+            "were overwritten, so those counts are a minimum."
+        )
+    if any(r.get("entries_with_invalid_time") for r in ok):
+        notes.append("Some iLOs have entries with an invalid clock (0000 or far-future dates, after an RTC reset); they are not counted.")
+    if any(src.get("this_computer") for r in ok for src in r["sources"]):
+        notes.append("Sources marked this_computer include proliant-mcp's own Redfish sessions, logged by the iLO as Browser logins.")
+    return {
+        "window": {
+            "from": since.isoformat().replace("+00:00", "Z"),
+            "to": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "days": days,
+            "utc_offset_hours": offset.total_seconds() / 3600,
+        },
+        "totals": {
+            "logins": sum(r["logins"] for r in ok),
+            "failed_logins": sum(r["failed_logins"] for r in ok),
+            "security_alerts": sum(len(r["security_alerts"]) for r in ok),
+            "servers": len(ok),
+            "unreachable": len(rows) - len(ok),
+        },
+        "by_day": by_day,
+        "servers": rows,
+        "notes": notes,
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -422,6 +513,33 @@ async def add_server(
     the user wants to add a server, or when no iLO or OneView is configured. Never ask for the
     password in chat, and never pass one; the secure page collects it."""
     return await chat_inventory.add_server(ctx, type, name, host, username)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Add an iLO or OneView without pop-ups", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+    )
+)
+async def add_server_start(
+    host: Annotated[str, Field(description="IP address or name of the iLO or OneView. Ask the user.")],
+    type: Annotated[Literal["ilo", "oneview"], Field(description="ilo (one server) or oneview (OneView / Synergy Composer).")] = "ilo",
+    name: Annotated[str | None, Field(description="Short name for it, e.g. dl380-lab; defaults to the address. An existing name is replaced.")] = None,
+    username: Annotated[str | None, Field(description="User name; default Administrator.")] = None,
+) -> dict[str, Any]:
+    """Add one iLO or OneView to the user's inventory without pop-ups, for clients where
+    add_server's pop-ups do not appear (or were cancelled). Returns `enter_password` with a `url`
+    of a secure page on this computer: tell the user to open it and type the password there (never
+    in the chat; never pass a password). Then call add_server_status until it returns `saved` (the
+    tools use the server immediately) or `failed`. The login is checked before anything is saved."""
+    return await chat_inventory.add_server_start(type, host, name, username)
+
+
+@mcp.tool(annotations=SIGN_IN)
+async def add_server_status() -> dict[str, Any]:
+    """Next step of add_server_start. Waits up to 45 seconds for the user, then returns
+    `enter_password` (again, with the reason, if the password was wrong), `saved`, or `failed`.
+    If `waiting` is true nothing changed yet: remind the user of the step and call it again."""
+    return await chat_inventory.add_server_status()
 
 
 @mcp.tool(

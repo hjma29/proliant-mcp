@@ -24,7 +24,8 @@ questions through Compute Ops Management or OneView, use the
 | DIMMs, populated/empty slots | `get_memory` |
 | Controllers, drives, RAID volumes | `get_storage` |
 | Host NICs, MACs, link, switch/port via LLDP | `get_network_adapters` |
-| Hardware events / iLO events | `get_event_log` (`log="iml"` or `"iel"`, `severity`) |
+| Hardware events / iLO events | `get_event_log` (`log="iml"` or `"iel"`, `severity`, `since`/`until` like `7d` or `2026-11-12`, `contains`) |
+| Who logged in to the iLOs (per day, user, source IP, failed logins) | `get_ilo_logins` (all iLOs in one call; `days`, `utc_offset_hours`) |
 | Anything else (BIOS attributes, boot order, thermal, power) | `redfish_get` with a `/redfish/v1/...` path |
 
 ## Workflows
@@ -54,6 +55,12 @@ current.
   server name; never fill in values from memory.
 - iLO 6 reports `FirmwareVersion` like `iLO 6 v1.74`; iLO 7 like `1.21.00`.
   Use `ilo_version` from the tools, which normalizes both.
+- Entries with `time_invalid` were stamped while the iLO clock was wrong (RTC
+  reset); don't date them. In `get_ilo_logins`, `log_covers_window: false`
+  means the log wrapped, so counts are a minimum: say so. The iLO logs API
+  sessions (including proliant-mcp's own, `this_computer`) as Browser logins.
+- Never count logins or filter log entries with a script: use `get_ilo_logins`
+  or `get_event_log`'s `since`/`until`/`contains`.
 - `part_number: null` means iLO did not report one, not that it's missing.
 - Changes (power, UID, BIOS, iLO network, firmware) are not available in this
   version of the server. Don't suggest the tools can do them.

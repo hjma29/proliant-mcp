@@ -18,7 +18,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from proliant_mcp import login
-from proliant_mcp.chat import FlowError, Prompter, SecretPrompt, _Flow, accepted, form_params, run_flow
+from proliant_mcp.chat import FlowError, Prompter, Relay, SecretPrompt, _Flow, accepted, form_params, run_flow
 from proliant_mcp.com import ComError
 from proliant_mcp.config import com_login_path, load_com
 
@@ -137,7 +137,7 @@ START_WAIT = 40.0
 class RelayUI:
     """``login.LoginUI`` that publishes each step as a state for the next tool call to return."""
 
-    def __init__(self, session: _Relay) -> None:
+    def __init__(self, session: Relay) -> None:
         self.session = session
 
     def say(self, message: str) -> None:
@@ -192,51 +192,10 @@ class RelayUI:
             raise login.LoginError("No workspace chosen within 5 minutes") from exc
 
 
-class _Relay:
-    def __init__(self) -> None:
-        self.state: dict[str, Any] = {"status": "starting"}
-        self.version = 0
-        self.seen = 0
-        self.changed = asyncio.Event()
-        self.notes: list[str] = []
-        self.choice: asyncio.Future[str] | None = None
-        self.task: asyncio.Task[dict[str, Any]] | None = None
-
-    def publish(self, status: str, next_step: str, **fields: Any) -> None:
-        self.state = {"status": status, **fields, "next_step": next_step}
-        self.version += 1
-        self.changed.set()
-
-    def current(self) -> dict[str, Any]:
-        assert self.task is not None
-        if self.task.done():
-            if self.task.cancelled():
-                return {"status": "failed", "error": "Sign-in cancelled"}
-            exc = self.task.exception()
-            if exc is not None:
-                return {"status": "failed", "error": f"GreenLake sign-in failed: {exc}", "next_step": "Call com_login_start to try again."}
-            return self.task.result()
-        self.seen = self.version
-        return {**self.state, "notes": list(self.notes)} if self.notes else dict(self.state)
-
-    async def wait_for_news(self, timeout: float) -> None:
-        """Until a step the caller has not seen yet is published, the sign-in ends, or *timeout*."""
-        assert self.task is not None
-        deadline = asyncio.get_running_loop().time() + timeout
-        while self.version == self.seen and not self.task.done():
-            self.changed.clear()
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                return
-            waiter = asyncio.ensure_future(self.changed.wait())
-            await asyncio.wait({waiter, self.task}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
-            waiter.cancel()
+_relay: Relay | None = None
 
 
-_relay: _Relay | None = None
-
-
-async def _relay_sign_in(session: _Relay, email: str, workspace: str | None, region: str | None) -> dict[str, Any]:
+async def _relay_sign_in(session: Relay, email: str, workspace: str | None, region: str | None) -> dict[str, Any]:
     data = await login.login(email, RelayUI(session), workspace, region)
     return await _signed_in(email, data, session.notes)
 
@@ -247,7 +206,7 @@ async def com_login_start(email: str, workspace: str | None, region: str | None)
         raise ToolError("Ask the user for their HPE GreenLake email address and pass it as email.")
     if _relay is not None and _relay.task is not None and not _relay.task.done():
         _relay.task.cancel()
-    session = _Relay()
+    session = Relay("GreenLake sign-in failed: ", "Call com_login_start to try again.")
     session.task = asyncio.create_task(_relay_sign_in(session, email.strip(), workspace, region))
     _relay = session
     await session.wait_for_news(START_WAIT)
@@ -260,11 +219,4 @@ async def com_login_status(workspace: str | None) -> dict[str, Any]:
         raise ToolError("No sign-in in progress. Call com_login_start first.")
     if workspace and session.choice is not None and not session.choice.done():
         session.choice.set_result(workspace)
-    if not session.task.done():
-        await session.wait_for_news(STATUS_WAIT)
-    news = session.version != session.seen
-    result = session.current()
-    if result.get("status") not in ("signed_in", "failed") and not news:
-        result["waiting"] = True
-        result["next_step"] = "Still waiting for the user. " + str(result.get("next_step", "")) + " Call com_login_status again."
-    return result
+    return await session.status(STATUS_WAIT, "Call com_login_status again.")
