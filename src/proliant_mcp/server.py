@@ -28,8 +28,8 @@ Start with list_servers: it returns the configured iLO server names, OneView app
 and COM accounts. For a fleet-wide question start with com_get_overview or
 oneview_get_appliance. The same physical server can appear in all three; match by
 serial number. If a tool returns an error, report it; never invent values.
-For tables or comparisons across servers use com_list_servers (add include_hardware for CPU and
-GPU columns) or com_list_gpus; they return the whole fleet in one call. Never loop com_get_server
+For tables or comparisons across servers use com_list_servers (add include_hardware for CPU, GPU
+and storage controller columns) or com_list_gpus; they return the whole fleet in one call. Never loop com_get_server
 or com_api_get over many servers.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
 set up for the workspace, sign the user in right away in this chat; do not send them to a
@@ -253,12 +253,12 @@ async def com_list_servers(
     health: Annotated[Literal["OK", "WARNING", "CRITICAL", "UNKNOWN"] | None, Field(description="Only servers with this health summary.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
-    include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server: CPU model/count/cores and GPUs (name, vendor, count, health) from COM's cached inventory. Slower (one read per server, done inside this call); use it for tables with CPU or GPU columns instead of calling com_get_server per server.")] = False,
+    include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server: CPU model/count/cores, GPUs (name, vendor, count, health) and storage (RAID/boot controllers with the drives behind them, and direct-attached drives) from COM's cached inventory. Slower (one read per server, done inside this call); use it for tables with CPU or GPU columns instead of calling com_get_server per server.")] = False,
 ) -> list[dict[str, Any]]:
     """Servers in Compute Ops Management: name, serial, model, generation, health, power,
     COM connection, subscription, iLO host/IP/version, OS, CPU vendor and firmware bundle.
     One call returns the whole fleet, so use it for any table or comparison across servers.
-    Set include_hardware for CPU and GPU columns."""
+    Set include_hardware for CPU, GPU and storage controller columns."""
     return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
 
 
@@ -282,7 +282,8 @@ async def com_get_server(
     account: AccountName = None,
 ) -> dict[str, Any]:
     """One COM server in detail: identity, per-subsystem health, iLO, subscription, last
-    firmware update, full firmware inventory, CPU and GPUs (with GPU serial numbers), and its
+    firmware update, full firmware inventory, CPU, GPUs (with serial numbers), storage
+    controllers and drives (with serial numbers), and its
     active alerts. For several servers use com_list_servers or com_list_gpus, not one call each."""
     return await _com(account, lambda c: com.get_server(c, server))
 

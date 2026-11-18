@@ -315,3 +315,19 @@ async def test_com_keeps_a_working_region(com_only):
     async with Client(srv.mcp) as c:
         rows = (await c.call_tool("com_list_servers", {})).structured_content["result"]
     assert [r["name"] for r in rows] == ["us-west-srv0"] and com._regions == {}
+
+
+async def test_com_hardware_includes_storage_controllers_and_direct_drives(mcp_client):
+    async with mcp_client as c:
+        rows = (await c.call_tool("com_list_servers", {"include_hardware": True})).structured_content["result"]
+        detail = (await c.call_tool("com_get_server", {"server": "esx2.example.com"})).structured_content
+    storage = {r["name"]: r["hardware"]["storage"] for r in rows if "storage" in r["hardware"]}
+    assert storage["esx2.example.com"] == {
+        "known": True,
+        "controllers": [{"model": "Smart Array P408i-a SR Gen10", "firmware": "7.00", "health": "OK",
+                         "drives": ["2 x 960GB SSD", "1 x 1920GB SSD"], "drive_count": 3}],  # empty bay ignored
+        "direct_drives": ["2 x 3200GB NVMe"],  # DA* drives' own NVMe chip is not a controller
+        "drive_count": 5,
+    }
+    assert storage["gpu1.example.com"] == {"controllers": [], "direct_drives": [], "drive_count": 0, "known": False}
+    assert [d["serial"] for d in detail["hardware"]["storage"]["controllers"][0]["drive_detail"]] == ["DSN1", "DSN2", "DSN3"]

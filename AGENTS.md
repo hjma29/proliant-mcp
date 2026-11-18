@@ -47,7 +47,12 @@ Public repository. Read this before changing anything.
    GitHub environment `pypi`; a version can never be re-uploaded, so a bad
    release is fixed by the next version), and installs it on Windows/Linux/macOS.
    Customers on `uvx proliant-mcp@latest` get it on their next AI client restart.
-6. **Keep improving the MCP server from real use.** The goal is that a customer
+6. **Keep improving the MCP server from real use.** Always aim to add or extend
+   an MCP tool whenever that makes answers more consistent, more efficient or
+   faster than an agent writing a one-time script. A tool gives every customer's
+   assistant the same correct answer in one call, with tested parsing, while an
+   ad-hoc script is slow, differs on every run and is lost after the chat. This
+   server should get better every time it is used. The goal is also that a customer
    never leaves the AI chat: when something is missing, the server guides them
    (sign-in, adding servers) in the chat, and errors tell the assistant the
    exact tool to call next, never "open a browser" or "run a terminal command".
@@ -64,4 +69,6 @@ Public repository. Read this before changing anything.
      assistant the wrong way): make it say what happened and what to call next;
    - a client (Codex, Claude Desktop, opencode, VS Code) behaved differently:
      make the tools work there too and note it in the README.
-   Always prefer the server's own tools over scripts when answering a user.
+   Always prefer the server's own tools over scripts when answering a user. If
+   you must script once to answer now, turn it into a tool (or a tool option)
+   in the same session, verify it against live data, and release it.

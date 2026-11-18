@@ -72,12 +72,23 @@ def _gpu(i: int, name: str, vendor: str, part: str) -> dict:
 
 
 _CPU = {"Id": "1", "Name": "Processors", "Model": "AMD EPYC 9374F 32-Core Processor      ", "TotalCores": 32, "TotalThreads": 64, "ProcessorType": "CPU"}
+def _drive(i: int, gb: int, media: str = "SSD", protocol: str = "SATA", state: str = "Enabled") -> dict:
+    return {"Id": str(i), "Model": f"MK{gb}", "SerialNumber": f"DSN{i}", "CapacityBytes": gb * 1000**3, "MediaType": media,
+            "Protocol": protocol, "Status": {"State": state, "Health": "OK"}}
+
+
+_RAID = {"Id": "DE07C000", "Name": "HPE Smart Array P408i-a SR Gen10",
+         "StorageControllers": [{"Model": "HPE Smart Array P408i-a SR Gen10", "FirmwareVersion": "7.00", "Status": {"Health": "OK"}}],
+         "Drives": [_drive(1, 960), _drive(2, 960), _drive(3, 1920), _drive(9, 0, state="Absent")], "Status": {"Health": "OK"}}
+_NVME = [{"Id": f"DA00010{i}", "Name": "NVMe Storage System", "StorageControllers": [{"Model": "MO003200KXPTT"}],
+          "Drives": [_drive(10 + i, 3200, "SSD", "NVMe")]} for i in range(2)]
 _EMBEDDED_VIDEO = {"Id": "273", "Name": "Embedded Video Controller", "PCIeFunctions": [{"DeviceClass": "DisplayController", "ClassCode": "0X000003"}]}
 FAKE_COM_INVENTORY: dict[str, dict] = {
     "/compute-ops-mgmt/v1/servers/P1+SN0001/inventory": {
         "lastFullInventoryCollectionAt": "2026-11-10T00:00:00Z",
         "processor": {"data": [_CPU, {**_CPU, "Id": "2"}]},
         "pciDevice": {"data": [_EMBEDDED_VIDEO]},
+        "storage": {"data": [_RAID, *_NVME]},
     },
     "/compute-ops-mgmt/v1/servers/P3+SN0003/inventory": {
         "lastFullInventoryCollectionAt": "2026-11-11T00:00:00Z",

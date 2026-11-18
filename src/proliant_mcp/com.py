@@ -8,6 +8,7 @@ Endpoints are the public ``/compute-ops-mgmt/v1`` API.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections import Counter
 from typing import Any
@@ -298,6 +299,57 @@ def _ok(item: dict[str, Any]) -> bool:
     return ((item.get("Status") or {}).get("Health") or "OK").upper() in ("OK", "")
 
 
+def _drive_groups(drives: list[dict[str, Any]]) -> list[str]:
+    """'N x SIZE TYPE' per distinct capacity and type, largest group first (decimal GB, as drive vendors label)."""
+    groups: Counter[tuple[int, str]] = Counter()
+    for d in drives:
+        size = round((d.get("CapacityBytes") or 0) / 1000**3)
+        kind = "NVMe" if str(d.get("Protocol", "")).upper() == "NVME" else (d.get("MediaType") or "?")
+        groups[(size, kind)] += 1
+    return [f"{n} x {size}GB {kind}" if size else f"{n} x ? {kind}" for (size, kind), n in groups.most_common()]
+
+
+def storage_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]:
+    """Storage controllers and drives from the cached Redfish ``storage`` inventory.
+
+    HPE's Storage Id tells the attachment (ported from proliant-cli's storage report):
+    ``DE*`` is a real controller (Smart Array / MegaRAID RAID card, NS204i boot controller)
+    with drives behind it; ``DA*`` is drives attached straight to the CPU/PCH, whose
+    "controller" entry is only the drive's own NVMe chip. Other Ids (older iLO 5) count as a
+    controller when they list one. ``smartStorage`` repeats the same controllers, so it is not used.
+    """
+    controllers: dict[str, dict[str, Any]] = {}
+    direct: list[dict[str, Any]] = []
+    for res in _section(inv, "storage"):
+        drives = [d for d in res.get("Drives") or [] if (d.get("Status") or {}).get("State") != "Absent"]
+        ctrl = (res.get("StorageControllers") or res.get("Controllers") or [{}])[0]
+        sid = str(res.get("Id", "")).upper()
+        is_controller = sid.startswith("DE") or (not sid.startswith("DA") and bool(ctrl))
+        if not is_controller:
+            direct.extend(drives)
+            continue
+        model = re.sub(r"^\s*HPE\s+", "", str(ctrl.get("Model") or ctrl.get("Name") or res.get("Name") or "?")).strip()
+        entry = controllers.setdefault(model, {"model": model, "firmware": ctrl.get("FirmwareVersion"), "health": "OK", "_drives": []})
+        if not _ok(ctrl) or not _ok(res):
+            entry["health"] = "NOT OK"
+        entry["_drives"].extend(drives)
+    out_controllers = []
+    for c in controllers.values():
+        drives = c.pop("_drives")
+        c["drives"] = _drive_groups(drives)
+        c["drive_count"] = len(drives)
+        if detail:
+            c["drive_detail"] = [
+                {"model": d.get("Model"), "serial": d.get("SerialNumber"), "health": (d.get("Status") or {}).get("Health")} for d in drives
+            ]
+        out_controllers.append(c)
+    return {
+        "controllers": out_controllers,
+        "direct_drives": _drive_groups(direct),
+        "drive_count": sum(c["drive_count"] for c in out_controllers) + len(direct),
+    }
+
+
 def hardware_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]:
     """CPUs and GPUs from a server's cached COM inventory (``/servers/{id}/inventory``).
 
@@ -334,13 +386,17 @@ def hardware_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any
         if detail:
             entry["serial_numbers"] = [i.get("SerialNumber") for i in items if i.get("SerialNumber")]
         gpus.append(entry)
+    storage_known = bool(_section(inv, "storage") or _section(inv, "smartStorage"))
     return {
-        "inventory_available": bool(processors or pci),
+        "inventory_available": bool(processors or pci or storage_known),
+        # COM can hold firmware and storage for a server whose full inventory (CPU, PCI) was never collected.
+        "cpu_gpu_known": bool(processors or pci),
         "inventory_collected_at": inv.get("lastFullInventoryCollectionAt"),
         "cpu": [{"model": m, "count": n, "cores_each": cores, "threads_each": threads} for (m, cores, threads), n in cpu_groups.items()],
         "gpu_count": len(gpu_items),
         "gpus": gpus,
         "gpu_source": source if gpu_items else None,
+        "storage": {**storage_summary(inv, detail), "known": storage_known},
     }
 
 
@@ -426,7 +482,7 @@ async def list_gpus(c: ComClient, name_contains: str | None, connected: bool | N
     report, unavailable = [], []
     for r in rows:
         hw = r["hardware"]
-        if not hw["inventory_available"]:
+        if not hw.get("cpu_gpu_known"):
             unavailable.append(r["name"])
         for g in hw.get("gpus", []):
             vendor = g["manufacturer"]
@@ -453,8 +509,8 @@ async def list_gpus(c: ComClient, name_contains: str | None, connected: bool | N
         "total_gpus": sum(totals.values()),
         "gpus_by_model": dict(totals),
         "inventory_unavailable": unavailable,
-        "note": "Data is COM's cached inventory. Servers in inventory_unavailable have no cached hardware inventory "
-        "(never collected, or not connected to COM), so their GPUs are unknown, not absent.",
+        "note": "Data is COM's cached inventory. Servers in inventory_unavailable have no cached CPU/PCI inventory "
+        "(full inventory never collected, or not connected to COM), so their GPUs are unknown, not absent.",
         "servers": report,
     }
 

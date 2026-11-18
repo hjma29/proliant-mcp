@@ -6,6 +6,16 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.8.0 — 2026-11-18
+
+### New Features
+- Storage controllers and drives in the COM fleet data: `com_list_servers` with `include_hardware` (and `com_get_server`, with drive serial numbers) now return each server's RAID and boot controllers (model, firmware, health) with the drives behind them (e.g. `6 x 960GB SSD`), and the drives attached directly to the CPU. One call builds a fleet table of storage and GPU configuration (about 3 s for 49 servers). Classification follows proliant-cli: HPE Storage Ids `DE*` are controllers, `DA*` direct-attached; empty bays are ignored.
+
+### Bug Fixes
+- Servers whose full COM inventory was never collected but whose storage was (common on Gen10 and Synergy) are no longer reported as having no inventory: `cpu_gpu_known` and `storage.known` say which parts are available, and `com_list_gpus` lists only servers with unknown GPUs as unavailable.
+
+---
+
 ## v0.7.0 — 2026-11-18
 
 ### New Features
