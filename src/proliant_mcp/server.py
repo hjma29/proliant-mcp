@@ -29,7 +29,9 @@ and COM accounts. For a fleet-wide question start with com_get_overview or
 oneview_get_appliance. The same physical server can appear in all three; match by
 serial number. If a tool returns an error, report it; never invent values.
 For tables or comparisons across servers use com_list_servers (add include_hardware for CPU, GPU
-and storage controller columns) or com_list_gpus; they return the whole fleet in one call. Never loop com_get_server
+and storage controller columns) or com_list_gpus; they return the whole fleet in one call. For a
+table of each server's storage controllers, drives and GPUs use com_hardware_report: it is compact and
+groups servers with identical hardware. Never loop com_get_server
 or com_api_get over many servers.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
 set up for the workspace, sign the user in right away in this chat; do not send them to a
@@ -260,6 +262,20 @@ async def com_list_servers(
     One call returns the whole fleet, so use it for any table or comparison across servers.
     Set include_hardware for CPU, GPU and storage controller columns."""
     return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def com_hardware_report(
+    account: AccountName = None,
+    name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
+    connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
+) -> dict[str, Any]:
+    """Whole-fleet hardware table in one compact call (about a tenth the size of com_list_servers
+    with include_hardware): servers with identical hardware are grouped into one configuration
+    with their names, model, CPU, storage controllers with the drives behind them, direct-attached
+    drives and GPUs, plus the servers COM has no storage or GPU data for (unknown, not absent).
+    Use it for "table of each server's storage controller and GPU config" and similar."""
+    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected))
 
 
 @mcp.tool(annotations=READ_ONLY)

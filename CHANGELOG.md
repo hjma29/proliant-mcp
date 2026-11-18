@@ -6,6 +6,13 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.9.0 — 2026-11-18
+
+### New Features
+- `com_hardware_report`: a whole-fleet hardware table in one compact call (about 3 s and 8 KB for 49 servers, against 50 KB for `com_list_servers` with `include_hardware`, which is too large for an assistant to read in one piece). Servers with identical hardware are grouped into one configuration listing their names, model, CPU, storage controllers with the drives behind them, direct-attached drives and GPUs, plus which servers COM has no storage or GPU data for (unknown, not absent). It answers "table of each server's storage controller and GPU config" directly.
+
+---
+
 ## v0.8.0 — 2026-11-18
 
 ### New Features

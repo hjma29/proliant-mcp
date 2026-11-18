@@ -8,6 +8,7 @@ Endpoints are the public ``/compute-ops-mgmt/v1`` API.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from collections import Counter
@@ -512,6 +513,43 @@ async def list_gpus(c: ComClient, name_contains: str | None, connected: bool | N
         "note": "Data is COM's cached inventory. Servers in inventory_unavailable have no cached CPU/PCI inventory "
         "(full inventory never collected, or not connected to COM), so their GPUs are unknown, not absent.",
         "servers": report,
+    }
+
+
+async def hardware_report(c: ComClient, name_contains: str | None, connected: bool | None) -> dict[str, Any]:
+    """Fleet hardware table in one compact answer: servers with identical hardware share one row."""
+    rows = await list_servers(c, None, connected, name_contains, include_hardware=True)
+    groups: dict[str, dict[str, Any]] = {}
+    storage_unknown: list[str] = []
+    gpu_unknown: list[str] = []
+    for r in rows:
+        hw = r["hardware"]
+        st = hw.get("storage") or {}
+        storage_known, gpu_known = bool(st.get("known")), bool(hw.get("cpu_gpu_known"))
+        if not storage_known:
+            storage_unknown.append(r["name"])
+        if not gpu_known:
+            gpu_unknown.append(r["name"])
+        config = {
+            "model": r["model"],
+            "cpu": [f"{c['count']} x {c['model']}" for c in hw.get("cpu", [])] if gpu_known else None,
+            "storage_controllers": [
+                {"model": c["model"], "drives": c["drives"] or ["no drives"], **({"health": c["health"]} if c["health"] != "OK" else {})}
+                for c in st.get("controllers", [])
+            ] if storage_known else None,
+            "direct_attached_drives": st.get("direct_drives", []) if storage_known else None,
+            "gpus": [f"{g['count']} x {g['name']}" for g in hw.get("gpus", [])] if gpu_known else None,
+        }
+        entry = groups.setdefault(json.dumps(config, sort_keys=True), {"servers": [], **config})
+        entry["servers"].append(r["name"])
+    configs = sorted(groups.values(), key=lambda g: (g["model"] or "~", g["servers"][0]))
+    return {
+        "servers_checked": len(rows),
+        "configurations": [{"count": len(g["servers"]), **g} for g in configs],
+        "storage_unknown": storage_unknown,
+        "gpu_unknown": gpu_unknown,
+        "note": "Servers with identical hardware share one configuration. null means COM has no cached data for that part "
+        "(unknown, not absent); an empty list means none. Drive sizes are decimal GB.",
     }
 
 

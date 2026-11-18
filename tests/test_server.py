@@ -7,6 +7,7 @@ import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
+import fake_mgmt as fake_mgmt_module
 from fake_ilo import fake_ilo
 from fake_mgmt import fake_mgmt
 from proliant_mcp import com
@@ -108,7 +109,7 @@ def test_inventory_file_saved_by_windows_editors(tmp_path, encoding):
 async def test_check_reports_servers_and_login_failures(mcp_client, capsys):
     assert await srv._check(connect=False) == 0
     out = capsys.readouterr().out
-    assert "35 tools" in out
+    assert "36 tools" in out
     assert "latest release:" in out
 
     assert await srv._check(connect=True) == 1
@@ -331,3 +332,31 @@ async def test_com_hardware_includes_storage_controllers_and_direct_drives(mcp_c
     }
     assert storage["gpu1.example.com"] == {"controllers": [], "direct_drives": [], "drive_count": 0, "known": False}
     assert [d["serial"] for d in detail["hardware"]["storage"]["controllers"][0]["drive_detail"]] == ["DSN1", "DSN2", "DSN3"]
+
+
+async def test_com_hardware_report_groups_identical_servers_in_a_compact_answer(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("com_hardware_report", {})).structured_content
+    assert data["servers_checked"] == 4 and data["storage_unknown"] == ["gpu1.example.com", "old-t4.example.com", "dl345.example.com"]
+    assert data["gpu_unknown"] == ["dl345.example.com"]
+    esx = next(g for g in data["configurations"] if g["servers"] == ["esx2.example.com"])
+    assert esx["storage_controllers"] == [{"model": "Smart Array P408i-a SR Gen10", "drives": ["2 x 960GB SSD", "1 x 1920GB SSD"]}]
+    assert esx["direct_attached_drives"] == ["2 x 3200GB NVMe"] and esx["gpus"] == []
+    gpu = next(g for g in data["configurations"] if g["servers"] == ["gpu1.example.com"])
+    assert gpu["gpus"] == ["2 x NVIDIA L40S", "1 x Intel Video Controller"] and gpu["storage_controllers"] is None  # unknown, not none
+    assert next(g for g in data["configurations"] if g["servers"] == ["dl345.example.com"])["gpus"] is None
+
+
+def _fake_com_server(server_id: str, name: str) -> dict:
+    base = fake_mgmt_module.FAKE_COM["/compute-ops-mgmt/v1/servers"][0]
+    return {**base, "id": server_id, "name": name}
+
+
+async def test_com_hardware_report_merges_identical_hardware(mcp_client, monkeypatch):
+    twin = {**_fake_com_server("P5+SN0005", "esx3.example.com")}
+    monkeypatch.setitem(fake_mgmt_module.FAKE_COM, "/compute-ops-mgmt/v1/servers", [*fake_mgmt_module.FAKE_COM["/compute-ops-mgmt/v1/servers"], twin])
+    monkeypatch.setitem(fake_mgmt_module.FAKE_COM_INVENTORY, "/compute-ops-mgmt/v1/servers/P5+SN0005/inventory",
+                        fake_mgmt_module.FAKE_COM_INVENTORY["/compute-ops-mgmt/v1/servers/P1+SN0001/inventory"])
+    async with mcp_client as c:
+        data = (await c.call_tool("com_hardware_report", {"name_contains": "esx"})).structured_content
+    assert [(g["count"], g["servers"]) for g in data["configurations"]] == [(2, ["esx2.example.com", "esx3.example.com"])]
