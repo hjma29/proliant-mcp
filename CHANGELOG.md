@@ -6,6 +6,13 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.13.0 — 2026-11-18
+
+### New Features
+- `com_hardware_report` now reports `total_storage_gb` per configuration (the raw capacity of every drive: RAID, boot and direct-attached) and takes `storage_over_tb`: it keeps only servers with strictly more than that many TB and adds `storage_filter` with how many servers are over, not over or unknown. "How many servers have more than 1 TB of storage" is one call (3 s) with no script; unknown servers (no storage inventory in COM) are counted separately, never as small. `com_get_server` and the storage summaries include `total_gb`, and `drives_without_size` flags drives COM reports without a capacity.
+
+---
+
 ## v0.12.0 — 2026-11-18
 
 ### New Features

@@ -444,14 +444,17 @@ async def com_hardware_report(
     account: AccountName = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
+    storage_over_tb: Annotated[float | None, Field(description="Only servers whose total raw drive capacity is strictly more than this many TB (decimal; 1 = 1000 GB). Adds storage_filter with how many servers are over, not over or unknown.")] = None,
 ) -> dict[str, Any]:
     """Whole-fleet hardware table in one compact call (about a tenth the size of com_list_servers
     with include_hardware): servers with identical hardware are grouped into one configuration
     with their names, model, CPU, storage controllers with the drives behind them, direct-attached
     drives, GPUs and network adapters (with their mode: Ethernet, InfiniBand or FibreChannel), plus
     NIC mode totals and the servers COM has no storage, GPU or NIC data for (unknown, not absent).
-    Use it for "table of each server's storage controller, GPU and NIC config" and similar."""
-    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected))
+    Each configuration has total_storage_gb (raw capacity of all drives). Use it for "table of each
+    server's storage controller, GPU and NIC config", and for "how many servers have more than N TB
+    of storage" (set storage_over_tb: storage_filter gives the counts). Prefer it to scripting sums."""
+    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb))
 
 
 @mcp.tool(annotations=READ_ONLY)

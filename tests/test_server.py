@@ -397,8 +397,10 @@ async def test_com_hardware_includes_storage_controllers_and_direct_drives(mcp_c
                          "drives": ["2 x 960GB SSD", "1 x 1920GB SSD"], "drive_count": 3}],  # empty bay ignored
         "direct_drives": ["2 x 3200GB NVMe"],  # DA* drives' own NVMe chip is not a controller
         "drive_count": 5,
+        "total_gb": 10240,  # 960 + 960 + 1920 behind the controller, 2 x 3200 direct (empty bay ignored)
+        "unsized_drives": 0,
     }
-    assert storage["gpu1.example.com"] == {"controllers": [], "direct_drives": [], "drive_count": 0, "known": False}
+    assert storage["gpu1.example.com"] == {"controllers": [], "direct_drives": [], "drive_count": 0, "total_gb": 0, "unsized_drives": 0, "known": False}
     assert [d["serial"] for d in detail["hardware"]["storage"]["controllers"][0]["drive_detail"]] == ["DSN1", "DSN2", "DSN3"]
 
 
@@ -507,3 +509,15 @@ async def test_find_server_searches_every_source_and_probes_unknown_ilos(mcp_cli
         "serial_number": "VG13525009", "server_model": "ProLiant DL525 Gen13", "ilo_model": "Integrated Lights-Out 8 (iLO 8)",
     }
     assert gone["probe"]["reachable"] is False and "cannot reach" in gone["probe"]["error"]
+
+
+async def test_com_hardware_report_counts_servers_over_a_storage_size(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("com_hardware_report", {"storage_over_tb": 1})).structured_content
+        everything = (await c.call_tool("com_hardware_report", {})).structured_content
+        huge = (await c.call_tool("com_hardware_report", {"storage_over_tb": 10.24})).structured_content  # not strictly over
+    # esx2 holds 10240 GB; gpu1/old-t4 have no storage inventory and dl345 has none: unknown, never counted as small
+    assert data["storage_filter"] == {"over_tb": 1, "servers_over": 1, "servers_not_over": 0, "servers_unknown": 3}
+    assert [(g["servers"], g["total_storage_gb"]) for g in data["configurations"]] == [(["esx2.example.com"], 10240)]
+    assert "storage_filter" not in everything and len(everything["configurations"]) == 4
+    assert (huge["storage_filter"]["servers_over"], huge["storage_filter"]["servers_not_over"], huge["configurations"]) == (0, 1, [])

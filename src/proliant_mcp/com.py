@@ -335,6 +335,9 @@ def storage_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]
             entry["health"] = "NOT OK"
         entry["_drives"].extend(drives)
     out_controllers = []
+    sized = [d for c in controllers.values() for d in c["_drives"]] + direct
+    total_gb = round(sum(d.get("CapacityBytes") or 0 for d in sized) / 1000**3)
+    unsized = sum(1 for d in sized if not d.get("CapacityBytes"))
     for c in controllers.values():
         drives = c.pop("_drives")
         c["drives"] = _drive_groups(drives)
@@ -348,6 +351,8 @@ def storage_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]
         "controllers": out_controllers,
         "direct_drives": _drive_groups(direct),
         "drive_count": sum(c["drive_count"] for c in out_controllers) + len(direct),
+        "total_gb": total_gb,
+        "unsized_drives": unsized,
     }
 
 
@@ -606,8 +611,13 @@ def _mode_totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return dict(sorted(modes.items(), key=lambda kv: (-kv[1]["ports_up"], -kv[1]["adapters"])))
 
 
-async def hardware_report(c: ComClient, name_contains: str | None, connected: bool | None) -> dict[str, Any]:
-    """Fleet hardware table in one compact answer: servers with identical hardware share one row."""
+async def hardware_report(
+    c: ComClient, name_contains: str | None, connected: bool | None, storage_over_tb: float | None = None
+) -> dict[str, Any]:
+    """Fleet hardware table in one compact answer: servers with identical hardware share one row.
+
+    ``storage_over_tb`` keeps only servers whose raw drive capacity (RAID, boot and direct-attached
+    drives together, decimal TB) is strictly greater, and counts matching, smaller and unknown servers."""
     rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True)
     groups: dict[str, dict[str, Any]] = {}
     storage_unknown: list[str] = []
@@ -628,6 +638,8 @@ async def hardware_report(c: ComClient, name_contains: str | None, connected: bo
         config = {
             "model": r["model"],
             "cpu": [f"{c['count']} x {c['model']}" for c in hw.get("cpu", [])] if gpu_known else None,
+            "total_storage_gb": st.get("total_gb") if storage_known else None,
+            **({"drives_without_size": st["unsized_drives"]} if storage_known and st.get("unsized_drives") else {}),
             "storage_controllers": [
                 {"model": c["model"], "drives": c["drives"] or ["no drives"], **({"health": c["health"]} if c["health"] != "OK" else {})}
                 for c in st.get("controllers", [])
@@ -639,9 +651,23 @@ async def hardware_report(c: ComClient, name_contains: str | None, connected: bo
         entry = groups.setdefault(json.dumps(config, sort_keys=True), {"servers": [], **config})
         entry["servers"].append(r["name"])
     configs = sorted(groups.values(), key=lambda g: (g["model"] or "~", g["servers"][0]))
+    capacity: dict[str, Any] = {}
+    if storage_over_tb is not None:
+        limit = storage_over_tb * 1000
+        over = [g for g in configs if g["total_storage_gb"] is not None and g["total_storage_gb"] > limit]
+        capacity = {
+            "storage_filter": {
+                "over_tb": storage_over_tb,
+                "servers_over": sum(len(g["servers"]) for g in over),
+                "servers_not_over": sum(len(g["servers"]) for g in configs if g["total_storage_gb"] is not None and g["total_storage_gb"] <= limit),
+                "servers_unknown": len(storage_unknown),
+            }
+        }
+        configs = over
     modes = _mode_totals(rows)
     return {
         "servers_checked": len(rows),
+        **capacity,
         "configurations": [{"count": len(g["servers"]), **g} for g in configs],
         "nic_modes": modes,
         "most_used_nic_mode": next(iter(modes), None),
@@ -649,7 +675,8 @@ async def hardware_report(c: ComClient, name_contains: str | None, connected: bo
         "gpu_unknown": gpu_unknown,
         "nic_unknown": nic_unknown,
         "note": "Servers with identical hardware share one configuration. null means COM has no cached data for that part "
-        "(unknown, not absent); an empty list means none. Drive sizes are decimal GB. NIC mode is the port's network "
+        "(unknown, not absent); an empty list means none. Drive sizes are decimal GB; total_storage_gb is the raw capacity of "
+        "all drives (boot, RAID and direct-attached), not usable RAID space. NIC mode is the port's network "
         "technology (Ethernet, InfiniBand, FibreChannel); nic_modes counts adapters, ports and linked ports per mode.",
     }
 
