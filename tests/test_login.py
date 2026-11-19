@@ -291,10 +291,10 @@ async def test_com_login_cancelled_or_without_popups(greenlake):
 
     async with Client(srv.mcp, elicitation_handler=decline) as client:
         result = await client.call_tool("com_login", {}, raise_on_error=False)
-    assert result.is_error and "cancelled" in result.content[0].text.lower()
+    assert result.structured_content["status"] == "enter_email"  # declined pop-up: continues on a local page
     async with Client(srv.mcp) as client:
         result = await client.call_tool("com_login", {}, raise_on_error=False)
-    assert result.is_error and "com_login_start" in result.content[0].text
+    assert result.structured_content["status"] == "enter_email"
     assert not (login.com_login_path()).exists()
 
 
@@ -334,6 +334,17 @@ async def test_relay_sign_in_hpe_account_with_workspace_choice(greenlake):
         listed = (await client.call_tool("list_servers", {})).data["com_accounts"]
     assert (done["status"], done["workspace"], done["servers"]) == ("signed_in", "Other", 7)
     assert listed[0]["workspace"] == "Other" and "csecret" not in json.dumps(done)
+
+
+async def test_com_login_without_email_or_popups_asks_for_it_on_a_local_page(greenlake):
+    greenlake()
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("com_login", {})).structured_content
+        assert first["status"] == "enter_email" and first["url"].startswith("http://127.0.0.1:")
+        assert "type='email'" in (await browser.get(first["url"])).text
+        await browser.post(first["url"], data={"password": "you@hpe.com"})
+        step = (await client.call_tool("com_login_status", {})).structured_content
+    assert (step["status"], step["email"]) == ("signed_in", "you@hpe.com")
 
 
 async def test_relay_sign_in_password_on_local_page(greenlake):

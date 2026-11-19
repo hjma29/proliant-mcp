@@ -44,9 +44,10 @@ or com_api_get over many servers.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
 set up for the workspace, sign the user in right away in this chat; do not send them to a
 browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fails or is
-cancelled without the user seeing a pop-up, ask the user for their GreenLake email in a plain chat message (not a question tool, which may be
-auto-answered "user not available"), call com_login_start, tell the user exactly what it returns (the Okta Verify number to tap, or the
-link to the password page), and call com_login_status until it says signed_in. If no iLO or OneView is
+cancelled without the user seeing a pop-up, call com_login_start (with the email only if the user
+already gave it; never ask for it with a question tool, which may be auto-answered "user not
+available": without an email the user types it on a local page), tell the user exactly what it
+returns (the page link, the Okta Verify number to tap), and call com_login_status until it says signed_in. If no iLO or OneView is
 configured, or the user wants to add servers, call add_server (one iLO or OneView) or
 import_inventory (a .ini or .csv file the user names in a pop-up). If add_server's pop-ups do not
 appear, ask the user for the address and call add_server_start, relay the password page link, and
@@ -588,13 +589,14 @@ SIGN_IN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentH
 
 @mcp.tool(annotations=SIGN_IN)
 async def com_login_start(
-    email: Annotated[str, Field(description="The user's HPE GreenLake email. Ask the user for it; it is not a secret.")],
+    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they already said it. Omit it otherwise: the user then types it on a local page (do not guess it).")] = None,
     workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
     region: Annotated[Literal["us-west", "eu-central", "ap-northeast"] | None, Field(description="COM region; detected if omitted.")] = None,
 ) -> dict[str, Any]:
     """Sign the user in to HPE GreenLake without pop-ups, for clients where com_login's pop-ups
     do not appear. Returns the first step for the user, which you must relay in the chat:
-    `approve_push` with the `number` to tap in Okta Verify (@hpe.com accounts), or
+    `enter_email` with a `url` of a local page where the user types their email (when you did not
+    pass one), `approve_push` with the `number` to tap in Okta Verify (@hpe.com accounts), or
     `enter_password` with a `url` of a secure page on this computer for the password (other
     accounts; never ask for the password in chat). Then call com_login_status until it returns
     `signed_in` (the com_ tools work immediately) or `failed`."""

@@ -23,10 +23,9 @@ from proliant_mcp.com import ComError
 from proliant_mcp.config import com_login_path, load_com
 
 UNSUPPORTED = (
-    "The sign-in pop-up did not appear (this AI client cannot show it, or it was cancelled automatically). Sign the "
-    "user in without pop-ups: if you do not know their HPE GreenLake email, ask for it in a plain chat message (not a "
-    "question tool, which may be auto-answered) and wait for the reply. Then call com_login_start with it, relay what "
-    "it returns (the Okta Verify number, or a password page link), and call com_login_status until it says signed_in."
+    "This AI client cannot show sign-in pop-ups (MCP elicitation). Sign the user in here instead: call com_login_start "
+    "(with their HPE GreenLake email if you know it; without it the user types it on a local page), relay what it "
+    "returns (a page link, or the Okta Verify number), and call com_login_status until it says signed_in."
 )
 
 
@@ -124,9 +123,7 @@ async def com_login(ctx: Context, email: str | None, workspace: str | None, regi
         return await run_flow(ctx, lambda flow: _sign_in(flow, email, workspace, region), UNSUPPORTED)
     except ToolError as exc:
         known = (email or login.load_login().get("email", "")).strip()
-        if "@" not in known:
-            raise ToolError(str(exc) if str(exc) == UNSUPPORTED else f"{exc} {UNSUPPORTED}") from exc
-        result = await com_login_start(known, workspace, region)
+        result = await com_login_start(known or None, workspace, region)
         result["note"] = "The sign-in pop-up did not appear, so sign-in continued without pop-ups. Relay the next step to the user."
         return result
 
@@ -204,19 +201,52 @@ class RelayUI:
 _relay: Relay | None = None
 
 
-async def _relay_sign_in(session: Relay, email: str, workspace: str | None, region: str | None) -> dict[str, Any]:
+async def _ask_email_on_page(session: Relay) -> str:
+    from proliant_mcp.chat import _PasswordPage
+
+    page = _PasswordPage(
+        SecretPrompt(
+            message="Type your HPE GreenLake email.",
+            title="Sign in to HPE GreenLake",
+            label="HPE GreenLake email",
+            button="Continue",
+            note="For the proliant-mcp Compute Ops Management tools. HPE accounts then approve an Okta Verify push; other accounts type their password on the next page.",
+            input_type="email",
+        ),
+        None,
+    )
+    try:
+        session.publish(
+            "enter_email",
+            f"Ask the user to open {page.url} in a browser on the computer running this server and type their HPE GreenLake "
+            "email there (the email is not a secret, but do not guess it). Then call com_login_status.",
+            url=page.url,
+        )
+        email = (await asyncio.wait_for(page.password, login.POLL_TIMEOUT)).strip()
+    except TimeoutError as exc:
+        raise login.LoginError("No email entered within 5 minutes") from exc
+    finally:
+        page.close()
+    if "@" not in email:
+        raise login.LoginError("A GreenLake email address is required")
+    return email
+
+
+async def _relay_sign_in(session: Relay, email: str | None, workspace: str | None, region: str | None) -> dict[str, Any]:
+    email = email or await _ask_email_on_page(session)
     data = await login.login(email, RelayUI(session), workspace, region)
     return await _signed_in(email, data, session.notes)
 
 
-async def com_login_start(email: str, workspace: str | None, region: str | None) -> dict[str, Any]:
+async def com_login_start(email: str | None, workspace: str | None, region: str | None) -> dict[str, Any]:
     global _relay
-    if "@" not in email:
-        raise ToolError("Ask the user for their HPE GreenLake email address and pass it as email.")
+    email = (email or "").strip()
+    if email and "@" not in email:
+        raise ToolError("That is not an email address. Pass the user's HPE GreenLake email, or omit it to let the user type it on a page.")
     if _relay is not None and _relay.task is not None and not _relay.task.done():
         _relay.task.cancel()
     session = Relay("GreenLake sign-in failed: ", "Call com_login_start to try again.")
-    session.task = asyncio.create_task(_relay_sign_in(session, email.strip(), workspace, region))
+    session.task = asyncio.create_task(_relay_sign_in(session, email or None, workspace, region))
     _relay = session
     await session.wait_for_news(START_WAIT)
     return session.current()

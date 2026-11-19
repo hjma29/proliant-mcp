@@ -67,6 +67,7 @@ class SecretPrompt:
     label: str = "Password"
     button: str = "Continue"
     note: str = "The password is used once and is not shared with the AI."
+    input_type: str = "password"  # "email" for the sign-in email page
 
 
 def _page(title: str, body: str) -> str:
@@ -89,7 +90,8 @@ def _password_form(prompt: SecretPrompt, error: str | None) -> str:
         f"<p class='who'>{html.escape(prompt.who)}</p>{err}"
         "<form method='post' autocomplete='off'>"
         f"<label for='password'>{html.escape(prompt.label)}</label>"
-        "<input id='password' name='password' type='password' autocomplete='current-password' autofocus required>"
+        f"<input id='password' name='password' type='{html.escape(prompt.input_type)}' "
+        f"autocomplete='{'username' if prompt.input_type == 'email' else 'current-password'}' autofocus required>"
         f"<button type='submit'>{html.escape(prompt.button)}</button></form>"
         f"<p><small>{html.escape(prompt.note)}</small></p>",
     )

@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.14.4 — 2026-11-19
+
+### Fixes
+- `com_login` no longer fails when the chat cannot show pop-ups or cancels them at once (for example VS Code in autonomous mode, where question tools are answered "user not available"). It continues without pop-ups, and when the email is unknown the user types it on a one-time local page (`enter_email`), so the assistant never has to ask for it. `com_login_start` now accepts no email.
+
+---
+
 ## v0.14.3 — 2026-11-19
 
 ### Fixes
