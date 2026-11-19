@@ -1,6 +1,6 @@
 # proliant-mcp: instructions for AI agents
 
-MCP server for HPE ProLiant iLO, Compute Ops Management (GreenLake) and OneView. Read-only. Docs: [README.md](README.md), [docs/](docs).
+MCP server for HPE ProLiant iLO, Compute Ops Management (GreenLake) and OneView. Docs: [README.md](README.md), [docs/](docs).
 
 ## Install it for the user
 

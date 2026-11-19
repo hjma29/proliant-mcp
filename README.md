@@ -1,6 +1,6 @@
 # proliant-mcp
 
-Ask your AI assistant about your HPE servers. **proliant-mcp** is an [MCP](https://modelcontextprotocol.io) server that gives AI assistants (GitHub Copilot, Claude, Codex, opencode, ...) read-only access to **HPE iLO**, **HPE Compute Ops Management** (GreenLake) and **HPE OneView**.
+Ask your AI assistant about your HPE servers. **proliant-mcp** is an [MCP](https://modelcontextprotocol.io) server that gives AI assistants (GitHub Copilot, Claude, Codex, opencode, ...) access to **HPE iLO**, **HPE Compute Ops Management** (GreenLake) and **HPE OneView**.
 
 Ask things like *"which servers in Compute Ops Management are critical and why"*, *"show a table of each server's storage controller and GPU"* or *"any active OneView alerts on the Synergy frame"*.
 
@@ -53,6 +53,6 @@ Passwords are typed on a page on your own computer, never in the chat.
 
 [Tools](https://github.com/hjma29/proliant-mcp/blob/main/docs/tools.md) | [Configuration](https://github.com/hjma29/proliant-mcp/blob/main/docs/configuration.md) (inventory file, environment variables, API client) | [Advanced](https://github.com/hjma29/proliant-mcp/blob/main/docs/advanced.md) (pinning, testing, skills, security) | [Changelog](https://github.com/hjma29/proliant-mcp/blob/main/CHANGELOG.md)
 
-Read-only. Credentials stay on your computer and are never sent to the AI model. MIT licensed; not an official HPE product.
+Credentials stay on your computer and are never sent to the AI model. MIT licensed; not an official HPE product.
 
 <!-- mcp-name: io.github.hjma29/proliant-mcp -->
