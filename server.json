@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hjma29/proliant-mcp",
+  "title": "HPE ProLiant (iLO, Compute Ops Management, OneView)",
+  "description": "Read-only AI tools for HPE ProLiant iLO, Compute Ops Management (GreenLake) and OneView/Synergy",
+  "websiteUrl": "https://hjma29.github.io/proliant-mcp/",
+  "repository": {
+    "url": "https://github.com/hjma29/proliant-mcp",
+    "source": "github"
+  },
+  "version": "0.14.4",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "proliant-mcp",
+      "version": "0.14.4",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

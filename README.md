@@ -54,3 +54,5 @@ Passwords are typed on a page on your own computer, never in the chat.
 [Tools](https://github.com/hjma29/proliant-mcp/blob/main/docs/tools.md) | [Configuration](https://github.com/hjma29/proliant-mcp/blob/main/docs/configuration.md) (inventory file, environment variables, API client) | [Advanced](https://github.com/hjma29/proliant-mcp/blob/main/docs/advanced.md) (pinning, testing, skills, security) | [Changelog](https://github.com/hjma29/proliant-mcp/blob/main/CHANGELOG.md)
 
 Read-only. Credentials stay on your computer and are never sent to the AI model. MIT licensed; not an official HPE product.
+
+<!-- mcp-name: io.github.hjma29/proliant-mcp -->
