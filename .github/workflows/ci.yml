@@ -7,13 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
+  # macOS is not tested on every push (its runners queue for minutes and never caught a bug
+  # Linux and Windows missed); the release workflow still installs each release on macOS.
   test:
     name: tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -29,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest]
     steps:
       - uses: astral-sh/setup-uv@v6
       - name: Remove git from PATH (a fresh Windows machine has none)

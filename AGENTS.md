@@ -77,3 +77,6 @@ Public repository. Read this before changing anything.
    self-check matches `proliant-mcp X.Y.Z: N tools`. A stale count made CI fail for
    four releases in a row. Before tagging, wait for CI to pass, not just finish:
    `gh run view ID --json conclusion`.
+8. **CI covers Windows and Linux on every push; macOS only in the release check.** The code is
+   pure Python and macOS never failed alone, while its runners queued for 5-10 minutes. Do not add
+   macOS back to `ci.yml` unless code with macOS-specific behaviour is added.

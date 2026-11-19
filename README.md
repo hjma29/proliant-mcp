@@ -104,7 +104,8 @@ argument, so the AI cannot see a password or choose which file is read.
 
 The only prerequisite is [uv](https://docs.astral.sh/uv/), which also fetches
 Python 3.12+ when needed. **No git, no admin rights and no clone are required**;
-CI proves this on clean Windows, Linux and macOS machines.
+CI proves this on clean Windows and Linux machines on every push, and each release is installed on
+Windows, Linux and macOS.
 
 ### Windows (PowerShell)
 

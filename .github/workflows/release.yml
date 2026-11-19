@@ -80,6 +80,7 @@ jobs:
     needs: [release, pypi]
     name: install release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10  # a macOS runner once sat 15 minutes without starting a step
     strategy:
       fail-fast: false
       matrix:
