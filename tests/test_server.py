@@ -521,3 +521,15 @@ async def test_com_hardware_report_counts_servers_over_a_storage_size(mcp_client
     assert [(g["servers"], g["total_storage_gb"]) for g in data["configurations"]] == [(["esx2.example.com"], 10240)]
     assert "storage_filter" not in everything and len(everything["configurations"]) == 4
     assert (huge["storage_filter"]["servers_over"], huge["storage_filter"]["servers_not_over"], huge["configurations"]) == (0, 1, [])
+
+
+async def test_greenlake_list_services_joins_catalog_and_provisions(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("greenlake_list_services", {})).structured_content
+        only = (await c.call_tool("greenlake_list_services", {"provisioned_only": True})).structured_content
+    assert (data["services_available"], data["services_provisioned"]) == (3, 1)
+    assert [(s["name"], s["provisioned"]) for s in data["services"]] == [("Compute Ops Management", True), ("Data Services", False), ("OpsRamp", False)]
+    assert data["services"][0]["regions"] == [{"region": "eu-central", "status": "PROVISIONED"}, {"region": "us-west", "status": "PROVISIONED"}]
+    assert data["services"][1]["regions"] == [{"region": "us-west", "status": "FAILED", "reason": "quota"}]  # not ready, not "provisioned"
+    assert data["services"][0]["description"] == "Securely manage your compute."
+    assert [s["name"] for s in only["services"]] == ["Compute Ops Management"]

@@ -6,6 +6,13 @@ directly (see README: Install and Update).
 
 ---
 
+## v0.14.0 — 2026-11-18
+
+### New Features
+- `greenlake_list_services`: every HPE GreenLake service in the catalog and where each is set up in your workspace, in one call (about 2 s, 3 KB): name, whether it is provisioned, regions with status (`PROVISIONED`, `FAILED`, ...) and description, plus counts. It answers "what services do I have in GreenLake". It uses the same sign-in as the `com_` tools; an API client that may only use Compute Ops Management gets a message telling the assistant to sign in again with `com_login`.
+
+---
+
 ## v0.13.0 — 2026-11-18
 
 ### New Features

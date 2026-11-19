@@ -9,6 +9,7 @@ import httpx
 OV_HOST = "192.0.2.100"
 COM_API = "us-west.api.greenlake.hpe.com"
 COM_SSO = "sso.common.cloud.hpe.com"
+GL_GLOBAL = "global.api.greenlake.hpe.com"
 
 _SH_URI = "/rest/server-hardware/HW1"
 
@@ -166,6 +167,16 @@ _COM_ALERTS = [
     {"id": "a2", "serverId": "P2+SN0002", "severity": "CRITICAL", "message": "Fan failed", "cleared": True, "createdAt": "2026-11-01"},
 ]
 FAKE_COM: dict[str, list[dict]] = {
+    "/service-catalog/v1/service-managers": [
+        {"id": "sm-com", "name": "Compute Ops Management", "description": "Securely manage\n your compute."},
+        {"id": "sm-ds", "name": "Data Services", "description": "Data."},
+        {"id": "sm-oc", "name": "OpsRamp", "description": None},
+    ],
+    "/service-catalog/v1/service-manager-provisions": [
+        {"id": "p1", "serviceManager": {"id": "sm-com"}, "region": "us-west", "provisionStatus": "PROVISIONED", "reason": None},
+        {"id": "p2", "serviceManager": {"id": "sm-com"}, "region": "eu-central", "provisionStatus": "PROVISIONED", "reason": None},
+        {"id": "p3", "serviceManager": {"id": "sm-ds"}, "region": "us-west", "provisionStatus": "FAILED", "reason": "quota"},
+    ],
     "/compute-ops-mgmt/v1/servers": _COM_SERVERS,
     "/compute-ops-mgmt/v1/alerts": _COM_ALERTS,
     "/compute-ops-mgmt/v1/servers/P1+SN0001/alerts": _COM_ALERTS[:1],
@@ -196,6 +207,6 @@ def fake_mgmt(request: httpx.Request) -> httpx.Response | None:
     """Route OneView and COM requests; return None for anything else (the iLOs)."""
     if request.url.host == OV_HOST:
         return _ov(request)
-    if request.url.host in (COM_API, COM_SSO):
+    if request.url.host in (COM_API, COM_SSO, GL_GLOBAL):
         return _com(request)
     return None

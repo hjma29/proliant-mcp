@@ -20,6 +20,7 @@ from proliant_mcp.config import COM_REGIONS, ComAccount
 from proliant_mcp.util import matches
 
 TOKEN_URL = "https://sso.common.cloud.hpe.com/as/token.oauth2"
+GLOBAL_API = "https://global.api.greenlake.hpe.com"
 API = "/compute-ops-mgmt/v1"
 _TIMEOUT = httpx.Timeout(timeout=60.0, connect=10.0)
 _PAGE = 500
@@ -127,6 +128,33 @@ class ComClient:
         if resp.status_code >= 400:
             raise _http_error(resp, f"GET {url}")
         return resp.json() if resp.content else {}
+
+    async def get_global(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """GET on GreenLake's workspace-wide API (service catalog, workspace), same token as COM."""
+        assert self._http is not None
+        try:
+            resp = await self._http.get(GLOBAL_API + path, params=params)
+        except httpx.TransportError as exc:
+            raise ComError(f"GreenLake GET {path} failed ({exc.__class__.__name__})") from exc
+        if resp.status_code in (401, 403):
+            raise ComError(
+                f"GreenLake GET {path}: HTTP {resp.status_code}. This API client may only be allowed to use "
+                "Compute Ops Management. Sign the user in again with com_login (it creates a workspace-wide API client) "
+                "or use an API client created for the whole workspace."
+            )
+        if resp.status_code >= 400:
+            raise _http_error(resp, f"GET {path}")
+        return resp.json() if resp.content else {}
+
+    async def get_global_all(self, path: str, max_items: int = 1000) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        while len(items) < max_items:
+            page = await self.get_global(path, {"limit": 100, "offset": len(items)})
+            batch = page.get("items") or []
+            items.extend(batch)
+            if not batch or len(items) >= int(page.get("total") or 0):
+                break
+        return items
 
     async def region_totals(self) -> dict[str, int | None]:
         """Server count per region for this login's workspace; None where COM is not set up."""
@@ -729,6 +757,47 @@ async def list_nics(c: ComClient, name_contains: str | None, connected: bool | N
         "(full inventory never collected, common on Gen10 and Synergy), so their NICs are unknown, not absent.",
         "servers": report,
     }
+
+
+async def list_services(c: ComClient, provisioned_only: bool = False) -> dict[str, Any]:
+    """GreenLake services: the whole catalog with where each is set up in this workspace."""
+    catalog, provisions, workspace = await asyncio.gather(
+        c.get_global_all("/service-catalog/v1/service-managers"),
+        c.get_global_all("/service-catalog/v1/service-manager-provisions"),
+        _workspace_name(c),
+    )
+    by_service: dict[str, list[dict[str, Any]]] = {}
+    for p in provisions:
+        by_service.setdefault((p.get("serviceManager") or {}).get("id", ""), []).append(
+            {"region": p.get("region"), "status": p.get("provisionStatus"), **({"reason": p["reason"]} if p.get("reason") else {})}
+        )
+    known = {s.get("id") for s in catalog}
+    rows = []
+    for s in catalog:
+        where = sorted(by_service.get(s.get("id"), []), key=lambda x: str(x["region"]))
+        if provisioned_only and not any(w["status"] == "PROVISIONED" for w in where):
+            continue
+        rows.append({
+            "name": s.get("name"),
+            "provisioned": any(w["status"] == "PROVISIONED" for w in where),
+            "regions": where,
+            "description": " ".join((s.get("description") or "").split()) or None,
+        })
+    rows.sort(key=lambda r: (not r["provisioned"], r["name"] or ""))
+    return {
+        "workspace": workspace,
+        "services_available": len(catalog),
+        "services_provisioned": sum(1 for r in rows if r["provisioned"]),
+        "services": rows,
+        **({"unmatched_provisions": [p for k, v in by_service.items() if k not in known for p in v]} if set(by_service) - known else {}),
+        "note": "services_available is the GreenLake service catalog; regions lists where a service is set up in this "
+        "API client's workspace (PROVISIONED means ready to use).",
+    }
+
+
+async def _workspace_name(c: ComClient) -> str | None:
+    """The workspace this API client belongs to, from the saved sign-in when known."""
+    return c.account.workspace or None
 
 
 async def get_server(c: ComClient, query: str) -> dict[str, Any]:

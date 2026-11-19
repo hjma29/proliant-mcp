@@ -60,6 +60,7 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 |---|---|
 | `com_get_overview` | Fleet report: counts by health, power, connection, generation, model; servers needing attention; disconnected servers; soonest subscription expirations; active alerts by severity |
 | `com_list_servers` | Every COM server (filter by health, connected, name): serial, model, health, power, iLO, OS, subscription, firmware bundle. `include_hardware` adds CPU, GPU and storage controller / drive columns |
+| `greenlake_list_services` | Every HPE GreenLake service and where each is provisioned in your workspace (Compute Ops Management, Data Services, Aruba Central, ...) |
 | `com_hardware_report` | Whole-fleet hardware table, compact: servers with identical hardware grouped, with model, CPU, storage controllers and drives, direct-attached drives, GPUs and NICs (with mode), plus NIC mode totals |
 | `com_list_nics` | NIC / HBA report for the whole fleet in one call: per server each adapter's mode (Ethernet, InfiniBand, FibreChannel), ports up and link speeds; totals by mode (and the most used), by adapter model (cards, ports, ports up, speeds) and link speed |
 | `com_list_gpus` | GPU report for the whole fleet in one call: per server model, iLO firmware, CPU and GPUs, totals by GPU model, servers with no cached inventory |

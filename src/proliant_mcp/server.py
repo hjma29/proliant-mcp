@@ -34,6 +34,7 @@ To find which server an IP, hostname or serial belongs to, call find_server (all
 For the OS a server runs or why it isn't booting, see `os` in get_server_summary / get_fleet_summary.
 For significant events on several servers use get_fleet_event_summary. For Synergy uplinks use
 oneview_list_uplink_sets.
+For which HPE GreenLake services exist and which are set up in the workspace use greenlake_list_services.
 For tables or comparisons across servers use com_list_servers (add include_hardware for CPU, GPU
 and storage controller columns) or com_list_gpus; they return the whole fleet in one call. For a
 table of each server's storage controllers, drives, GPUs and NICs use com_hardware_report: it is compact and
@@ -437,6 +438,18 @@ async def com_list_servers(
     One call returns the whole fleet, so use it for any table or comparison across servers.
     Set include_hardware for CPU, GPU and storage controller columns."""
     return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def greenlake_list_services(
+    account: AccountName = None,
+    provisioned_only: Annotated[bool, Field(description="Only services that are set up (provisioned) in this workspace.")] = False,
+) -> dict[str, Any]:
+    """Every HPE GreenLake service in the catalog and where each is provisioned in the user's
+    workspace (Compute Ops Management, Data Services, Aruba Central, ...): name, provisioned or
+    not, regions with status, description, plus the counts. Use it for "what services do I have in
+    GreenLake" and "is X available / set up". Uses the same sign-in as the com_ tools."""
+    return await _com(account, lambda c: com.list_services(c, provisioned_only))
 
 
 @mcp.tool(annotations=READ_ONLY)
