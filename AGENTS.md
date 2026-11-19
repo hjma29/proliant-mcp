@@ -72,3 +72,8 @@ Public repository. Read this before changing anything.
    Always prefer the server's own tools over scripts when answering a user. If
    you must script once to answer now, turn it into a tool (or a tool option)
    in the same session, verify it against live data, and release it.
+7. **Never hard-code the number of tools** (CI workflow, tests, README). It changes
+   with every new tool; tests compare with `len(await mcp.list_tools())` and the CI
+   self-check matches `proliant-mcp X.Y.Z: N tools`. A stale count made CI fail for
+   four releases in a row. Before tagging, wait for CI to pass, not just finish:
+   `gh run view ID --json conclusion`.

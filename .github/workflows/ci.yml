@@ -47,7 +47,7 @@ jobs:
         run: |
           $out = uvx --from $env:PKG proliant-mcp --check | Out-String
           Write-Output $out
-          if ($out -notmatch '36 tools') { throw "unexpected --check output" }
+          if ($out -notmatch 'proliant-mcp \d+\.\d+\.\d+: \d+ tools') { throw "unexpected --check output" }
       - name: Windows inventory written by PowerShell 5.1 (UTF-16), locked with icacls
         if: runner.os == 'Windows'
         shell: powershell
