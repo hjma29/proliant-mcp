@@ -42,6 +42,9 @@ def fake_greenlake(*, push=True, pending_polls=1, workspaces=("Lab",)):
             return httpx.Response(200, text="<script>var stateToken = '00abc\\x2Ddef';</script>")
         if path == "/idp/idx/introspect":
             return httpx.Response(200, json=idx("h1", ("identify", "https://auth.hpe.com/idp/idx/identify")))
+        if path == "/idp/idx/identify" and json.loads(request.content)["identifier"].startswith("locked"):
+            return httpx.Response(401, json={**idx("p2", ("identify", "x"), ("unlock-account", "y")),
+                                             "messages": {"value": [{"class": "ERROR", "i18n": {"key": "errors.E0000004"}}]}})
         if path == "/idp/idx/identify" and not json.loads(request.content)["identifier"].endswith("@hpe.com"):
             assert request.headers["accept"] == "application/json"
             return httpx.Response(
@@ -162,6 +165,14 @@ async def test_other_accounts_use_their_password_with_retry(home, monkeypatch):
     assert ui.errors == [None, "Incorrect password, try again."]
     assert ui.numbers == []
     assert data["email"] == "you@gmail.com" and load_com()["com"].client_id == "cid"
+
+
+async def test_locked_account_is_reported_before_any_password_retry(home, monkeypatch):
+    monkeypatch.setattr(login, "_transport", httpx.MockTransport(fake_greenlake()))
+    ui = RecordingUI(passwords=("right-password", "right-password", "right-password"))
+    with pytest.raises(login.LoginError, match="locked"):
+        await login.login("locked@gmail.com", ui)
+    assert ui.errors == [None]  # one attempt: a locked account is not retried
 
 
 async def test_hpe_account_without_push_falls_back_to_password(home, monkeypatch):

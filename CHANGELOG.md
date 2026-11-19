@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.4 — 2026-11-19
+
+### Fixes
+- GreenLake sign-in with a password (gmail.com and other non-HPE accounts) now says the account is locked and how to unlock it when GreenLake refuses the email before the password, instead of a confusing error, and does not ask for the password again.
+
+---
+
 ## v0.15.3 — 2026-11-19
 
 ### Improvements

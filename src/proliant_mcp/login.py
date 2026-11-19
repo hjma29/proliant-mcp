@@ -337,6 +337,10 @@ async def _approve_push(client: httpx.AsyncClient, idx: dict[str, Any], ui: Logi
                 await approval
 
 
+def _message_keys(data: dict[str, Any]) -> set[str]:
+    return {m.get("i18n", {}).get("key", "") for m in (data.get("messages") or {}).get("value", [])}
+
+
 def _check_password_reply(resp: httpx.Response) -> dict[str, Any]:
     """Raise WrongPassword for Okta's 'incorrect password' answers (HTTP 401 or 200 with an error)."""
     try:
@@ -384,9 +388,17 @@ async def _password_sign_in(client: httpx.AsyncClient, email: str, password: str
         raise LoginError("The sign-in session expired")
     identify = _remediation(idx, "identify")
     identify_href = identify["href"] if identify else f"{okta_base}/idp/idx/identify"
-    identified = (
-        await client.post(identify_href, json={"identifier": email, "stateHandle": idx["stateHandle"]}, headers=CLASSIC_HEADERS)
-    ).json()
+    reply = await client.post(identify_href, json={"identifier": email, "stateHandle": idx["stateHandle"]}, headers=CLASSIC_HEADERS)
+    identified = reply.json()
+    if reply.status_code == 401 or "errors.E0000004" in _message_keys(identified):
+        # Unknown emails still get a password page (Okta hides which accounts exist), so a refusal here means
+        # this account is blocked: locked after too many wrong passwords, or suspended.
+        raise LoginError(
+            f"GreenLake refused {email} before asking for a password, which usually means the account is locked after "
+            "too many wrong passwords (it can still show a password page in a browser it knows). Open "
+            "https://common.cloud.hpe.com, choose 'Unlock your account' (or reset the password), then sign in again here. "
+            "Do not retry the password until it is unlocked: more failures keep it locked."
+        )
     names = _remediation_names(identified)
     authenticators = identified.get("authenticators", {}).get("value", [])
     password_auth = next((a for a in authenticators if a.get("key") == "okta_password" or a.get("type") == "password"), None)
