@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.1 — 2026-11-19
+
+### Improvements
+- `list_servers` returns the running proliant-mcp version and whether a newer release exists, so you can ask the assistant "which proliant-mcp version is running" (VS Code's `/mcp list` does not show it). The release check runs at most once an hour.
+
+---
+
 ## v0.15.0 — 2026-11-19
 
 ### Improvements

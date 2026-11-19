@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import time
 from collections import Counter
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
@@ -136,10 +137,13 @@ async def _com(name: str | None, fn: Callable[[ComClient], Awaitable[Any]]) -> A
 
 
 @mcp.tool(annotations=READ_ONLY)
-def list_servers() -> dict[str, Any]:
+async def list_servers() -> dict[str, Any]:
     """List what this server can reach: iLO servers (name, iLO host), OneView appliances
-    and COM accounts (name, region). Credentials are never returned. Call this first."""
+    and COM accounts (name, region), plus the running proliant-mcp version and whether a newer
+    release exists. Credentials are never returned. Call this first, and for "which version"."""
     return {
+        "proliant_mcp_version": __version__,
+        "release_check": await _cached_release_status(),
         "config_file": str(config_path()) if config_path() else None,
         "servers": [{"name": s.name, "ilo_host": s.host} for s in load_servers().values()],
         "oneview_appliances": [{"name": a.name, "host": a.host} for a in load_oneview().values()],
@@ -775,6 +779,17 @@ def _version_tuple(v: str) -> tuple[int, ...] | None:
         return tuple(int(p) for p in v.lstrip("v").split("."))
     except ValueError:
         return None
+
+
+_release_cache: tuple[float, str] | None = None
+
+
+async def _cached_release_status() -> str:
+    """_release_status, re-checked at most hourly so list_servers stays fast."""
+    global _release_cache
+    if _release_cache is None or time.monotonic() - _release_cache[0] > 3600:
+        _release_cache = (time.monotonic(), await _release_status())
+    return _release_cache[1]
 
 
 async def _release_status() -> str:
