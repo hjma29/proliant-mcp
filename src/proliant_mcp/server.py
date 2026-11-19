@@ -44,8 +44,8 @@ or com_api_get over many servers.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
 set up for the workspace, sign the user in right away in this chat; do not send them to a
 browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fails or is
-cancelled without the user seeing a pop-up, ask the user for their GreenLake email, call
-com_login_start, tell the user exactly what it returns (the Okta Verify number to tap, or the
+cancelled without the user seeing a pop-up, ask the user for their GreenLake email in a plain chat message (not a question tool, which may be
+auto-answered "user not available"), call com_login_start, tell the user exactly what it returns (the Okta Verify number to tap, or the
 link to the password page), and call com_login_status until it says signed_in. If no iLO or OneView is
 configured, or the user wants to add servers, call add_server (one iLO or OneView) or
 import_inventory (a .ini or .csv file the user names in a pop-up). If add_server's pop-ups do not

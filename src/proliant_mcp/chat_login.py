@@ -23,9 +23,10 @@ from proliant_mcp.com import ComError
 from proliant_mcp.config import com_login_path, load_com
 
 UNSUPPORTED = (
-    "This AI client cannot show sign-in pop-ups (MCP elicitation). Sign the user in here instead: ask for their "
-    "HPE GreenLake email, call com_login_start, relay what it returns (the Okta Verify number, or a password page "
-    "link), and call com_login_status until it says signed_in."
+    "The sign-in pop-up did not appear (this AI client cannot show it, or it was cancelled automatically). Sign the "
+    "user in without pop-ups: if you do not know their HPE GreenLake email, ask for it in a plain chat message (not a "
+    "question tool, which may be auto-answered) and wait for the reply. Then call com_login_start with it, relay what "
+    "it returns (the Okta Verify number, or a password page link), and call com_login_status until it says signed_in."
 )
 
 
@@ -114,12 +115,20 @@ async def _sign_in(flow: _Flow, email: str | None, workspace: str | None, region
         address = await ui.email(email or login.load_login().get("email", ""))
         data = await login.login(address, ui, workspace, region)
     except (login.LoginError, FlowError) as exc:
-        raise FlowError(f"GreenLake sign-in failed: {exc}. If no pop-up was shown, use com_login_start instead.") from exc
+        raise FlowError(f"GreenLake sign-in failed: {exc}.") from exc
     return await _signed_in(address, data, flow.notes)
 
 
 async def com_login(ctx: Context, email: str | None, workspace: str | None, region: str | None) -> Any:
-    return await run_flow(ctx, lambda flow: _sign_in(flow, email, workspace, region), UNSUPPORTED)
+    try:
+        return await run_flow(ctx, lambda flow: _sign_in(flow, email, workspace, region), UNSUPPORTED)
+    except ToolError as exc:
+        known = (email or login.load_login().get("email", "")).strip()
+        if "@" not in known:
+            raise ToolError(str(exc) if str(exc) == UNSUPPORTED else f"{exc} {UNSUPPORTED}") from exc
+        result = await com_login_start(known, workspace, region)
+        result["note"] = "The sign-in pop-up did not appear, so sign-in continued without pop-ups. Relay the next step to the user."
+        return result
 
 
 # ── Sign-in without pop-ups: com_login_start + com_login_status ───────────────

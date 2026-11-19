@@ -298,6 +298,17 @@ async def test_com_login_cancelled_or_without_popups(greenlake):
     assert not (login.com_login_path()).exists()
 
 
+async def test_com_login_with_email_falls_back_to_no_popup_signin(greenlake):
+    greenlake()
+    async with Client(srv.mcp) as client:
+        result = (await client.call_tool("com_login", {"email": "you@hpe.com"})).structured_content
+        assert result["status"] == "approve_push" and "without pop-ups" in result["note"]
+        done = (await client.call_tool("com_login_status", {"workspace": "Other"})).structured_content
+        if done.get("status") == "choose_workspace":
+            done = (await client.call_tool("com_login_status", {"workspace": "Other"})).structured_content
+    assert done["status"] in ("signed_in", "choose_workspace", "approve_push")
+
+
 def test_api_client_names_are_unique_per_install(home, monkeypatch):
     monkeypatch.setattr(login.socket, "gethostname", lambda: "SAMEHOST")
     first = login._credential_prefix()

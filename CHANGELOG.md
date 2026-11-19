@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.14.3 — 2026-11-19
+
+### Fixes
+- `com_login` with an email (or one saved earlier) now continues without pop-ups when the client cannot show them or cancels them at once, instead of failing. Without an email, the error tells the assistant to ask for it in a plain chat message, because question tools can be auto-answered "user not available".
+
+---
+
 ## v0.14.2 — 2026-11-19
 
 ### Improvements

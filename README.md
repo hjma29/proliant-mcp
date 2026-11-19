@@ -40,7 +40,7 @@ If the client cannot find `uvx`, put its full path in `command`: `C:\Users\<you>
 
 Just ask your assistant, and it guides you in the chat:
 
-- *"Sign in to HPE GreenLake"* for Compute Ops Management.
+- *"Sign in to HPE GreenLake as me@company.com"* for Compute Ops Management (include your email; some chat modes cannot ask you questions or show pop-ups).
 - *"Add my iLO"* or *"add my OneView"*, or *"import my servers from a file"* (`.ini` or `.csv`).
 
 Passwords are typed on a page on your own computer, never in the chat.
