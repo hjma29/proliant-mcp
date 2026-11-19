@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.3 — 2026-11-19
+
+### Improvements
+- The `list_servers` tool description starts with `[proliant-mcp X.Y.Z]`, so tool lists such as Copilot's `/mcp show proliant` show the running version.
+
+---
+
 ## v0.15.2 — 2026-11-19
 
 ### Improvements

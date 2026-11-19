@@ -137,7 +137,13 @@ async def _com(name: str | None, fn: Callable[[ComClient], Awaitable[Any]]) -> A
         raise ToolError(str(exc)) from exc
 
 
-@mcp.tool(annotations=READ_ONLY)
+# The version leads this description so it shows in tool lists such as Copilot's /mcp show.
+@mcp.tool(
+    annotations=READ_ONLY,
+    description=f"[proliant-mcp {__version__}] List what this server can reach: iLO servers (name, iLO host), OneView "
+    "appliances and COM accounts (name, region), plus the running proliant-mcp version and whether a newer release "
+    'exists. Credentials are never returned. Call this first, and for "which version".',
+)
 async def list_servers() -> dict[str, Any]:
     """List what this server can reach: iLO servers (name, iLO host), OneView appliances
     and COM accounts (name, region), plus the running proliant-mcp version and whether a newer
