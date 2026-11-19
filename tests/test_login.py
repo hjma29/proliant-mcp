@@ -352,7 +352,9 @@ async def test_com_login_without_email_or_popups_asks_for_it_on_a_local_page(gre
     async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
         first = (await client.call_tool("com_login", {})).structured_content
         assert first["status"] == "enter_email" and first["url"].startswith("http://127.0.0.1:")
-        assert "type='email'" in (await browser.get(first["url"])).text
+        email_page = await browser.get(first["url"])
+        assert "type='email'" in email_page.text and "id='reveal'" not in email_page.text
+        assert "script-src" not in email_page.headers["content-security-policy"]
         await browser.post(first["url"], data={"password": "you@hpe.com"})
         step = (await client.call_tool("com_login_status", {})).structured_content
     assert (step["status"], step["email"]) == ("signed_in", "you@hpe.com")

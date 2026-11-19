@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.7 — 2026-11-19
+
+### Improvements
+- The local password page (used by the sign-in and add-server pop-ups and by their no-pop-up links) has an eye button to show or hide the password while typing. The page still runs no other script: only this toggle is allowed, with a new random nonce on each page load.
+
+---
+
 ## v0.15.6 — 2026-11-19
 
 ### Improvements

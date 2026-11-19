@@ -269,8 +269,12 @@ async def test_add_server_without_host_or_pop_ups_asks_for_everything_on_one_pag
     async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
         first = (await client.call_tool("add_server", {})).structured_content
         assert first["status"] == "enter_server"
-        page = (await browser.get(first["url"])).text
+        reply = await browser.get(first["url"])
+        page = reply.text
         assert "name='host'" in page and "<select" in page and "type='password'" in page
+        nonce = re.search(r"script-src 'nonce-([^']+)'", reply.headers["content-security-policy"]).group(1)
+        assert "id='reveal'" in page and f"<script nonce='{nonce}'>" in page  # show-password eye, the only script allowed
+        assert nonce not in (await browser.get(first["url"])).text  # a fresh nonce per page load
         missing = await browser.post(first["url"], data={"type": "ilo", "host": "", "username": "Administrator", "password": "good"})
         assert "Enter iLO or OneView IP address or name" in missing.text
         await browser.post(first["url"], data={"type": "ilo", "host": "192.0.2.10", "name": "lab2", "username": "Administrator", "password": "good"})

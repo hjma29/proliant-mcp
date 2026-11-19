@@ -98,6 +98,8 @@ def _page(title: str, body: str) -> str:
         "h1{font-size:1.25rem;margin:0 0 1rem}.who{color:#425563}.err{color:#c8102e}"
         "input,select{width:100%;box-sizing:border-box;padding:.6rem;font-size:1rem;margin:.4rem 0 1rem}"
         "button{background:#01a982;color:#fff;border:0;border-radius:6px;padding:.6rem 1.4rem;font-size:1rem;cursor:pointer}"
+        ".pw{position:relative}.pw input{padding-right:2.8rem}input::-ms-reveal{display:none}"
+        ".pw button{position:absolute;right:.25rem;top:.65rem;background:none;color:#425563;padding:.3rem .45rem;line-height:0}"
         f"</style></head><body><main><h1>{html.escape(title)}</h1>{body}</main></body></html>"
     )
 
@@ -114,16 +116,43 @@ def _field_html(name: str, label: str, kind: str, default: str, required: bool) 
     return out + f"<input id='{n}' name='{n}' type='text' value='{html.escape(default)}'{req}>"
 
 
-def _password_form(prompt: SecretPrompt, error: str | None) -> str:
+_SVG = "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' aria-hidden='true'"
+_EYE = (
+    f"{_SVG} id='eye'><path d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z'/><circle cx='12' cy='12' r='3'/></svg>"
+    f"{_SVG} id='eye-off' style='display:none'><path d='M1 12s4-7 11-7c2.2 0 4.1.7 5.7 1.7M23 12s-4 7-11 7c-2.2 0-4.1-.7-5.7-1.7'/>"
+    "<path d='M9.9 9.9a3 3 0 0 0 4.2 4.2'/><path d='M2 2l20 20'/></svg>"
+)
+
+# Show/hide toggle for the password field. The page allows no other script (see the CSP in _PasswordPage).
+_REVEAL_JS = (
+    "var b=document.getElementById('reveal'),i=document.getElementById('password'),"
+    "e=document.getElementById('eye'),o=document.getElementById('eye-off');"
+    "b.onclick=function(){var s=i.type==='password';i.type=s?'text':'password';"
+    "e.style.display=s?'none':'';o.style.display=s?'':'none';"
+    "b.setAttribute('aria-label',s?'Hide password':'Show password');b.title=b.getAttribute('aria-label');"
+    "b.setAttribute('aria-pressed',s?'true':'false');i.focus();};"
+)
+
+
+def _password_form(prompt: SecretPrompt, error: str | None, nonce: str = "") -> str:
     err = f"<p class='err'>{html.escape(error)}</p>" if error else ""
     extra = "".join(_field_html(*f) for f in prompt.fields)
+    is_password = prompt.input_type == "password"
+    field = (
+        f"<input id='password' name='password' type='{html.escape(prompt.input_type)}' "
+        f"autocomplete='{'current-password' if is_password else 'username'}' autofocus required>"
+    )
+    if is_password and nonce:
+        field = (
+            f"<div class='pw'>{field}<button type='button' id='reveal' aria-label='Show password' "
+            f"title='Show password' aria-pressed='false'>{_EYE}</button></div>"
+            f"<script nonce='{nonce}'>{_REVEAL_JS}</script>"
+        )
     return _page(
         prompt.title,
         f"<p class='who'>{html.escape(prompt.who)}</p>{err}"
         f"<form method='post' autocomplete='off'>{extra}"
-        f"<label for='password'>{html.escape(prompt.label)}</label>"
-        f"<input id='password' name='password' type='{html.escape(prompt.input_type)}' "
-        f"autocomplete='{'username' if prompt.input_type == 'email' else 'current-password'}' autofocus required>"
+        f"<label for='password'>{html.escape(prompt.label)}</label>{field}"
         f"<button type='submit'>{html.escape(prompt.button)}</button></form>"
         f"<p><small>{html.escape(prompt.note)}</small></p>",
     )
@@ -151,7 +180,7 @@ class _PasswordPage:
             def log_message(self, *args: Any) -> None:
                 pass
 
-            def _send(self, status: int, body: str) -> None:
+            def _send(self, status: int, body: str, nonce: str = "") -> None:
                 data = body.encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -159,9 +188,14 @@ class _PasswordPage:
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Referrer-Policy", "no-referrer")
                 self.send_header("X-Frame-Options", "DENY")
-                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'")
+                script = f"; script-src 'nonce-{nonce}'" if nonce else ""
+                self.send_header("Content-Security-Policy", f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'{script}")
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _form(self, error_text: str | None) -> None:
+                nonce = secrets.token_urlsafe(16) if prompt.input_type == "password" else ""
+                self._send(200, _password_form(prompt, error_text, nonce), nonce)
 
             def _ours(self) -> bool:
                 return urllib.parse.urlsplit(self.path).path == f"/{page.token}"
@@ -171,7 +205,7 @@ class _PasswordPage:
                     return self._send(404, "Not found")
                 if page.password.done():
                     return self._send(410, _USED)
-                self._send(200, _password_form(prompt, error))
+                self._form(error)
 
             def do_POST(self) -> None:
                 if not self._ours() or page.password.done():
@@ -182,7 +216,7 @@ class _PasswordPage:
                 values = {f[0]: fields.get(f[0], [""])[0].strip() for f in prompt.fields}
                 missing = [f[1] for f in prompt.fields if f[4] and not values[f[0]]]
                 if missing or not value:
-                    return self._send(200, _password_form(prompt, f"Enter {', '.join(missing) or prompt.label}."))
+                    return self._form(f"Enter {', '.join(missing) or prompt.label}.")
                 page.values = values
                 loop.call_soon_threadsafe(deliver, value)
                 self._send(200, _page("Password received", "<p>Received. Go back to your AI chat; you can close this tab.</p>"))
