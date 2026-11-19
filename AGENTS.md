@@ -21,7 +21,7 @@ Add it to the user's MCP client config. It needs only [uv](https://docs.astral.s
 - Start with `list_servers`, then use the tool descriptions. For anything across many servers use a fleet tool (`com_hardware_report`, `com_list_servers`, `get_fleet_summary`, ...) rather than looping per-server tools or scripting raw API calls.
 - If nothing is configured, set it up in the chat; never ask the user to type a password in the chat, or to leave it for a browser or terminal:
   - Compute Ops Management: `com_login`; if no pop-up appears, `com_login_start` then `com_login_status`, and relay the page link or Okta Verify number. Pass `email` only if the user gave it; do not ask for it with a question tool (some modes auto-answer "user not available"), because without it the user types it on a local page.
-  - iLO or OneView: `add_server` for one, `import_inventory` for a `.ini` or `.csv` file (the user types its path); without pop-ups `add_server_start` then `add_server_status`.
+  - iLO or OneView: `add_server` for one (if no pop-up appears it continues with a local page link to relay), `import_inventory` for a `.ini` or `.csv` file (the user types its path); without pop-ups `add_server_start` (pass `host` only if the user gave it) then `add_server_status`.
 - Credentials are stored on the user's computer only (`~/.config/proliant-mcp/`), never in this repo.
 
 ## Contributing

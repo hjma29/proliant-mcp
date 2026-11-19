@@ -38,6 +38,22 @@ class FlowError(RuntimeError):
     """A problem to report to the user (cancelled, timed out, bad input)."""
 
 
+class PopupCancelled(FlowError):
+    """A pop-up was declined or cancelled, often automatically by the client (e.g. VS Code Autopilot)."""
+
+
+def popup_failed(exc: BaseException, unsupported: str) -> bool:
+    """True when *exc* ended a flow because pop-ups are unsupported or were cancelled."""
+    if str(exc) == unsupported:
+        return True
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, PopupCancelled):
+            return True
+        seen = seen.__cause__
+    return False
+
+
 @dataclass
 class _Question:
     params: types.ElicitRequestFormParams | types.ElicitRequestURLParams
@@ -68,6 +84,9 @@ class SecretPrompt:
     button: str = "Continue"
     note: str = "The password is used once and is not shared with the AI."
     input_type: str = "password"  # "email" for the sign-in email page
+    # Extra fields shown above the password: (name, label, kind, default, required); kind is
+    # "text" or "select:value=Label|value=Label". Submitted values land in _PasswordPage.values.
+    fields: tuple[tuple[str, str, str, str, bool], ...] = ()
 
 
 def _page(title: str, body: str) -> str:
@@ -77,18 +96,31 @@ def _page(title: str, body: str) -> str:
         "body{font-family:system-ui,sans-serif;background:#f4f5f6;margin:0;display:flex;justify-content:center}"
         "main{background:#fff;margin-top:12vh;padding:2rem 2.5rem;border-radius:10px;box-shadow:0 2px 12px #0002;width:22rem}"
         "h1{font-size:1.25rem;margin:0 0 1rem}.who{color:#425563}.err{color:#c8102e}"
-        "input{width:100%;box-sizing:border-box;padding:.6rem;font-size:1rem;margin:.4rem 0 1rem}"
+        "input,select{width:100%;box-sizing:border-box;padding:.6rem;font-size:1rem;margin:.4rem 0 1rem}"
         "button{background:#01a982;color:#fff;border:0;border-radius:6px;padding:.6rem 1.4rem;font-size:1rem;cursor:pointer}"
         f"</style></head><body><main><h1>{html.escape(title)}</h1>{body}</main></body></html>"
     )
 
 
+def _field_html(name: str, label: str, kind: str, default: str, required: bool) -> str:
+    n, req = html.escape(name), " required" if required else ""
+    out = f"<label for='{n}'>{html.escape(label)}</label>"
+    if kind.startswith("select:"):
+        options = "".join(
+            f"<option value='{html.escape(v)}'{' selected' if v == default else ''}>{html.escape(t)}</option>"
+            for v, _, t in (o.partition("=") for o in kind[7:].split("|"))
+        )
+        return out + f"<select id='{n}' name='{n}'{req}>{options}</select>"
+    return out + f"<input id='{n}' name='{n}' type='text' value='{html.escape(default)}'{req}>"
+
+
 def _password_form(prompt: SecretPrompt, error: str | None) -> str:
     err = f"<p class='err'>{html.escape(error)}</p>" if error else ""
+    extra = "".join(_field_html(*f) for f in prompt.fields)
     return _page(
         prompt.title,
         f"<p class='who'>{html.escape(prompt.who)}</p>{err}"
-        "<form method='post' autocomplete='off'>"
+        f"<form method='post' autocomplete='off'>{extra}"
         f"<label for='password'>{html.escape(prompt.label)}</label>"
         f"<input id='password' name='password' type='{html.escape(prompt.input_type)}' "
         f"autocomplete='{'username' if prompt.input_type == 'email' else 'current-password'}' autofocus required>"
@@ -108,6 +140,7 @@ class _PasswordPage:
         loop = asyncio.get_running_loop()
         self.token = secrets.token_urlsafe(24)
         self.password: asyncio.Future[str] = loop.create_future()
+        self.values: dict[str, str] = {}
         page = self
 
         def deliver(value: str) -> None:
@@ -146,8 +179,11 @@ class _PasswordPage:
                 length = min(int(self.headers.get("Content-Length") or 0), 8192)
                 fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
                 value = fields.get("password", [""])[0]
-                if not value:
-                    return self._send(200, _password_form(prompt, "Enter your password."))
+                values = {f[0]: fields.get(f[0], [""])[0].strip() for f in prompt.fields}
+                missing = [f[1] for f in prompt.fields if f[4] and not values[f[0]]]
+                if missing or not value:
+                    return self._send(200, _password_form(prompt, f"Enter {', '.join(missing) or prompt.label}."))
+                page.values = values
                 loop.call_soon_threadsafe(deliver, value)
                 self._send(200, _page("Password received", "<p>Received. Go back to your AI chat; you can close this tab.</p>"))
 
@@ -200,7 +236,7 @@ class _Flow:
 
 def accepted(result: Any) -> dict[str, Any]:
     if getattr(result, "action", None) != "accept":
-        raise FlowError("Cancelled")
+        raise PopupCancelled("Cancelled")
     return dict(getattr(result, "content", None) or {})
 
 

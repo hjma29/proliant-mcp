@@ -6,6 +6,15 @@ directly (see the README).
 
 ---
 
+## v0.15.0 — 2026-11-19
+
+### Improvements
+- `add_server` no longer fails when the chat cannot show pop-ups or cancels them at once (VS Code Autopilot). It continues without pop-ups: one local page asks for the type, address, user name and password, checks the login and saves it. `add_server_start` no longer needs the address.
+- `com_login` falls back to the no-pop-up sign-in only when the pop-up was cancelled or is unsupported, not after a real sign-in failure.
+- GPU reports (`com_list_gpus`, `com_hardware_report`, `com_list_servers`) name Intel Data Center GPU Max and Flex cards from their PCI ID, instead of iLO's generic "Intel Video Controller".
+
+---
+
 ## v0.14.4 — 2026-11-19
 
 ### Fixes

@@ -237,9 +237,9 @@ async def test_import_can_be_declined_and_needs_pop_ups(home):
     assert result.is_error and "Cancelled" in result.content[0].text
     assert not our_inventory(home).exists()
 
-    async with Client(srv.mcp) as client:
+    async with Client(srv.mcp) as client:  # no pop-ups: continues on a local page
         result = await client.call_tool("add_server", {}, raise_on_error=False)
-    assert result.is_error and "add_server_start" in result.content[0].text
+    assert result.structured_content["status"] == "enter_server"
 
     bad, _ = user({"path": {"path": str(home / "missing.csv")}}, passwords=[])
     async with Client(srv.mcp, elicitation_handler=bad) as client:
@@ -263,6 +263,20 @@ async def test_add_server_without_pop_ups_checks_the_password_on_a_local_page(ho
     assert "wrong" not in json.dumps(done) and "good" not in json.dumps(done)
     assert [s["name"] for s in listed["servers"]] == ["lab1"]
     assert bad.is_error and "Cannot add that server" in bad.content[0].text
+
+
+async def test_add_server_without_host_or_pop_ups_asks_for_everything_on_one_page(home):
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("add_server", {})).structured_content
+        assert first["status"] == "enter_server"
+        page = (await browser.get(first["url"])).text
+        assert "name='host'" in page and "<select" in page and "type='password'" in page
+        missing = await browser.post(first["url"], data={"type": "ilo", "host": "", "username": "Administrator", "password": "good"})
+        assert "Enter iLO or OneView IP address or name" in missing.text
+        await browser.post(first["url"], data={"type": "ilo", "host": "192.0.2.10", "name": "lab2", "username": "Administrator", "password": "good"})
+        done = (await client.call_tool("add_server_status", {})).structured_content
+    assert (done["status"], done["name"], done["host"]) == ("saved", "lab2", "192.0.2.10")
+    assert "good" not in json.dumps(done)
 
 
 def test_terminal_import(home, capsys):

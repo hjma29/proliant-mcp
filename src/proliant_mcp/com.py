@@ -451,6 +451,30 @@ def nic_summary(inv: dict[str, Any], detail: bool = False) -> dict[str, Any]:
     return {"known": bool(_section(inv, "networkAdapter")), "adapters": adapters}
 
 
+# iLO names some GPUs generically ("Intel Video Controller"); the PCI vendor:device ID tells which.
+_GPU_PCI_NAMES = {
+    ("0X8086", "0X0BD5"): "Intel Data Center GPU Max 1550",
+    ("0X8086", "0X0BD6"): "Intel Data Center GPU Max 1550",
+    ("0X8086", "0X0BD7"): "Intel Data Center GPU Max 1350",
+    ("0X8086", "0X0BD8"): "Intel Data Center GPU Max 1350",
+    ("0X8086", "0X0BD9"): "Intel Data Center GPU Max 1100",
+    ("0X8086", "0X0BDA"): "Intel Data Center GPU Max 1100",
+    ("0X8086", "0X0BDB"): "Intel Data Center GPU Max 1100",
+    ("0X8086", "0X56C0"): "Intel Data Center GPU Flex 170",
+    ("0X8086", "0X56C1"): "Intel Data Center GPU Flex 140",
+}
+
+
+def _pci_gpu_names(pci: list[dict[str, Any]]) -> dict[str, str]:
+    """Generic iLO device name -> real GPU model, when every such PCI device has the same known ID."""
+    found: dict[str, set[str]] = {}
+    for dev in pci:
+        for f in dev.get("PCIeFunctions") or []:
+            key = (str(f.get("VendorId", "")).upper(), str(f.get("DeviceId", "")).upper())
+            found.setdefault((dev.get("Name") or "").strip(), set()).add(_GPU_PCI_NAMES.get(key, ""))
+    return {name: next(iter(models)) for name, models in found.items() if name and len(models) == 1 and "" not in models}
+
+
 def hardware_summary(inv: dict[str, Any], detail: bool = False, network: bool = False) -> dict[str, Any]:
     """CPUs and GPUs from a server's cached COM inventory (``/servers/{id}/inventory``).
 
@@ -472,8 +496,10 @@ def hardware_summary(inv: dict[str, Any], detail: bool = False, network: bool = 
 
     cpu_groups = Counter((" ".join((c.get("Model") or c.get("Name") or "").split()), c.get("TotalCores"), c.get("TotalThreads")) for c in cpus)
     gpu_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    real_names = _pci_gpu_names(pci)
     for g in gpu_items:
-        key = ((g.get("Name") or g.get("Model") or "").strip(), (g.get("Manufacturer") or "").strip(), (g.get("PartNumber") or g.get("Model") or "").strip())
+        name = (g.get("Name") or g.get("Model") or "").strip()
+        key = (real_names.get(name, name), (g.get("Manufacturer") or "").strip(), (g.get("PartNumber") or g.get("Model") or "").strip())
         gpu_groups.setdefault(key, []).append(g)
     gpus = []
     for (name, vendor, part), items in gpu_groups.items():

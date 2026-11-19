@@ -18,7 +18,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from proliant_mcp import login
-from proliant_mcp.chat import FlowError, Prompter, Relay, SecretPrompt, _Flow, accepted, form_params, run_flow
+from proliant_mcp.chat import FlowError, PopupCancelled, Prompter, Relay, SecretPrompt, _Flow, accepted, form_params, popup_failed, run_flow
 from proliant_mcp.com import ComError
 from proliant_mcp.config import com_login_path, load_com
 
@@ -113,6 +113,8 @@ async def _sign_in(flow: _Flow, email: str | None, workspace: str | None, region
     try:
         address = await ui.email(email or login.load_login().get("email", ""))
         data = await login.login(address, ui, workspace, region)
+    except PopupCancelled:
+        raise
     except (login.LoginError, FlowError) as exc:
         raise FlowError(f"GreenLake sign-in failed: {exc}.") from exc
     return await _signed_in(address, data, flow.notes)
@@ -122,6 +124,8 @@ async def com_login(ctx: Context, email: str | None, workspace: str | None, regi
     try:
         return await run_flow(ctx, lambda flow: _sign_in(flow, email, workspace, region), UNSUPPORTED)
     except ToolError as exc:
+        if not popup_failed(exc, UNSUPPORTED):
+            raise
         known = (email or login.load_login().get("email", "")).strip()
         result = await com_login_start(known or None, workspace, region)
         result["note"] = "The sign-in pop-up did not appear, so sign-in continued without pop-ups. Relay the next step to the user."

@@ -17,7 +17,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from proliant_mcp import inventory
-from proliant_mcp.chat import FlowError, Prompter, Relay, SecretPrompt, _Flow, run_flow
+from proliant_mcp.chat import FlowError, PopupCancelled, Prompter, Relay, SecretPrompt, _Flow, _PasswordPage, popup_failed, run_flow
 from proliant_mcp.inventory import Entry, InventoryError
 from proliant_mcp.probe import LOGIN_ERRORS, PROBE_ERRORS, probe, probe_many
 
@@ -25,9 +25,9 @@ CHECK_LIMIT = 30
 LIST_LIMIT = 50
 
 UNSUPPORTED_ADD = (
-    "This AI client cannot show pop-ups (MCP elicitation). Add the server here instead: ask the user for the "
-    "type (ilo or oneview), address and user name, call add_server_start, relay the password page link it "
-    "returns, and call add_server_status until it says saved."
+    "This AI client cannot show pop-ups (MCP elicitation). Add the server here instead: call add_server_start "
+    "(with the address only if the user gave it; otherwise the user types it on a local page), relay the page link "
+    "it returns, and call add_server_status until it says saved."
 )
 UNSUPPORTED_IMPORT = (
     "This AI client cannot show pop-ups (MCP elicitation). Ask the user to run `proliant-mcp import FILE` "
@@ -72,8 +72,8 @@ async def _add_server(flow: _Flow, kind: str | None, name: str | None, host: str
             fields,
             ["type", "host"],
         )
-    except FlowError as exc:
-        raise FlowError(f"{exc}. If no pop-up was shown, use add_server_start instead (no pop-ups).") from exc
+    except PopupCancelled:
+        raise
     try:
         draft = inventory.make_entry(str(answer.get("name", "")), str(answer.get("type", "ilo")), str(answer.get("host", "")), str(answer.get("username", "")))
     except InventoryError as exc:
@@ -226,7 +226,14 @@ async def _import(flow: _Flow) -> dict[str, Any]:
 
 
 async def add_server(ctx: Context, kind: str | None, name: str | None, host: str | None, username: str | None) -> Any:
-    return await run_flow(ctx, lambda flow: _add_server(flow, kind, name, host, username), UNSUPPORTED_ADD)
+    try:
+        return await run_flow(ctx, lambda flow: _add_server(flow, kind, name, host, username), UNSUPPORTED_ADD)
+    except ToolError as exc:
+        if not popup_failed(exc, UNSUPPORTED_ADD):
+            raise
+    result = await add_server_start(kind, host, name, username)
+    result["note"] = "The pop-up did not appear, so this continues without pop-ups. Relay the next step to the user."
+    return result
 
 
 # ── add_server_start / add_server_status: add a server without pop-ups ────────
@@ -237,20 +244,79 @@ START_WAIT = 5.0
 _adding: Relay | None = None
 
 
-async def add_server_start(kind: str, host: str, name: str | None, username: str | None) -> dict[str, Any]:
+async def _server_from_page(session: Relay, kind: str | None, name: str | None, username: str | None) -> tuple[Entry, str]:
+    """Ask for the type, address, user name and password on one local page."""
+    error: str | None = None
+    for _ in range(3):
+        page = _PasswordPage(
+            SecretPrompt(
+                message="Add a server to your proliant-mcp inventory.",
+                title="Add a server",
+                label="Password",
+                button="Check and save",
+                note="The login is checked against the server, then saved in your proliant-mcp inventory file on this "
+                "computer (readable only by you). It is not shared with the AI.",
+                fields=(
+                    ("type", "What is it?", "select:ilo=HPE iLO (one server)|oneview=HPE OneView / Synergy Composer", kind or "ilo", True),
+                    ("host", "iLO or OneView IP address or name", "text", "", True),
+                    ("name", "Name (optional), such as dl380-lab", "text", name or "", False),
+                    ("username", "User name", "text", username or "Administrator", True),
+                ),
+            ),
+            error,
+        )
+        try:
+            session.publish(
+                "enter_server",
+                f"{error + ' ' if error else ''}Ask the user to open {page.url} in a browser on the computer running this "
+                "server and type the iLO or OneView address, user name and password there (never in the chat). "
+                "Then call add_server_status.",
+                url=page.url,
+            )
+            password = await asyncio.wait_for(page.password, STATUS_WAIT * 6)
+        except TimeoutError as exc:
+            raise FlowError("No server details entered within 4 minutes") from exc
+        finally:
+            page.close()
+        v = page.values
+        try:
+            return inventory.make_entry(v.get("name", ""), v.get("type", "ilo"), v.get("host", ""), v.get("username", "")), password
+        except InventoryError as exc:
+            error = f"{exc}."
+    raise FlowError("Add server failed: no valid server details after three tries")
+
+
+async def _add_from_page(session: Relay, kind: str | None, name: str | None, username: str | None, step: str) -> dict[str, Any]:
+    draft, first = await _server_from_page(session, kind, name, username)
+    passwords = [first]
+
+    async def ask(prompt: SecretPrompt, error: str | None) -> str:
+        if passwords:
+            return passwords.pop()
+        return await session.secret(prompt, error, step)
+
+    return await _check_and_save(draft, ask)
+
+
+async def add_server_start(kind: str | None, host: str | None, name: str | None, username: str | None) -> dict[str, Any]:
     global _adding
-    try:
-        draft = inventory.make_entry(name or "", kind, host, username or "")
-    except InventoryError as exc:
-        raise ToolError(f"Cannot add that server: {exc}") from exc
+    draft = None
+    if host:
+        try:
+            draft = inventory.make_entry(name or "", kind or "ilo", host, username or "")
+        except InventoryError as exc:
+            raise ToolError(f"Cannot add that server: {exc}") from exc
     if _adding is not None and _adding.task is not None and not _adding.task.done():
         _adding.task.cancel()
     session = Relay("", "Call add_server_start to try again.")
     step = (
-        "Ask the user to open {url} in a browser on the computer running this server and type the password for "
-        f"{draft.username} on {draft.host} there (never in the chat). Then call add_server_status."
+        "Ask the user to open {url} in a browser on the computer running this server and type the password there "
+        "(never in the chat). Then call add_server_status."
     )
-    session.task = asyncio.create_task(_check_and_save(draft, lambda prompt, error: session.secret(prompt, error, step)))
+    if draft is None:
+        session.task = asyncio.create_task(_add_from_page(session, kind, name, username, step))
+    else:
+        session.task = asyncio.create_task(_check_and_save(draft, lambda prompt, error: session.secret(prompt, error, step)))
     _adding = session
     await session.wait_for_news(START_WAIT)
     return session.current()

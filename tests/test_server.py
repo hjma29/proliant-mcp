@@ -533,3 +533,13 @@ async def test_greenlake_list_services_joins_catalog_and_provisions(mcp_client):
     assert data["services"][1]["regions"] == [{"region": "us-west", "status": "FAILED", "reason": "quota"}]  # not ready, not "provisioned"
     assert data["services"][0]["description"] == "Securely manage your compute."
     assert [s["name"] for s in only["services"]] == ["Compute Ops Management"]
+
+
+def test_generic_intel_gpu_name_resolved_from_pci_id():
+    intel = {"Name": "Intel Video Controller", "Manufacturer": "Intel", "ProcessorType": "GPU", "Status": {"Health": "OK"}}
+    pci = [
+        {"Name": "Embedded Video Controller", "PCIeFunctions": [{"VendorId": "0X102B", "DeviceId": "0X0538", "DeviceClass": "DisplayController"}]},
+        {"Name": "Intel Video Controller", "PCIeFunctions": [{"VendorId": "0X8086", "DeviceId": "0X0BDA", "DeviceClass": "DisplayController"}]},
+    ]
+    hw = com.hardware_summary({"processor": {"data": [intel, intel]}, "pciDevice": {"data": pci}})
+    assert [(g["name"], g["count"]) for g in hw["gpus"]] == [("Intel Data Center GPU Max 1100", 2)]

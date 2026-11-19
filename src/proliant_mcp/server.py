@@ -50,7 +50,7 @@ available": without an email the user types it on a local page), tell the user e
 returns (the page link, the Okta Verify number to tap), and call com_login_status until it says signed_in. If no iLO or OneView is
 configured, or the user wants to add servers, call add_server (one iLO or OneView) or
 import_inventory (a .ini or .csv file the user names in a pop-up). If add_server's pop-ups do not
-appear, ask the user for the address and call add_server_start, relay the password page link, and
+appear, call add_server_start (with the address only if the user gave it), relay the page link, and
 call add_server_status until it says saved. For who logged in to iLOs (per day, user, source IP,
 failed logins) use get_ilo_logins: one call for all iLOs. Never ask the user to type
 a password into the chat; these tools collect it on a secure page."""
@@ -640,15 +640,16 @@ async def add_server(
     )
 )
 async def add_server_start(
-    host: Annotated[str, Field(description="IP address or name of the iLO or OneView. Ask the user.")],
+    host: Annotated[str | None, Field(description="IP address or name of the iLO or OneView, only if the user already said it. Omit it otherwise: the user then types it on a local page.")] = None,
     type: Annotated[Literal["ilo", "oneview"], Field(description="ilo (one server) or oneview (OneView / Synergy Composer).")] = "ilo",
     name: Annotated[str | None, Field(description="Short name for it, e.g. dl380-lab; defaults to the address. An existing name is replaced.")] = None,
     username: Annotated[str | None, Field(description="User name; default Administrator.")] = None,
 ) -> dict[str, Any]:
     """Add one iLO or OneView to the user's inventory without pop-ups, for clients where
-    add_server's pop-ups do not appear (or were cancelled). Returns `enter_password` with a `url`
-    of a secure page on this computer: tell the user to open it and type the password there (never
-    in the chat; never pass a password). Then call add_server_status until it returns `saved` (the
+    add_server's pop-ups do not appear (or were cancelled). Returns `enter_server` (no host given:
+    the page asks for the address, user name and password) or `enter_password`, with a `url` of a
+    secure page on this computer: tell the user to open it and fill it in there (never in the chat;
+    never pass a password). Then call add_server_status until it returns `saved` (the
     tools use the server immediately) or `failed`. The login is checked before anything is saved."""
     return await chat_inventory.add_server_start(type, host, name, username)
 
