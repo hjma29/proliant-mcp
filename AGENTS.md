@@ -12,6 +12,7 @@ Add it to the user's MCP client config. It needs only [uv](https://docs.astral.s
 
 - Key names differ by client: Claude Desktop `mcpServers`; Codex `config.toml` `[mcp_servers.proliant]` with `command = 'uvx'` and `args = ['proliant-mcp@latest']`; opencode `"mcp": {"servers": {"proliant": {"type": "local", "command": ["uvx", "proliant-mcp@latest"]}}}`.
 - Do not install with `uvx --from git+https://github.com/hjma29/proliant-mcp`: it needs git and installs unreleased code. `@latest` picks up new releases when the client restarts the server; pin with `proliant-mcp@X.Y.Z`.
+- If `uv` is missing, install it: Windows `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`, macOS/Linux `curl -LsSf https://astral.sh/uv/install.sh | sh`. After editing the config, tell the user to restart the client.
 - If the client cannot find `uvx`, use its full path (Windows `%USERPROFILE%\.local\bin\uvx.exe`).
 - Check the install: `uvx proliant-mcp@latest --check --connect`.
 

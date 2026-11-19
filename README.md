@@ -6,21 +6,29 @@ Ask things like *"which servers in Compute Ops Management are critical and why"*
 
 ## Install
 
-Install [uv](https://docs.astral.sh/uv/) once (no admin rights, no git needed).
+### Option 1: ask your AI agent
 
-**Windows** (PowerShell):
+Paste this into your AI agent (GitHub Copilot, Claude, Codex, opencode, ...):
+
+> Install the proliant-mcp MCP server for me. Follow the instructions at https://raw.githubusercontent.com/hjma29/proliant-mcp/main/AGENTS.md (install uv first if it is missing), then tell me when to restart you.
+
+### Option 2: manual
+
+**Step 1.** Install [uv](https://docs.astral.sh/uv/) (no admin rights, no git needed).
+
+Windows (PowerShell):
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**macOS**:
+macOS:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Then add this to your AI client's MCP configuration and restart the client (VS Code Copilot: *MCP: Open User Configuration*; Claude Desktop: *Settings > Developer > Edit Config*, with `mcpServers` in place of `servers`):
+**Step 2.** Add this to your AI client's MCP configuration and restart the client (VS Code Copilot: *MCP: Open User Configuration*; Claude Desktop: *Settings > Developer > Edit Config*, with `mcpServers` in place of `servers`):
 
 ```json
 {"servers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["proliant-mcp@latest"]}}}

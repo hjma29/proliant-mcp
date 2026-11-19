@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.14.2 — 2026-11-19
+
+### Improvements
+- README install now has two options: paste one sentence into your AI agent, or install manually in two steps for Windows and macOS. `AGENTS.md` tells agents how to install `uv` when it is missing.
+
+---
+
 ## v0.14.1 — 2026-11-19
 
 ### Improvements
