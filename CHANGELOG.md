@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.2 — 2026-11-19
+
+### Improvements
+- On start the server writes `proliant-mcp X.Y.Z started (stdio)` to stderr, so the AI client's MCP log shows which version is running.
+
+---
+
 ## v0.15.1 — 2026-11-19
 
 ### Improvements

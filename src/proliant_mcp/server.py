@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import sys
 import time
 from collections import Counter
 from typing import Annotated, Any, Awaitable, Callable, Literal
@@ -905,6 +906,8 @@ def main() -> None:
         # No authentication on this endpoint: keep it on localhost or a trusted lab network.
         mcp.run(transport="http", host=args.host, port=args.port)
     else:
+        # stderr shows up in the AI client's MCP log (VS Code: MCP: List Servers > proliant > Show Output).
+        print(f"proliant-mcp {__version__} started (stdio)", file=sys.stderr, flush=True)
         mcp.run(show_banner=False)
 
 
