@@ -15,7 +15,7 @@ The same engine serves the ``com_login`` MCP tool (pop-ups in the AI chat, see
 ``chat_login.py``) and the ``proliant-mcp login`` terminal command (``TerminalUI``).
 
 The sign-in endpoints are the web UI's, not a published API (ported from proliant-cli's
-``proliant.com.login``). If HPE changes them, create an API client instead (README).
+``proliant.com.login``). If HPE changes them, create an API client instead (docs/configuration.md).
 """
 
 from __future__ import annotations

@@ -1,0 +1,71 @@
+# Tools
+
+**Start here:** `list_servers` returns every configured iLO, OneView appliance and COM account.
+`find_server` tells you which server a name, iLO IP or hostname, serial or OS hostname belongs to,
+searching the iLO inventory, every COM account and every OneView appliance at once; for an address
+none of them knows, it reads that iLO's login-free identity pages (iLO model, server model, serial).
+
+## iLO (one server)
+
+| Tool | What it returns |
+|---|---|
+| `get_server_summary` | Model, product ID, serial, power and POST state, health, UID, BIOS and iLO version, CPU/memory totals, and the OS: whether one is running and which (from the HPE agent), boot progress (stuck in POST or BIOS setup), OS loader entries (`Ubuntu`, `VMware ESXi`) and the UEFI boot order |
+| `get_fleet_summary` | `get_server_summary` (with OS and boot state) for all configured iLOs in parallel; failures are per server |
+| `get_ilo_info` | iLO model and firmware version/date, license, COM connection status, iLO IP/MAC/DHCP/DNS |
+| `get_health` | Overall and per-subsystem health, fan and power-supply redundancy |
+| `get_firmware_inventory` | Every firmware component and version |
+| `get_processors` | CPUs and GPUs |
+| `get_memory` | Total, populated/empty slots, each DIMM |
+| `get_storage` | Controllers, drives, RAID volumes |
+| `get_network_adapters` | NICs, ports, MACs, link, LLDP neighbor (switch and port) |
+| `get_event_log` | Newest IML (hardware), IEL (iLO) or Security Log entries, filter by severity (exact or `min_severity`), time window (`since`/`until`: `7d`, `24h`, a date) and message text; entries with a wrong iLO clock are flagged and listed last; `summary` groups identical messages with counts and first/last time |
+| `get_fleet_event_summary` | Significant events for many iLOs in one call: per server, Warning and Critical (by default) IML, IEL or Security Log entries grouped by message, most severe first |
+| `get_ilo_logins` | Who logged in to the iLOs, for many servers in one call: logins per day, by type, user and source IP/host, failed logins and lockout alerts; says when a log wrapped before the window start; proliant-mcp's own sessions are counted separately (`include_this_computer` to count them) |
+| `redfish_get` | Raw read-only GET of any `/redfish/v1/...` resource |
+
+## HPE Compute Ops Management (fleet)
+
+| Tool | What it returns |
+|---|---|
+| `com_get_overview` | Fleet report: counts by health, power, connection, generation, model; servers needing attention; disconnected servers; soonest subscription expirations; active alerts by severity |
+| `com_list_servers` | Every COM server (filter by health, connected, name): serial, model, health, power, iLO, OS, subscription, firmware bundle. `include_hardware` adds CPU, GPU and storage controller / drive columns |
+| `greenlake_list_services` | Every HPE GreenLake service and where each is provisioned in your workspace (Compute Ops Management, Data Services, Aruba Central, ...) |
+| `com_hardware_report` | Whole-fleet hardware table, compact: servers with identical hardware grouped, with model, CPU, storage controllers and drives, direct-attached drives, GPUs and NICs (with mode), plus NIC mode totals |
+| `com_list_nics` | NIC / HBA report for the whole fleet in one call: per server each adapter's mode (Ethernet, InfiniBand, FibreChannel), ports up and link speeds; totals by mode (and the most used), by adapter model (cards, ports, ports up, speeds) and link speed |
+| `com_list_gpus` | GPU report for the whole fleet in one call: per server model, iLO firmware, CPU and GPUs, totals by GPU model, servers with no cached inventory |
+| `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, CPU and GPUs (with serial numbers), NIC ports (mode, link, speed, MAC), last firmware update, active alerts |
+| `com_list_alerts` | Newest alerts, uncleared by default; filter by server and severity |
+| `com_list_jobs` | Newest jobs (firmware updates, inventory, OneView sync) with state and result |
+| `com_list_groups` | Server groups, members and firmware / iLO-settings compliance |
+| `com_list_firmware_bundles` | SPPs and patch bundles available in COM |
+| `com_api_get` | Raw read-only GET of any `/compute-ops-mgmt/...` resource (secrets redacted) |
+
+## HPE OneView / Synergy
+
+| Tool | What it returns |
+|---|---|
+| `oneview_get_appliance` | Appliance model and version, appliance resource health, resource counts, server status, active alerts by severity |
+| `oneview_list_server_hardware` | Servers: status, power, profile, enclosure/bay, CPU, memory, ROM, OS, iLO |
+| `oneview_get_server_hardware` | One server by name, OS hostname, serial or iLO IP: firmware components and active alerts |
+| `oneview_list_server_profiles` | Profiles: assigned hardware, template and compliance, firmware baseline |
+| `oneview_list_alerts` | Newest alerts (active by default) with corrective action |
+| `oneview_list_enclosures` | Synergy frames: status, bays, Composers, power, PSUs, failed fans |
+| `oneview_list_interconnects` | Virtual Connect / switch modules: model, firmware, status, IP |
+| `oneview_list_uplink_sets` | Synergy uplink status in one call: each uplink set's status, networks (with VLAN) and ports (module, port, linked, Active / StandBy role, speed, LLDP neighbor switch and port), with issues (no networks, unlinked ports, no module redundancy) and related alerts |
+| `oneview_list_firmware_baselines` | SPP / Synergy Service Packs uploaded to OneView |
+| `oneview_rest_get` | Raw read-only GET of any `/rest/...` resource (sessions and users blocked, secrets redacted) |
+
+## Setup (pop-ups in the chat)
+
+| Tool | What it does |
+|---|---|
+| `add_server` | Add one iLO or OneView: pop-up for type, address, name and user name, then a secure page for the password; the login is checked before saving |
+| `import_inventory` | Import many from an `.ini` or `.csv` file whose path you type in a pop-up; optional shared password and login checks |
+| `com_login` | Sign in to HPE GreenLake with pop-ups (email, then Okta Verify number or a secure password page); creates a GreenLake API client for you (see [Configuration](configuration.md)) |
+| `com_login_start`, `com_login_status` | The same sign-in for clients that show no pop-ups: the assistant asks for your email and tells you the Okta Verify number (or gives you the password page link) in the chat |
+| `add_server_start`, `add_server_status` | `add_server` for clients that show no pop-ups: the assistant asks for the address in the chat and gives you the secure password page link |
+
+Every other tool is annotated `readOnlyHint`. The setup tools change no server: `add_server`,
+`add_server_start` and `import_inventory` only edit the inventory file on this computer, and `com_login` also creates a
+GreenLake API client. None of them takes a password (or, for `import_inventory`, a file path) as an
+argument, so the AI cannot see a password or choose which file is read.

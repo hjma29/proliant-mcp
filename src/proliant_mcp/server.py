@@ -792,7 +792,7 @@ async def _release_status() -> str:
         return f"latest release: {latest} (up to date)"
     if mine > theirs:
         return f"latest release: {latest} (this build is newer, unreleased)"
-    return f"latest release: {latest}  UPDATE AVAILABLE (see README: Update)"
+    return f"latest release: {latest}  UPDATE AVAILABLE (restart your AI client; see the README)"
 
 
 async def _check(connect: bool) -> int:
@@ -806,7 +806,7 @@ async def _check(connect: bool) -> int:
         return 1
     print(f"config file: {config_path() or '(none; using environment variables)'}")
     if not (servers or appliances or accounts):
-        print("nothing configured yet (see README: Configure)")
+        print("nothing configured yet (see docs/configuration.md)")
         return 0
     failed = 0
 

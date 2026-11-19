@@ -2,7 +2,15 @@
 
 All notable changes are documented here. Each release on GitHub carries the
 notes for its version and a `proliant-mcp.tar.gz` package that `uvx` installs
-directly (see README: Install and Update).
+directly (see the README).
+
+---
+
+## v0.14.1 — 2026-11-19
+
+### Improvements
+- The README (and so the PyPI page) is now short: what it is, a two-step install for Windows and macOS, and how to connect servers in the chat. Details moved to `docs/` (tools, configuration, advanced).
+- Removed the Google ADK example.
 
 ---
 

@@ -31,7 +31,7 @@ UNSUPPORTED_ADD = (
 )
 UNSUPPORTED_IMPORT = (
     "This AI client cannot show pop-ups (MCP elicitation). Ask the user to run `proliant-mcp import FILE` "
-    "in a terminal on the machine running this server (README: Configure)."
+    "in a terminal on the machine running this server (docs/configuration.md)."
 )
 
 
