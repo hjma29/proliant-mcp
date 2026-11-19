@@ -28,11 +28,16 @@ macOS:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Step 2.** Add this to your AI client's MCP configuration and restart the client (VS Code Copilot: *MCP: Open User Configuration*; Claude Desktop: *Settings > Developer > Edit Config*, with `mcpServers` in place of `servers`):
+**Step 2.** Add proliant to your AI client, then restart it.
 
-```json
-{"servers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["proliant-mcp@latest"]}}}
-```
+- **VS Code (GitHub Copilot):** open *View > Command Palette*, run **MCP: Open User Configuration**, pick **Copilot Global**, then paste this and save:
+
+  ```json
+  {"mcpServers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["proliant-mcp@latest"], "tools": ["*"]}}}
+  ```
+
+- **Claude Desktop:** *Settings > Developer > Edit Config*: `{"mcpServers": {"proliant": {"command": "uvx", "args": ["proliant-mcp@latest"]}}}`
+- **Codex, opencode and others:** see [AGENTS.md](https://github.com/hjma29/proliant-mcp/blob/main/AGENTS.md).
 
 If the client cannot find `uvx`, put its full path in `command`: `C:\Users\<you>\.local\bin\uvx.exe` on Windows, `/Users/<you>/.local/bin/uvx` on macOS.
 

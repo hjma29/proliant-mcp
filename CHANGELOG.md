@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.6 — 2026-11-19
+
+### Improvements
+- Install steps for VS Code now use the **Copilot Global** MCP config (`~/.copilot/mcp-config.json`, `mcpServers` key) that Copilot's agent runtime reads, instead of VS Code's profile `mcp.json`, which current VS Code marks as legacy and asks to migrate. `AGENTS.md` tells installing agents to write that file, keep other servers in it, and remove an old `proliant` entry from the legacy file.
+
+---
+
 ## v0.15.5 — 2026-11-19
 
 ### Fixes
