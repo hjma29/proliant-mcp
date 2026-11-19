@@ -2,7 +2,8 @@ name: Release
 
 # Push a tag vX.Y.Z (matching pyproject.toml and a "## vX.Y.Z" section in CHANGELOG.md)
 # to publish a GitHub release with those notes and a proliant-mcp.tar.gz that uvx installs,
-# and the same build to PyPI (trusted publishing: no token is stored anywhere).
+# and the same build to PyPI (trusted publishing: no token is stored anywhere),
+# then list that version in the official MCP Registry (GitHub OIDC: no token either).
 on:
   push:
     tags: ['v*']
@@ -74,6 +75,51 @@ jobs:
           name: pypi-dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # The registry verifies ownership from the "mcp-name:" line in the README on PyPI,
+  # so this runs after the PyPI upload. server.json versions are set from the tag here.
+  mcp-registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.9
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+
+      - name: Set server.json version from tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp
+          mv server.tmp server.json
+          cat server.json
+
+      - name: Publish to MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          for _ in 1 2 3 4 5 6; do
+            ./mcp-publisher publish && exit 0
+            sleep 30  # the PyPI JSON API can lag the upload
+          done
+          exit 1
 
   # What a customer does after a release: install from the release URLs and PyPI on a clean machine.
   verify:
