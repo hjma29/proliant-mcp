@@ -66,3 +66,33 @@ async def test_stdio_process_serves_tools(fake_ilo_url, tmp_path):
         summary = (await c.call_tool("get_server_summary", {"server": "lab"})).structured_content
     assert summary["model"] == "HPE ProLiant Compute DL345 Gen12"
     assert summary["power_state"] == "On"
+
+
+def test_initialize_after_a_2026_probe_on_the_same_connection(tmp_path):
+    """Copilot in VS Code probes with server/discover (2026-07-28), then falls back to initialize."""
+    import subprocess
+
+    env = {"PROLIANT_MCP_CONFIG": str(tmp_path / "none.ini"), "HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
+           "PATH": "", "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", "")}
+    proc = subprocess.Popen([sys.executable, "-m", "proliant_mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, env=env)
+
+    def ask(message: dict) -> dict:
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+        return json.loads(proc.stdout.readline()) if "id" in message else {}
+
+    try:
+        meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientInfo": {"name": "probe", "version": "1"},
+                "io.modelcontextprotocol/clientCapabilities": {}}
+        assert "result" in ask({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": meta}})
+        init = ask({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "vscode", "version": "1"}}})
+        assert init["result"]["protocolVersion"] == "2025-11-25"
+        ask({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        tools = ask({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})["result"]["tools"]
+        assert any(t["name"] == "list_servers" for t in tools)
+    finally:
+        proc.kill()
+        proc.wait()

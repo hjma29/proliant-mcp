@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.5 — 2026-11-19
+
+### Fixes
+- The server failed to start in clients that probe with a 2026-07-28 `server/discover` request and then fall back to the `initialize` handshake on the same connection (seen with Copilot in VS Code): "failed to initialize MCP client: JSON-RPC error: -32022: connection is serving the 2026-07-28 protocol". The connection now switches to the handshake protocol when `initialize` arrives.
+
+---
+
 ## v0.15.4 — 2026-11-19
 
 ### Fixes

@@ -16,7 +16,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_inventory, chat_login, com, ilo, inventory_cli, login, oneview
+from proliant_mcp import __version__, chat_inventory, chat_login, com, compat, ilo, inventory_cli, login, oneview
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -65,6 +65,7 @@ ApplianceName = Annotated[str | None, Field(description="OneView appliance name 
 AccountName = Annotated[str | None, Field(description="COM account name from list_servers; omit to use the first one.")]
 Limit = Annotated[int, Field(ge=1, le=1000)]
 
+compat.install()
 mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS, version=__version__)
 
 LATEST_RELEASE_API = "https://api.github.com/repos/hjma29/proliant-mcp/releases/latest"
