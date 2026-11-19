@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.hjma29/proliant-mcp",
   "title": "HPE ProLiant (iLO, Compute Ops Management, OneView)",
-  "description": "AI tools for HPE ProLiant iLO, Compute Ops Management (GreenLake) and OneView/Synergy",
+  "description": "Turn AI agents into your assistant for HPE ProLiant, Compute Ops Management and Synergy/OneView",
   "websiteUrl": "https://hjma29.github.io/proliant-mcp/",
   "repository": {
     "url": "https://github.com/hjma29/proliant-mcp",

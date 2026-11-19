@@ -1,6 +1,6 @@
 # proliant-mcp
 
-Ask your AI assistant about your HPE servers. **proliant-mcp** is an [MCP](https://modelcontextprotocol.io) server that gives AI assistants (GitHub Copilot, Claude, Codex, opencode, ...) access to **HPE iLO**, **HPE Compute Ops Management** (GreenLake) and **HPE OneView**.
+**proliant-mcp** turns AI agents into your assistant for managing HPE compute: **HPE ProLiant** servers (iLO), **HPE Compute Ops Management** (GreenLake) and **HPE Synergy / OneView**, all from one conversation. It's an [MCP](https://modelcontextprotocol.io) server for Claude, GitHub Copilot, Codex and other AI assistants. Describe what you want in plain English instead of remembering which GUI screen or CLI command does it.
 
 Ask things like *"which servers in Compute Ops Management are critical and why"*, *"show a table of each server's storage controller and GPU"* or *"any active OneView alerts on the Synergy frame"*.
 
@@ -8,7 +8,7 @@ Ask things like *"which servers in Compute Ops Management are critical and why"*
 
 ### Option 1: ask your AI agent
 
-Paste this into your AI agent (GitHub Copilot, Claude, Codex, opencode, ...):
+Paste this into your AI agent (Claude, GitHub Copilot, Codex, ...):
 
 > Install the proliant-mcp MCP server for me. Follow the instructions at https://raw.githubusercontent.com/hjma29/proliant-mcp/main/AGENTS.md (install uv first if it is missing), then tell me when to restart you.
 
