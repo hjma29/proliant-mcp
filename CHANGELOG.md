@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.9 — 2026-11-20
+
+### Improvements
+- Smoother sign-in and add-server in chats without pop-ups (Claude Desktop, VS Code Autopilot). One local page now walks the user through every step and moves on by itself: email, the Okta Verify number, the password (again on the same page if it was wrong), a clickable list of workspaces, and the result. The assistant is told to keep polling instead of asking the user to type "I submitted" or "done", and the workspace can still be named in the chat. The page checks required fields itself, not only in the browser.
+
+---
+
 ## v0.15.8 — 2026-11-20
 
 ### Fixes

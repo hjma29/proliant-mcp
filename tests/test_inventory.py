@@ -159,7 +159,7 @@ def user(answers, passwords):
             async with httpx.AsyncClient() as browser:
                 page = await browser.get(params.url)
                 assert 'type="password"' in page.text.replace("'", '"')
-                assert "Password received" in (await browser.post(params.url, data={"password": passwords.pop(0)})).text
+                assert "password received" in (await browser.post(params.url, data={"password": passwords.pop(0)})).text.lower()
             return ElicitResult(action="accept")
         props = params.requested_schema["properties"]
         key = next(k for k in answers if k in props)
@@ -254,7 +254,7 @@ async def test_add_server_without_pop_ups_checks_the_password_on_a_local_page(ho
         assert "add_server_status" in first["next_step"] and not our_inventory(home).exists()
         await browser.post(first["url"], data={"password": "wrong"})
         retry = (await client.call_tool("add_server_status", {})).structured_content
-        assert retry["status"] == "enter_password" and "rejected" in retry["next_step"] and retry["url"] != first["url"]
+        assert retry["status"] == "enter_password" and "rejected" in retry["next_step"] and retry["url"] == first["url"]  # one page for every step
         await browser.post(retry["url"], data={"password": "good"})
         done = (await client.call_tool("add_server_status", {})).structured_content
         listed = (await client.call_tool("list_servers", {})).data
@@ -275,7 +275,7 @@ async def test_add_server_without_host_or_pop_ups_asks_for_everything_on_one_pag
         nonce = re.search(r"script-src 'nonce-([^']+)'", reply.headers["content-security-policy"]).group(1)
         assert "id='reveal'" in page and f"<script nonce='{nonce}'>" in page  # show-password eye, the only script allowed
         assert nonce not in (await browser.get(first["url"])).text  # a fresh nonce per page load
-        missing = await browser.post(first["url"], data={"type": "ilo", "host": "", "username": "Administrator", "password": "good"})
+        missing = await browser.post(first["url"], data={"type": "ilo", "host": "", "username": "Administrator", "password": "good"}, follow_redirects=True)
         assert "Enter iLO or OneView IP address or name" in missing.text
         await browser.post(first["url"], data={"type": "ilo", "host": "192.0.2.10", "name": "lab2", "username": "Administrator", "password": "good"})
         done = (await client.call_tool("add_server_status", {})).structured_content

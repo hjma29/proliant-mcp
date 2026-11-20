@@ -8,6 +8,7 @@ secure local page (see ``chat.py``). Results never contain passwords.
 from __future__ import annotations
 
 import asyncio
+import html
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from proliant_mcp import inventory
-from proliant_mcp.chat import FlowError, PopupCancelled, Prompter, Relay, SecretPrompt, _Flow, _PasswordPage, popup_failed, run_flow
+from proliant_mcp.chat import FlowError, FlowPage, PopupCancelled, Prompter, Relay, SecretPrompt, _Flow, popup_failed, run_flow
 from proliant_mcp.inventory import Entry, InventoryError
 from proliant_mcp.probe import LOGIN_ERRORS, PROBE_ERRORS, probe, probe_many
 
@@ -244,11 +245,19 @@ START_WAIT = 5.0
 _adding: Relay | None = None
 
 
-async def _server_from_page(session: Relay, kind: str | None, name: str | None, username: str | None) -> tuple[Entry, str]:
-    """Ask for the type, address, user name and password on one local page."""
+# Every step tells the assistant to keep polling instead of asking the user to report back.
+_KEEP_POLLING = (
+    "Then call add_server_status right away: it waits up to 45 seconds for the user and returns as soon as they "
+    "submit. Do not ask the user to confirm in the chat."
+)
+
+
+async def _details_from_page(session: Relay, page: FlowPage, kind: str | None, name: str | None, username: str | None) -> tuple[Entry, str]:
+    """Ask for the type, address, user name and password in one form."""
     error: str | None = None
     for _ in range(3):
-        page = _PasswordPage(
+        answer = page.ask_secret(
+            "details",
             SecretPrompt(
                 message="Add a server to your proliant-mcp inventory.",
                 title="Add a server",
@@ -265,37 +274,56 @@ async def _server_from_page(session: Relay, kind: str | None, name: str | None, 
             ),
             error,
         )
+        session.publish(
+            "enter_server",
+            f"{error + ' ' if error else ''}Tell the user to open {page.url} in a browser on the computer running this "
+            "server and fill in the iLO or OneView address, user name and password there (never in the chat). The page "
+            "shows the result. " + _KEEP_POLLING,
+            url=page.url,
+        )
         try:
-            session.publish(
-                "enter_server",
-                f"{error + ' ' if error else ''}Ask the user to open {page.url} in a browser on the computer running this "
-                "server and type the iLO or OneView address, user name and password there (never in the chat). "
-                "Then call add_server_status.",
-                url=page.url,
-            )
-            password = await asyncio.wait_for(page.password, STATUS_WAIT * 6)
+            v = await asyncio.wait_for(answer, STATUS_WAIT * 6)
         except TimeoutError as exc:
             raise FlowError("No server details entered within 4 minutes") from exc
-        finally:
-            page.close()
-        v = page.values
         try:
-            return inventory.make_entry(v.get("name", ""), v.get("type", "ilo"), v.get("host", ""), v.get("username", "")), password
+            return inventory.make_entry(v.get("name", ""), v.get("type", "ilo"), v.get("host", ""), v.get("username", "")), v["password"]
         except InventoryError as exc:
             error = f"{exc}."
     raise FlowError("Add server failed: no valid server details after three tries")
 
 
-async def _add_from_page(session: Relay, kind: str | None, name: str | None, username: str | None, step: str) -> dict[str, Any]:
-    draft, first = await _server_from_page(session, kind, name, username)
-    passwords = [first]
+async def _add_on_page(session: Relay, draft: Entry | None, kind: str | None, name: str | None, username: str | None) -> dict[str, Any]:
+    page = FlowPage("Add a server")
+    passwords: list[str] = []
+    try:
+        if draft is None:
+            draft, first = await _details_from_page(session, page, kind, name, username)
+            passwords.append(first)
+        target = draft
 
-    async def ask(prompt: SecretPrompt, error: str | None) -> str:
-        if passwords:
-            return passwords.pop()
-        return await session.secret(prompt, error, step)
+        async def ask(prompt: SecretPrompt, error: str | None) -> str:
+            if passwords:
+                return passwords.pop()
+            answer = page.ask_secret("password", prompt, error)
+            session.publish(
+                "enter_password",
+                f"{error + ' ' if error else ''}Tell the user to type the password for {target.username} on {target.host} on "
+                f"the page {page.url} (the same page, if it is open; never in the chat). {_KEEP_POLLING}",
+                url=page.url,
+            )
+            try:
+                return (await asyncio.wait_for(answer, STATUS_WAIT * 6))["password"]
+            except TimeoutError as exc:
+                raise FlowError("No password entered within 4 minutes") from exc
 
-    return await _check_and_save(draft, ask)
+        result = await _check_and_save(target, ask)
+    except BaseException as exc:
+        reason = "Cancelled." if isinstance(exc, asyncio.CancelledError) else str(exc)
+        page.finish(f"<p class='err'>{html.escape(reason)}</p><p>Go back to your AI chat.</p>")
+        raise
+    page.finish(f"<p>Saved <b>{html.escape(result['name'])}</b>: {html.escape(str(result['checked']))}.</p>"
+                "<p>Go back to your AI chat; you can close this tab.</p>")
+    return result
 
 
 async def add_server_start(kind: str | None, host: str | None, name: str | None, username: str | None) -> dict[str, Any]:
@@ -309,14 +337,7 @@ async def add_server_start(kind: str | None, host: str | None, name: str | None,
     if _adding is not None and _adding.task is not None and not _adding.task.done():
         _adding.task.cancel()
     session = Relay("", "Call add_server_start to try again.")
-    step = (
-        "Ask the user to open {url} in a browser on the computer running this server and type the password there "
-        "(never in the chat). Then call add_server_status."
-    )
-    if draft is None:
-        session.task = asyncio.create_task(_add_from_page(session, kind, name, username, step))
-    else:
-        session.task = asyncio.create_task(_check_and_save(draft, lambda prompt, error: session.secret(prompt, error, step)))
+    session.task = asyncio.create_task(_add_on_page(session, draft, kind, name, username))
     _adding = session
     await session.wait_for_news(START_WAIT)
     return session.current()

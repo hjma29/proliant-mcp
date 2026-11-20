@@ -12,13 +12,14 @@ The sign-in itself is ``login.py``; this file only maps its questions to pop-ups
 from __future__ import annotations
 
 import asyncio
+import html
 from typing import Any
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from proliant_mcp import login
-from proliant_mcp.chat import FlowError, PopupCancelled, Prompter, Relay, SecretPrompt, _Flow, accepted, form_params, popup_failed, run_flow
+from proliant_mcp.chat import FlowError, FlowPage, PopupCancelled, Prompter, Relay, SecretPrompt, _Flow, accepted, form_params, popup_failed, run_flow
 from proliant_mcp.com import ComError
 from proliant_mcp.config import com_login_path, load_com
 
@@ -144,19 +145,26 @@ STATUS_WAIT = 45.0
 START_WAIT = 40.0
 
 
-class RelayUI:
-    """``login.LoginUI`` that publishes each step as a state for the next tool call to return."""
+# Every step tells the assistant to keep polling instead of asking the user to report back.
+_KEEP_POLLING = (
+    "Then call com_login_status right away: it waits up to 45 seconds for the user and returns as soon as they "
+    "finish this step. Do not ask the user to confirm in the chat."
+)
 
-    def __init__(self, session: Relay) -> None:
+
+class RelayUI:
+    """``login.LoginUI`` that shows each step on one local sign-in page and publishes it for the next tool call."""
+
+    def __init__(self, session: Relay, page: FlowPage) -> None:
         self.session = session
+        self.page = page
 
     def say(self, message: str) -> None:
         self.session.notes.append(message)
 
     async def password(self, email: str, error: str | None) -> str:
-        from proliant_mcp.chat import _PasswordPage
-
-        page = _PasswordPage(
+        answer = self.page.ask_secret(
+            "password",
             SecretPrompt(
                 message=f"Type your HPE GreenLake password for {email}.",
                 title="Sign in to HPE GreenLake",
@@ -167,79 +175,99 @@ class RelayUI:
             ),
             error,
         )
+        self.session.publish(
+            "enter_password",
+            f"{error + ' ' if error else ''}Tell the user to type the GreenLake password for {email} on the sign-in page "
+            f"{self.page.url} (the same page as before, if it is open; never in the chat). {_KEEP_POLLING}",
+            url=self.page.url,
+        )
         try:
-            self.session.publish(
-                "enter_password",
-                f"{error + ' ' if error else ''}Ask the user to open {page.url} in a browser on the computer running this "
-                f"server and type the GreenLake password for {email} there (never in the chat). Then call com_login_status.",
-                url=page.url,
-            )
-            return await asyncio.wait_for(page.password, login.POLL_TIMEOUT)
+            return (await asyncio.wait_for(answer, login.POLL_TIMEOUT))["password"]
         except TimeoutError as exc:
             raise login.LoginError("No password entered within 5 minutes") from exc
-        finally:
-            page.close()
 
     async def approve(self, number: Any, approval: asyncio.Task[str]) -> str:
         tap = f"tap {number}" if number is not None else "approve the push"
+        shown = f"<p class='num'>{html.escape(str(number))}</p>" if number is not None else ""
+        self.page.show(f"<p>Open <b>Okta Verify</b> on your phone and {html.escape(tap)} on the newest request.</p>{shown}"
+                       "<p><small>This page moves on by itself once you approve.</small></p>")
         self.session.publish(
             "approve_push",
-            f"Tell the user: open Okta Verify on your phone and {tap} on the newest request. Then call com_login_status.",
+            f"Tell the user: open Okta Verify on your phone and {tap} on the newest request (the sign-in page shows it "
+            f"too). {_KEEP_POLLING}",
             number=number,
+            url=self.page.url,
         )
         return await approval
 
     async def workspace(self, names: list[str]) -> str:
         self.session.choice = asyncio.get_running_loop().create_future()
+        clicked = self.page.ask_choice("workspace", "Which HPE GreenLake workspace should the Compute Ops Management tools use?", names)
         self.session.publish(
             "choose_workspace",
-            "Ask the user which HPE GreenLake workspace to use, then call com_login_status with workspace set to their choice.",
+            f"Tell the user to click the workspace to use on the sign-in page {self.page.url}. If they name one in the "
+            "chat instead, call com_login_status with workspace set to it. " + _KEEP_POLLING,
             workspaces=names,
+            url=self.page.url,
         )
-        try:
-            return await asyncio.wait_for(self.session.choice, login.POLL_TIMEOUT)
-        except TimeoutError as exc:
-            raise login.LoginError("No workspace chosen within 5 minutes") from exc
+        done, _ = await asyncio.wait({clicked, self.session.choice}, timeout=login.POLL_TIMEOUT, return_when=asyncio.FIRST_COMPLETED)
+        if not done:
+            raise login.LoginError("No workspace chosen within 5 minutes")
+        if self.session.choice in done:
+            clicked.cancel()
+            return self.session.choice.result()
+        return clicked.result()["choice"]
 
 
 _relay: Relay | None = None
 
 
-async def _ask_email_on_page(session: Relay) -> str:
-    from proliant_mcp.chat import _PasswordPage
-
-    page = _PasswordPage(
-        SecretPrompt(
-            message="Type your HPE GreenLake email.",
-            title="Sign in to HPE GreenLake",
-            label="HPE GreenLake email",
-            button="Continue",
-            note="For the proliant-mcp Compute Ops Management tools. HPE accounts then approve an Okta Verify push; other accounts type their password on the next page.",
-            input_type="email",
-        ),
-        None,
+async def _ask_email_on_page(session: Relay, page: FlowPage) -> str:
+    prompt = SecretPrompt(
+        message="Type your HPE GreenLake email.",
+        title="Sign in to HPE GreenLake",
+        label="HPE GreenLake email",
+        button="Continue",
+        note="For the proliant-mcp Compute Ops Management tools. HPE accounts then approve an Okta Verify push; other "
+        "accounts type their password on the next step.",
+        input_type="email",
     )
-    try:
+    error: str | None = None
+    for _ in range(3):
+        answer = page.ask_secret("email", prompt, error)
         session.publish(
             "enter_email",
-            f"Ask the user to open {page.url} in a browser on the computer running this server and type their HPE GreenLake "
-            "email there (the email is not a secret, but do not guess it). Then call com_login_status.",
+            f"{error + ' ' if error else ''}Tell the user to open the sign-in page {page.url} in a browser on the computer "
+            "running this server and type their HPE GreenLake email there (it is not a secret, but do not guess it). "
+            "They can keep that page open: it shows each next step. " + _KEEP_POLLING,
             url=page.url,
         )
-        email = (await asyncio.wait_for(page.password, login.POLL_TIMEOUT)).strip()
-    except TimeoutError as exc:
-        raise login.LoginError("No email entered within 5 minutes") from exc
-    finally:
-        page.close()
-    if "@" not in email:
-        raise login.LoginError("A GreenLake email address is required")
-    return email
+        try:
+            email = (await asyncio.wait_for(answer, login.POLL_TIMEOUT))["password"].strip()
+        except TimeoutError as exc:
+            raise login.LoginError("No email entered within 5 minutes") from exc
+        if "@" in email:
+            return email
+        error = "That is not an email address."
+    raise login.LoginError("A GreenLake email address is required")
 
 
 async def _relay_sign_in(session: Relay, email: str | None, workspace: str | None, region: str | None) -> dict[str, Any]:
-    email = email or await _ask_email_on_page(session)
-    data = await login.login(email, RelayUI(session), workspace, region)
-    return await _signed_in(email, data, session.notes)
+    page = FlowPage("Sign in to HPE GreenLake")
+    try:
+        email = email or await _ask_email_on_page(session, page)
+        page.show("<p>Signing in...</p>")
+        data = await login.login(email, RelayUI(session, page), workspace, region)
+        page.show("<p>Signed in. Setting up the Compute Ops Management tools...</p>")
+        result = await _signed_in(email, data, session.notes)
+    except BaseException as exc:
+        reason = "Cancelled." if isinstance(exc, asyncio.CancelledError) else str(exc)
+        page.finish(f"<p class='err'>Sign-in did not finish: {html.escape(reason)}</p><p>Go back to your AI chat.</p>")
+        raise
+    servers = f" ({result['servers']} servers)" if result.get("servers") is not None else ""
+    page.finish(f"<p>Signed in to <b>{html.escape(str(result['workspace']))}</b>{html.escape(servers)}.</p>"
+                "<p>Go back to your AI chat; you can close this tab.</p>")
+    return result
 
 
 async def com_login_start(email: str | None, workspace: str | None, region: str | None) -> dict[str, Any]:

@@ -224,7 +224,7 @@ def chat_user(email, passwords=("right-password",), workspace="Lab"):
             page = await browser.get(url)
             assert 'type="password"' in page.text.replace("'", '"') and email in page.text
             done = await browser.post(url, data={"password": passwords.pop(0)})
-            assert "Password received" in done.text
+            assert "password received" in done.text.lower()
 
     async def handler(message, response_type, params, context):
         if isinstance(params, ElicitRequestURLParams):
@@ -367,7 +367,7 @@ async def test_relay_sign_in_password_on_local_page(greenlake):
         assert first["status"] == "enter_password" and first["url"].startswith("http://127.0.0.1:")
         await browser.post(first["url"], data={"password": "wrong"})
         retry = (await client.call_tool("com_login_status", {})).structured_content
-        assert retry["status"] == "enter_password" and "Incorrect password" in retry["next_step"] and retry["url"] != first["url"]
+        assert retry["status"] == "enter_password" and "Incorrect password" in retry["next_step"] and retry["url"] == first["url"]  # one page for every step
         await browser.post(retry["url"], data={"password": "right-password"})
         done = (await client.call_tool("com_login_status", {})).structured_content
     assert done["status"] == "signed_in" and "right-password" not in json.dumps(done)
@@ -383,3 +383,19 @@ async def test_relay_status_says_when_nothing_changed(greenlake, monkeypatch):
         assert again["status"] == "choose_workspace" and again["waiting"] is True
         bad = await client.call_tool("com_login_start", {"email": "not-an-email"}, raise_on_error=False)
     assert bad.is_error and "email" in bad.content[0].text
+
+
+async def test_relay_sign_in_runs_on_one_page_with_a_clickable_workspace(greenlake):
+    greenlake(workspaces=("Lab", "Other"))
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("com_login_start", {"email": "you@hpe.com"})).structured_content
+        assert "Do not ask the user to confirm" in first["next_step"]
+        step = (await client.call_tool("com_login_status", {})).structured_content
+        assert step["status"] == "choose_workspace" and step["url"] == first["url"]
+        page = (await browser.get(step["url"])).text
+        assert "type='radio' name='choice' value='Other'" in page
+        await browser.post(step["url"], data={"step": "workspace", "choice": "Other"})
+        done = (await client.call_tool("com_login_status", {})).structured_content
+        final = (await browser.get(step["url"])).text
+    assert (done["status"], done["workspace"]) == ("signed_in", "Other")
+    assert "Signed in to <b>Other</b>" in final and "refresh" not in final

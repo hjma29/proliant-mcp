@@ -49,11 +49,12 @@ browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fail
 cancelled without the user seeing a pop-up, call com_login_start (with the email only if the user
 already gave it; never ask for it with a question tool, which may be auto-answered "user not
 available": without an email the user types it on a local page), tell the user exactly what it
-returns (the page link, the Okta Verify number to tap), and call com_login_status until it says signed_in. If no iLO or OneView is
+returns (the page link, the Okta Verify number to tap) and keep calling com_login_status without waiting
+for the user to reply (it waits for them; the page walks them through every step), and call com_login_status until it says signed_in. If no iLO or OneView is
 configured, or the user wants to add servers, call add_server (one iLO or OneView) or
 import_inventory (a .ini or .csv file the user names in a pop-up). If add_server's pop-ups do not
 appear, call add_server_start (with the address only if the user gave it), relay the page link, and
-call add_server_status until it says saved. For who logged in to iLOs (per day, user, source IP,
+call add_server_status until it says saved, without waiting for the user to reply. For who logged in to iLOs (per day, user, source IP,
 failed logins) use get_ilo_logins: one call for all iLOs. Never ask the user to type
 a password into the chat; these tools collect it on a secure page."""
 
@@ -610,8 +611,10 @@ async def com_login_start(
     `enter_email` with a `url` of a local page where the user types their email (when you did not
     pass one), `approve_push` with the `number` to tap in Okta Verify (@hpe.com accounts), or
     `enter_password` with a `url` of a secure page on this computer for the password (other
-    accounts; never ask for the password in chat). Then call com_login_status until it returns
-    `signed_in` (the com_ tools work immediately) or `failed`."""
+    accounts; never ask for the password in chat). All steps use one page link, which the user can
+    keep open: it shows the Okta number and a clickable workspace list. Then call com_login_status
+    right away, without waiting for the user to reply, until it returns `signed_in` (the com_ tools
+    work immediately) or `failed`."""
     return await chat_login.com_login_start(email, workspace, region)
 
 
@@ -661,7 +664,8 @@ async def add_server_start(
     add_server's pop-ups do not appear (or were cancelled). Returns `enter_server` (no host given:
     the page asks for the address, user name and password) or `enter_password`, with a `url` of a
     secure page on this computer: tell the user to open it and fill it in there (never in the chat;
-    never pass a password). Then call add_server_status until it returns `saved` (the
+    never pass a password). Then call add_server_status right away, without waiting for the user to
+    reply, until it returns `saved` (the
     tools use the server immediately) or `failed`. The login is checked before anything is saved."""
     return await chat_inventory.add_server_start(type, host, name, username)
 

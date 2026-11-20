@@ -89,10 +89,14 @@ class SecretPrompt:
     fields: tuple[tuple[str, str, str, str, bool], ...] = ()
 
 
-def _page(title: str, body: str) -> str:
+def _page(title: str, body: str, refresh: bool = False) -> str:
     return (
         "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+        + ("<meta http-equiv='refresh' content='2'>" if refresh else "")
+        + 
         f"<title>{html.escape(title)}</title><style>"
+        ".choice{display:flex;align-items:center;gap:.6rem;border:1px solid #ccd;border-radius:6px;padding:.6rem .8rem;margin:.4rem 0;cursor:pointer}"
+        ".choice input{width:auto;margin:0}.num{font-size:2.2rem;letter-spacing:.1rem}"
         "body{font-family:system-ui,sans-serif;background:#f4f5f6;margin:0;display:flex;justify-content:center}"
         "main{background:#fff;margin-top:12vh;padding:2rem 2.5rem;border-radius:10px;box-shadow:0 2px 12px #0002;width:22rem}"
         "h1{font-size:1.25rem;margin:0 0 1rem}.who{color:#425563}.err{color:#c8102e}"
@@ -134,7 +138,7 @@ _REVEAL_JS = (
 )
 
 
-def _password_form(prompt: SecretPrompt, error: str | None, nonce: str = "") -> str:
+def _password_form(prompt: SecretPrompt, error: str | None, nonce: str = "", step: str = "") -> str:
     err = f"<p class='err'>{html.escape(error)}</p>" if error else ""
     extra = "".join(_field_html(*f) for f in prompt.fields)
     is_password = prompt.input_type == "password"
@@ -152,7 +156,8 @@ def _password_form(prompt: SecretPrompt, error: str | None, nonce: str = "") -> 
         prompt.title,
         f"<p class='who'>{html.escape(prompt.who)}</p>{err}"
         f"<form method='post' autocomplete='off'>{extra}"
-        f"<label for='password'>{html.escape(prompt.label)}</label>{field}"
+        + (f"<input type='hidden' name='step' value='{html.escape(step)}'>" if step else "")
+        + f"<label for='password'>{html.escape(prompt.label)}</label>{field}"
         f"<button type='submit'>{html.escape(prompt.button)}</button></form>"
         f"<p><small>{html.escape(prompt.note)}</small></p>",
     )
@@ -219,7 +224,7 @@ class _PasswordPage:
                     return self._form(f"Enter {', '.join(missing) or prompt.label}.")
                 page.values = values
                 loop.call_soon_threadsafe(deliver, value)
-                self._send(200, _page("Password received", "<p>Received. Go back to your AI chat; you can close this tab.</p>"))
+                self._send(200, _page(f"{prompt.label} received", "<p>Received. Go back to your AI chat; you can close this tab.</p>"))
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}/{self.token}"
@@ -228,6 +233,134 @@ class _PasswordPage:
     def close(self) -> None:
         self._server.shutdown()
         self._server.server_close()
+
+
+def _csp(body: str, nonce: str) -> str:
+    script = f"; script-src 'nonce-{nonce}'" if f"nonce='{nonce}'" in body else ""
+    return f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'{script}"
+
+
+def _send_html(handler: BaseHTTPRequestHandler, status: int, body: str, nonce: str = "", location: str = "") -> None:
+    data = body.encode()
+    handler.send_response(status)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Referrer-Policy", "no-referrer")
+    handler.send_header("X-Frame-Options", "DENY")
+    handler.send_header("Content-Security-Policy", _csp(body, nonce))
+    if location:
+        handler.send_header("Location", location)
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+class FlowPage:
+    """One local page that walks the user through a whole flow without pop-ups (email, Okta
+    Verify number, password, workspace...). The same link stays valid from the first step to the
+    last: waiting steps refresh themselves, and forms post back to it. Bound to 127.0.0.1 with a
+    random port and path; request bodies are never logged."""
+
+    def __init__(self, title: str) -> None:
+        self._loop = asyncio.get_running_loop()
+        self.token = secrets.token_urlsafe(24)
+        self.title = title
+        self._render: Callable[[str], str] = lambda nonce: _page(title, "<p>Starting...</p>", refresh=True)
+        self._step = ""
+        self._answer: asyncio.Future[dict[str, str]] | None = None
+        self._fields: tuple[str, ...] = ()
+        self._required: dict[str, str] = {}  # field -> label, checked here too (not only by the browser)
+        self._with_error: Callable[[str], Callable[[str], str]] | None = None
+        page = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: Any) -> None:
+                pass
+
+            def _ours(self) -> bool:
+                return urllib.parse.urlsplit(self.path).path == f"/{page.token}"
+
+            def do_GET(self) -> None:
+                if not self._ours():
+                    return _send_html(self, 404, "Not found")
+                nonce = secrets.token_urlsafe(16)
+                _send_html(self, 200, page._render(nonce), nonce)
+
+            def do_POST(self) -> None:
+                if not self._ours():
+                    return _send_html(self, 404, "Not found")
+                length = min(int(self.headers.get("Content-Length") or 0), 8192)
+                form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"), keep_blank_values=True)
+                values = {k: v[0] for k, v in form.items()}
+                step, answer = page._step, page._answer
+                missing = [label for f, label in page._required.items() if not (values.get(f) if f == "password" else values.get(f, "").strip())]
+                if answer is not None and values.get("step", step) == step and missing and page._with_error:
+                    page._render = page._with_error(f"Enter {', '.join(missing)}.")
+                elif answer is not None and values.get("step", step) == step:
+                    page._render = lambda nonce: _page(page.title, "<p>Checking...</p>", refresh=True)
+                    page._loop.call_soon_threadsafe(page._deliver, answer, {f: values.get(f, "") for f in page._fields})
+                _send_html(self, 303, "", location=f"/{page.token}")
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_address[1]}/{self.token}"
+        threading.Thread(target=self._server.serve_forever, name="proliant-mcp-flow-page", daemon=True).start()
+
+    @staticmethod
+    def _deliver(answer: asyncio.Future[dict[str, str]], values: dict[str, str]) -> None:
+        if not answer.done():
+            answer.set_result(values)
+
+    def expect(self, step: str, render: Callable[[str], str], fields: tuple[str, ...]) -> asyncio.Future[dict[str, str]]:
+        """Show a form; the returned future gets its submitted *fields*."""
+        if self._answer is not None and not self._answer.done():
+            self._answer.cancel()
+        self._step, self._fields = step, fields
+        self._answer = self._loop.create_future()
+        self._render = render
+        self._required, self._with_error = {}, None
+        return self._answer
+
+    def ask_secret(self, step: str, prompt: SecretPrompt, error: str | None) -> asyncio.Future[dict[str, str]]:
+        """A one-field form (password with the show/hide eye, or email) plus *prompt.fields*."""
+        names = ("password", *(f[0] for f in prompt.fields))
+
+        def form(err: str | None) -> Callable[[str], str]:
+            return lambda nonce: _password_form(prompt, err, nonce if prompt.input_type == "password" else "", step)
+
+        answer = self.expect(step, form(error), names)
+        self._required = {f[0]: f[1] for f in prompt.fields if f[4]} | {"password": prompt.label}
+        self._with_error = form
+        return answer
+
+    def ask_choice(self, step: str, question: str, options: list[str]) -> asyncio.Future[dict[str, str]]:
+        """Radio buttons to click, then Continue."""
+        def render(nonce: str) -> str:
+            rows = "".join(
+                f"<label class='choice'><input type='radio' name='choice' value='{html.escape(o)}' required"
+                f"{' checked' if i == 0 else ''}>{html.escape(o)}</label>"
+                for i, o in enumerate(options)
+            )
+            return _page(self.title, f"<p>{html.escape(question)}</p><form method='post'>"
+                         f"<input type='hidden' name='step' value='{html.escape(step)}'>{rows}"
+                         "<button type='submit'>Continue</button></form>")
+        return self.expect(step, render, ("choice",))
+
+    def show(self, body_html: str, refresh: bool = True) -> None:
+        """A step with nothing to fill in (e.g. "tap 21 in Okta Verify"); refreshes itself while *refresh*."""
+        if self._answer is not None and not self._answer.done():
+            self._answer.cancel()
+        self._answer = None
+        self._render = lambda nonce: _page(self.title, body_html, refresh=refresh)
+
+    def finish(self, body_html: str, close_after: float = 120.0) -> None:
+        """Final message; the page stays up a little so the user sees it, then closes."""
+        self.show(body_html, refresh=False)
+        self._loop.call_later(close_after, self.close)
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self._server.shutdown()
+            self._server.server_close()
 
 
 class _Flow:
