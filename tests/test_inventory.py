@@ -321,3 +321,21 @@ def test_no_console_browser_without_a_desktop(monkeypatch):
     started = []
     monkeypatch.setattr(chat.subprocess, "Popen", lambda *a, **k: started.append(a))
     assert chat.open_in_browser("http://127.0.0.1:1/x") is False and not started
+
+
+async def test_new_add_reports_how_the_previous_add_ended(home):
+    import asyncio
+
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("add_server_start", {"host": "192.0.2.10", "name": "lab1"})).structured_content
+        await browser.post(first["url"], data={"password": "good"})
+        for _ in range(100):  # saved in the background; the assistant never called add_server_status
+            if "lab1" in load_servers():
+                break
+            await asyncio.sleep(0.05)
+        second = (await client.call_tool("add_server_start", {"host": "192.0.2.11", "name": "lab2"})).structured_content
+        third = (await client.call_tool("add_server_start", {"host": "192.0.2.12", "name": "lab3"})).structured_content
+    assert second["previous_add"]["status"] == "saved" and second["previous_add"]["name"] == "lab1"
+    assert second["next_step"].startswith("The earlier add finished: lab1 (192.0.2.10) was checked and saved.")
+    assert third["previous_add"]["status"] == "stopped" and "192.0.2.11" in third["next_step"]
+    assert list(load_servers()) == ["lab1"]

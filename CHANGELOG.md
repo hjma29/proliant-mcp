@@ -6,6 +6,17 @@ directly (see the README).
 
 ---
 
+## v0.15.12 — 2026-11-20
+
+### Fixes
+- Starting a new add (`add_server_start`) now tells the assistant how the previous one really ended, in `previous_add`: `saved`, `failed`, or `stopped` if it was still waiting for the user. Before, an assistant that started a second add before polling the first could tell the user the first server "was not added" when its page had already saved it.
+- The sign-in page's workspace step now says the sign-in worked and that one more click is needed. Before, it looked stuck after the Okta Verify approval.
+
+### Docs
+- AGENTS.md: Claude Desktop on Windows (MSIX) config paths, and setting `UV_PYTHON_INSTALL_DIR` outside AppData so uv's Python download works there (astral-sh/uv#19622).
+
+---
+
 ## v0.15.11 — 2026-11-20
 
 ### Fixes

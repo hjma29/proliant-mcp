@@ -202,7 +202,9 @@ class RelayUI:
 
     async def workspace(self, names: list[str]) -> str:
         self.session.choice = asyncio.get_running_loop().create_future()
-        clicked = self.page.ask_choice("workspace", "Which HPE GreenLake workspace should the Compute Ops Management tools use?", names)
+        clicked = self.page.ask_choice(
+            "workspace", "Signed in. One more step: choose the HPE GreenLake workspace for the Compute Ops Management "
+            "tools, then click Continue.", names)
         self.session.publish(
             "choose_workspace",
             f"{self.page.link()}The user clicks the workspace to use on that page (the same page, if it is open). If they "

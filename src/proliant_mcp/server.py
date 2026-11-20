@@ -666,7 +666,9 @@ async def add_server_start(
     secure page on this computer: tell the user to open it and fill it in there (never in the chat;
     never pass a password). Then call add_server_status right away, without waiting for the user to
     reply, until it returns `saved` (the
-    tools use the server immediately) or `failed`. The login is checked before anything is saved."""
+    tools use the server immediately) or `failed`. The login is checked before anything is saved.
+    Starting a new add ends the previous one: `previous_add` then says how it really ended
+    (`saved`, `failed`, or `stopped` if it was still waiting); tell the user that, not a guess."""
     return await chat_inventory.add_server_start(type, host, name, username)
 
 

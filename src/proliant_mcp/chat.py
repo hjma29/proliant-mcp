@@ -523,6 +523,8 @@ class Relay:
         self.notes: list[str] = []
         self.choice: asyncio.Future[str] | None = None
         self.task: asyncio.Task[dict[str, Any]] | None = None
+        self.label = ""  # what the flow is about, e.g. the host being added
+        self.reported = False  # the assistant has seen how it ended
 
     def publish(self, status: str, next_step: str, **fields: Any) -> None:
         self.state = {"status": status, **fields, "next_step": next_step}
@@ -532,6 +534,7 @@ class Relay:
     def current(self) -> dict[str, Any]:
         assert self.task is not None
         if self.task.done():
+            self.reported = True
             if self.task.cancelled():
                 return {"status": "failed", "error": "Cancelled"}
             exc = self.task.exception()

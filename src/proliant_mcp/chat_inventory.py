@@ -308,6 +308,7 @@ async def _add_on_page(session: Relay, draft: Entry | None, kind: str | None, na
         if draft is None:
             draft, first = await _details_from_page(session, page, kind, name, username)
             passwords.append(first)
+            session.label = draft.host
         target = draft
 
         async def ask(prompt: SecretPrompt, error: str | None) -> str:
@@ -343,13 +344,35 @@ async def add_server_start(kind: str | None, host: str | None, name: str | None,
             draft = inventory.make_entry(name or "", kind or "ilo", host, username or "")
         except InventoryError as exc:
             raise ToolError(f"Cannot add that server: {exc}") from exc
-    if _adding is not None and _adding.task is not None and not _adding.task.done():
-        _adding.task.cancel()
+    previous = _end_previous_add(_adding)
     session = Relay("", "Call add_server_start to try again.")
+    session.label = host or ""
     session.task = asyncio.create_task(_add_on_page(session, draft, kind, name, username))
     _adding = session
     await session.wait_for_news(START_WAIT)
-    return session.current()
+    result = session.current()
+    if previous:
+        result["previous_add"] = previous
+        result["next_step"] = f"{previous['summary']} Tell the user. {result.get('next_step', '')}".strip()
+    return result
+
+
+def _end_previous_add(session: Relay | None) -> dict[str, Any] | None:
+    """How the earlier add ended, if the assistant has not seen it yet; stop it if it still waits."""
+    if session is None or session.task is None or session.reported:
+        return None
+    what = f"of {session.label} " if session.label else ""
+    if not session.task.done():
+        session.task.cancel()
+        session.reported = True
+        return {"status": "stopped", "host": session.label or None,
+                "summary": f"The earlier add {what}was still waiting for the user and is now stopped; nothing was saved for it."}
+    outcome = session.current()
+    if outcome.get("status") == "saved":
+        outcome["summary"] = f"The earlier add finished: {outcome['name']} ({outcome['host']}) was checked and saved."
+    else:
+        outcome["summary"] = f"The earlier add {what}did not save anything: {outcome.get('error', 'it failed')}."
+    return outcome
 
 
 async def add_server_status() -> dict[str, Any]:

@@ -709,7 +709,7 @@ wheels = [
 
 [[package]]
 name = "proliant-mcp"
-version = "0.15.11"
+version = "0.15.12"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
