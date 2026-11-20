@@ -656,7 +656,7 @@ async def add_server(
 )
 async def add_server_start(
     host: Annotated[str | None, Field(description="IP address or name of the iLO or OneView, only if the user already said it. Omit it otherwise: the user then types it on a local page.")] = None,
-    type: Annotated[Literal["ilo", "oneview"], Field(description="ilo (one server) or oneview (OneView / Synergy Composer).")] = "ilo",
+    type: Annotated[Literal["ilo", "oneview"] | None, Field(description="ilo (one server) or oneview (OneView / Synergy Composer), only if the user said which. Omit it otherwise: it is detected from the address.")] = None,
     name: Annotated[str | None, Field(description="Short name for it, e.g. dl380-lab; defaults to the address. An existing name is replaced.")] = None,
     username: Annotated[str | None, Field(description="User name; default Administrator.")] = None,
 ) -> dict[str, Any]:

@@ -292,3 +292,14 @@ def test_terminal_import(home, capsys):
     assert set(load_servers()) == {"gpu1", "gpu2"}
     assert inventory_cli.run_import(str(home / "nope.csv"), replace=False) == 1
     assert re.search(r"Import failed: File not found", capsys.readouterr().err)
+
+
+async def test_add_server_detects_oneview_given_as_ilo(home):
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("add_server_start", {"host": "192.0.2.100", "name": "synergy", "type": "ilo"})).structured_content
+        assert first["status"] == "enter_password" and "OneView password" in (await browser.get(first["url"])).text
+        await browser.post(first["url"], data={"step": "password", "password": "good"})
+        done = (await client.call_tool("add_server_status", {})).structured_content
+    assert (done["status"], done["type"]) == ("saved", "oneview")
+    assert "is HPE OneView / Synergy Composer, not an HPE iLO" in done["notes"][0]
+    assert list(load_oneview()) == ["synergy"] and not load_servers()

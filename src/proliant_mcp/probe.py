@@ -38,6 +38,27 @@ async def probe(entry: Entry, transport: httpx.AsyncBaseTransport | None = None)
     return f"{version.get('modelNumber')} {version.get('softwareVersion')}"
 
 
+async def detect_kind(host: str, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5.0) -> str | None:
+    """'oneview' or 'ilo' from the unauthenticated pages each one serves, or None if unsure or unreachable.
+
+    OneView answers /rest/version with its API version (``currentVersion``); an iLO answers it with a
+    pointer to Redfish, and serves /redfish/v1/ without a login, which OneView does not.
+    """
+    try:
+        async with httpx.AsyncClient(base_url=f"https://{host}", verify=False, timeout=timeout, transport=transport) as http:
+            version = await http.get("/rest/version")
+            if version.status_code == 200:
+                try:
+                    if "currentVersion" in version.json():
+                        return "oneview"
+                except ValueError:
+                    pass
+            root = await http.get("/redfish/v1/")
+            return "ilo" if root.status_code == 200 else None
+    except httpx.HTTPError:
+        return None
+
+
 async def probe_many(entries: list[Entry], transport: httpx.AsyncBaseTransport | None = None, workers: int = 8) -> list[ProbeResult]:
     gate = asyncio.Semaphore(workers)
 

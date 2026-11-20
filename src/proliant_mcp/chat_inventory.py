@@ -20,7 +20,7 @@ from fastmcp.exceptions import ToolError
 from proliant_mcp import inventory
 from proliant_mcp.chat import FlowError, FlowPage, PopupCancelled, Prompter, Relay, SecretPrompt, _Flow, popup_failed, run_flow
 from proliant_mcp.inventory import Entry, InventoryError
-from proliant_mcp.probe import LOGIN_ERRORS, PROBE_ERRORS, probe, probe_many
+from proliant_mcp.probe import LOGIN_ERRORS, PROBE_ERRORS, detect_kind, probe, probe_many
 
 CHECK_LIMIT = 30
 LIST_LIMIT = 50
@@ -95,8 +95,16 @@ def _password_prompt(draft: Entry) -> SecretPrompt:
     )
 
 
+_KIND_NAMES = {"ilo": "an HPE iLO", "oneview": "HPE OneView / Synergy Composer"}
+
+
 async def _check_and_save(draft: Entry, ask: Callable[[SecretPrompt, str | None], Awaitable[str]]) -> dict[str, Any]:
     """Ask for the password (up to three tries), log in with it, and only then save the entry."""
+    corrected = None
+    detected = await detect_kind(draft.host, _transport())
+    if detected and detected != draft.kind:
+        corrected = f"{draft.host} is {_KIND_NAMES[detected]}, not {_KIND_NAMES[draft.kind]}, so it was added as {detected}."
+        draft = inventory.make_entry(draft.name, detected, draft.host, draft.username)
     label = "iLO" if draft.kind == "ilo" else "OneView"
     prompt = _password_prompt(draft)
     error: str | None = None
@@ -120,6 +128,8 @@ async def _check_and_save(draft: Entry, ask: Callable[[SecretPrompt, str | None]
 
     saved = inventory.save_entries([entry])
     notes = [f"Saved to {saved.path} (readable only by you). The tools use it now; no restart needed."]
+    if corrected:
+        notes.insert(0, corrected)
     if saved.copied_from:
         notes.append(f"Your existing servers were copied from {saved.copied_from} first; that file is unchanged.")
     return {

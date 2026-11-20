@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.10 — 2026-11-20
+
+### Fixes
+- Adding a server detects whether the address is an iLO or HPE OneView / Synergy Composer (from pages they serve without a login) and uses that, with a note, when the given type is wrong. Before, `add_server_start` assumed iLO when no type was given, so a OneView address failed with "rejected that user name or password" whatever the password. `add_server_start` no longer defaults the type.
+
+---
+
 ## v0.15.9 — 2026-11-20
 
 ### Improvements
