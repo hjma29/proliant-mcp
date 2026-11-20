@@ -140,7 +140,7 @@ jobs:
           foreach ($url in @(
               "https://github.com/${{ github.repository }}/releases/download/$env:GITHUB_REF_NAME/proliant-mcp.tar.gz",
               "https://github.com/${{ github.repository }}/releases/latest/download/proliant-mcp.tar.gz")) {
-            $out = uvx --refresh-package proliant-mcp --from $url proliant-mcp --check | Out-String
+            $out = uvx --python 3.13 --refresh-package proliant-mcp --from $url proliant-mcp --check | Out-String
             Write-Output $out
             if (-not $out.Contains($want)) { throw "$url did not install $want" }
           }
@@ -150,7 +150,7 @@ jobs:
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $want = "proliant-mcp ${version}:"
           for ($try = 1; $try -le 10; $try++) {
-            $out = uvx --refresh "proliant-mcp@$version" --check 2>&1 | Out-String
+            $out = uvx --python 3.13 --refresh "proliant-mcp@$version" --check 2>&1 | Out-String
             if ($out.Contains($want)) { break }
             Start-Sleep -Seconds 15  # the PyPI index can lag the upload by a minute
           }

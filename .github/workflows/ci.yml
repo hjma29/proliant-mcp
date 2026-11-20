@@ -47,7 +47,7 @@ jobs:
       - name: Install from the archive and self-check
         shell: pwsh
         run: |
-          $out = uvx --from $env:PKG proliant-mcp --check | Out-String
+          $out = uvx --python 3.13 --from $env:PKG proliant-mcp --check | Out-String
           Write-Output $out
           if ($out -notmatch 'proliant-mcp \d+\.\d+\.\d+: \d+ tools') { throw "unexpected --check output" }
       - name: Windows inventory written by PowerShell 5.1 (UTF-16), locked with icacls
@@ -59,6 +59,6 @@ jobs:
           New-Item -ItemType Directory -Force $d | Out-Null
           "[defaults]`r`npassword = changeme`r`n`r`n[lab]`r`nhost = 192.0.2.10" > "$d\inventory.ini"
           icacls "$d\inventory.ini" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
-          $out = uvx --from $env:PKG proliant-mcp --check 2>&1 | Out-String
+          $out = uvx --python 3.13 --from $env:PKG proliant-mcp --check 2>&1 | Out-String
           Write-Output $out
           if ($out -notmatch 'lab\s+192\.0\.2\.10') { throw "inventory was not read" }

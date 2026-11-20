@@ -6,6 +6,16 @@ directly (see the README).
 
 ---
 
+## v0.15.8 — 2026-11-20
+
+### Fixes
+- Install commands now pin `uvx --python 3.13`. On a machine without Python, uvx downloaded the newest one (3.15), where a dependency (pyyaml) has no ready-made packages and fails to build, and where uv's Windows Python download can fail with "Missing expected target directory for Python minor version link" (astral-sh/uv#19622). The CI and release install checks use the same pin.
+
+### Improvements
+- README and AGENTS.md add the Claude Code command (`claude mcp add --scope user ...`). AGENTS.md explains that a project `.mcp.json` only loads in that folder.
+
+---
+
 ## v0.15.7 — 2026-11-19
 
 ### Improvements

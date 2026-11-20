@@ -9,16 +9,17 @@ Add it to the user's MCP client config. It needs only [uv](https://docs.astral.s
 If you are GitHub Copilot (in VS Code or Copilot CLI), write the **Copilot Global** MCP config: `~/.copilot/mcp-config.json` (Windows `%USERPROFILE%\.copilot\mcp-config.json`; `$COPILOT_HOME/mcp-config.json` if `COPILOT_HOME` is set). It is the file VS Code lists as "Copilot Global" under *MCP: Open User Configuration*, and the one Copilot's agent runtime reads. Create it, or add the `proliant` entry to its existing `mcpServers` without removing other servers:
 
 ```json
-{"mcpServers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["proliant-mcp@latest"], "tools": ["*"]}}}
+{"mcpServers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"], "tools": ["*"]}}}
 ```
 
 - Do not use the file VS Code lists as "VS Code User Configuration (Legacy)" (`%APPDATA%\Code\User\mcp.json`, macOS `~/Library/Application Support/Code/User/mcp.json`, `servers` key) or `.vscode/mcp.json`: VS Code asks the user to migrate them. If a `proliant` entry is already in one of them, remove it there after adding it to Copilot Global, so there is only one.
 - In VS Code Remote (SSH, WSL, Dev Containers) use the Copilot Global file in the home folder of the machine you run on.
-- Other clients: Claude Desktop `claude_desktop_config.json` `{"mcpServers": {"proliant": {"command": "uvx", "args": ["proliant-mcp@latest"]}}}`; Codex `config.toml` `[mcp_servers.proliant]` with `command = 'uvx'` and `args = ['proliant-mcp@latest']`; opencode `"mcp": {"servers": {"proliant": {"type": "local", "command": ["uvx", "proliant-mcp@latest"]}}}`.
+- Other clients: Claude Desktop `claude_desktop_config.json` `{"mcpServers": {"proliant": {"command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"]}}}`; Claude Code `claude mcp add --scope user proliant -- uvx --python 3.13 proliant-mcp@latest` (user scope: a project `.mcp.json` only loads in that folder); Codex `config.toml` `[mcp_servers.proliant]` with `command = 'uvx'` and `args = ['--python', '3.13', 'proliant-mcp@latest']`; opencode `"mcp": {"servers": {"proliant": {"type": "local", "command": ["uvx", "--python", "3.13", "proliant-mcp@latest"]}}}`.
+- Keep `--python 3.13` before the package. Without it uvx picks the newest Python (3.15), where some dependencies (pyyaml) have no ready-made packages yet, and on Windows uv's Python download can also fail with "Missing expected target directory for Python minor version link" (astral-sh/uv#19622). If 3.13 fails the same way, try 3.12.
 - Do not install with `uvx --from git+https://github.com/hjma29/proliant-mcp`: it needs git and installs unreleased code. `@latest` picks up new releases when the client restarts the server; pin with `proliant-mcp@X.Y.Z`.
 - If `uv` is missing, install it: Windows `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`, macOS/Linux `curl -LsSf https://astral.sh/uv/install.sh | sh`. After editing the config, tell the user to restart the client.
 - If the client cannot find `uvx`, use its full path (Windows `%USERPROFILE%\.local\bin\uvx.exe`).
-- Check the install: `uvx proliant-mcp@latest --check --connect`.
+- Check the install: `uvx --python 3.13 proliant-mcp@latest --check --connect`.
 
 ## Use it
 

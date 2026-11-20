@@ -33,13 +33,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 - **VS Code (GitHub Copilot):** open *View > Command Palette*, run **MCP: Open User Configuration**, pick **Copilot Global**, then paste this and save:
 
   ```json
-  {"mcpServers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["proliant-mcp@latest"], "tools": ["*"]}}}
+  {"mcpServers": {"proliant": {"type": "stdio", "command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"], "tools": ["*"]}}}
   ```
 
-- **Claude Desktop:** *Settings > Developer > Edit Config*: `{"mcpServers": {"proliant": {"command": "uvx", "args": ["proliant-mcp@latest"]}}}`
+- **Claude Desktop:** *Settings > Developer > Edit Config*: `{"mcpServers": {"proliant": {"command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"]}}}`
+- **Claude Code:** `claude mcp add --scope user proliant -- uvx --python 3.13 proliant-mcp@latest`
 - **Codex, opencode and others:** see [AGENTS.md](https://github.com/hjma29/proliant-mcp/blob/main/AGENTS.md).
 
-If the client cannot find `uvx`, put its full path in `command`: `C:\Users\<you>\.local\bin\uvx.exe` on Windows, `/Users/<you>/.local/bin/uvx` on macOS.
+`--python 3.13` keeps uv off the newest Python (3.15), which some dependencies do not support yet. If the client cannot find `uvx`, put its full path in `command`: `C:\Users\<you>\.local\bin\uvx.exe` on Windows, `/Users/<you>/.local/bin/uvx` on macOS.
 
 ## Connect your servers
 
@@ -52,7 +53,7 @@ Passwords are typed on a page on your own computer, never in the chat.
 
 ## Update
 
-`proliant-mcp@latest` picks up new releases whenever your AI client restarts the server. To stay on one version, use `proliant-mcp@X.Y.Z`. To check what you run: `uvx proliant-mcp@latest --check --connect`.
+`proliant-mcp@latest` picks up new releases whenever your AI client restarts the server. To stay on one version, use `proliant-mcp@X.Y.Z`. To check what you run: `uvx --python 3.13 proliant-mcp@latest --check --connect`.
 
 ## More
 
