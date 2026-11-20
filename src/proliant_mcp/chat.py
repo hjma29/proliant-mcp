@@ -16,7 +16,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
+import os
 import secrets
+import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -255,6 +258,26 @@ def _send_html(handler: BaseHTTPRequestHandler, status: int, body: str, nonce: s
     handler.wfile.write(data)
 
 
+def open_in_browser(url: str) -> bool:
+    """Best effort: open *url* in the user's default browser. Never starts a console browser,
+    which would write to this server's stdio. Set PROLIANT_MCP_NO_BROWSER=1 to turn it off."""
+    if os.environ.get("PROLIANT_MCP_NO_BROWSER"):
+        return False
+    quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    try:
+        if sys.platform == "win32":
+            os.startfile(url)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", url], **quiet)
+        elif os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            subprocess.Popen(["xdg-open", url], **quiet)
+        else:
+            return False
+    except OSError:
+        return False
+    return True
+
+
 class FlowPage:
     """One local page that walks the user through a whole flow without pop-ups (email, Okta
     Verify number, password, workspace...). The same link stays valid from the first step to the
@@ -304,6 +327,12 @@ class FlowPage:
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}/{self.token}"
         threading.Thread(target=self._server.serve_forever, name="proliant-mcp-flow-page", daemon=True).start()
+        self.opened = open_in_browser(self.url)
+
+    def link(self) -> str:
+        """Start of a next_step: make sure the assistant shows the link (the user cannot see tool results)."""
+        opened = "It was opened in the user's browser; show the link anyway in case it did not. " if self.opened else ""
+        return f"Show the user this link in your reply, as a clickable link, before calling any tool: {self.url} . {opened}"
 
     @staticmethod
     def _deliver(answer: asyncio.Future[dict[str, str]], values: dict[str, str]) -> None:

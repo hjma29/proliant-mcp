@@ -303,3 +303,21 @@ async def test_add_server_detects_oneview_given_as_ilo(home):
     assert (done["status"], done["type"]) == ("saved", "oneview")
     assert "is HPE OneView / Synergy Composer, not an HPE iLO" in done["notes"][0]
     assert list(load_oneview()) == ["synergy"] and not load_servers()
+
+
+async def test_page_link_is_spelled_out_for_the_assistant(home):
+    async with Client(srv.mcp) as client:
+        first = (await client.call_tool("add_server_start", {})).structured_content
+    assert f"Show the user this link in your reply, as a clickable link, before calling any tool: {first['url']}" in first["next_step"]
+
+
+def test_no_console_browser_without_a_desktop(monkeypatch):
+    from proliant_mcp import chat
+
+    monkeypatch.delenv("PROLIANT_MCP_NO_BROWSER")
+    monkeypatch.setattr(chat.sys, "platform", "linux")
+    for var in ("DISPLAY", "WAYLAND_DISPLAY"):
+        monkeypatch.delenv(var, raising=False)
+    started = []
+    monkeypatch.setattr(chat.subprocess, "Popen", lambda *a, **k: started.append(a))
+    assert chat.open_in_browser("http://127.0.0.1:1/x") is False and not started

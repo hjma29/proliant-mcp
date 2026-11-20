@@ -177,8 +177,8 @@ class RelayUI:
         )
         self.session.publish(
             "enter_password",
-            f"{error + ' ' if error else ''}Tell the user to type the GreenLake password for {email} on the sign-in page "
-            f"{self.page.url} (the same page as before, if it is open; never in the chat). {_KEEP_POLLING}",
+            f"{error + ' ' if error else ''}{self.page.link()}The user types the GreenLake password for {email} on that page "
+            f"(the same page as before, if it is open; never in the chat). {_KEEP_POLLING}",
             url=self.page.url,
         )
         try:
@@ -205,8 +205,8 @@ class RelayUI:
         clicked = self.page.ask_choice("workspace", "Which HPE GreenLake workspace should the Compute Ops Management tools use?", names)
         self.session.publish(
             "choose_workspace",
-            f"Tell the user to click the workspace to use on the sign-in page {self.page.url}. If they name one in the "
-            "chat instead, call com_login_status with workspace set to it. " + _KEEP_POLLING,
+            f"{self.page.link()}The user clicks the workspace to use on that page (the same page, if it is open). If they "
+            "name one in the chat instead, call com_login_status with workspace set to it. " + _KEEP_POLLING,
             workspaces=names,
             url=self.page.url,
         )
@@ -237,9 +237,8 @@ async def _ask_email_on_page(session: Relay, page: FlowPage) -> str:
         answer = page.ask_secret("email", prompt, error)
         session.publish(
             "enter_email",
-            f"{error + ' ' if error else ''}Tell the user to open the sign-in page {page.url} in a browser on the computer "
-            "running this server and type their HPE GreenLake email there (it is not a secret, but do not guess it). "
-            "They can keep that page open: it shows each next step. " + _KEEP_POLLING,
+            f"{error + ' ' if error else ''}{page.link()}The user types their HPE GreenLake email on that page (it is not a "
+            "secret, but do not guess it) and can keep it open: it shows each next step. " + _KEEP_POLLING,
             url=page.url,
         )
         try:

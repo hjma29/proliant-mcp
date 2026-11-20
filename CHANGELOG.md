@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.15.11 — 2026-11-20
+
+### Fixes
+- In chats without pop-ups, the sign-in and add-server page now opens in the user's default browser by itself (Windows, macOS, and Linux desktops; never a console browser; turn off with `PROLIANT_MCP_NO_BROWSER=1`). Each step also tells the assistant to show the link as a clickable link before calling any tool. Before, an assistant could say "the link is on the local server" and wait, leaving the user nothing to click.
+
+---
+
 ## v0.15.10 — 2026-11-20
 
 ### Fixes

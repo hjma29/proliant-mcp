@@ -286,9 +286,8 @@ async def _details_from_page(session: Relay, page: FlowPage, kind: str | None, n
         )
         session.publish(
             "enter_server",
-            f"{error + ' ' if error else ''}Tell the user to open {page.url} in a browser on the computer running this "
-            "server and fill in the iLO or OneView address, user name and password there (never in the chat). The page "
-            "shows the result. " + _KEEP_POLLING,
+            f"{error + ' ' if error else ''}{page.link()}The user fills in the iLO or OneView address, user name and "
+            "password on that page (never in the chat); it shows the result. " + _KEEP_POLLING,
             url=page.url,
         )
         try:
@@ -317,8 +316,8 @@ async def _add_on_page(session: Relay, draft: Entry | None, kind: str | None, na
             answer = page.ask_secret("password", prompt, error)
             session.publish(
                 "enter_password",
-                f"{error + ' ' if error else ''}Tell the user to type the password for {target.username} on {target.host} on "
-                f"the page {page.url} (the same page, if it is open; never in the chat). {_KEEP_POLLING}",
+                f"{error + ' ' if error else ''}{page.link()}The user types the password for {target.username} on "
+                f"{target.host} on that page (the same page, if it is open; never in the chat). {_KEEP_POLLING}",
                 url=page.url,
             )
             try:
