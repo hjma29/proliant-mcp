@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import httpx
 import pytest
+import subprocess
+import sys
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
@@ -96,6 +98,45 @@ async def test_optional_inventory_cache_respects_refresh_and_live_state(mcp_clie
         disabled = (await client.call_tool("get_inventory_snapshot", args)).structured_content
         assert disabled["servers"][0]["inventory"]["processors"]["source"] == "live"
     assert b"good" not in inventory_cache._db_path().read_bytes()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
+def test_cache_directory_and_database_have_private_windows_acls(mcp_client):
+    try:
+        inventory_cache.configure(True)
+    except inventory_cache.CacheError as exc:
+        if isinstance(exc.__cause__, subprocess.CalledProcessError):
+            pytest.fail(f"{exc}: {exc.__cause__.stderr.decode(errors='replace')}")
+        raise
+
+    script = """
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+foreach ($path in @($env:CACHE_DIR, $env:CACHE_DB)) {
+    $acl = Get-Acl -LiteralPath $path
+    $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or
+        $rules[0].AccessControlType -ne 'Allow' -or
+        ($rules[0].FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne
+          [System.Security.AccessControl.FileSystemRights]::FullControl) {
+        throw "Cache ACL must grant only the current user full control"
+    }
+}
+if (-not (Get-Acl -LiteralPath $env:CACHE_DIR).AreAccessRulesProtected) {
+    throw "Cache directory must not inherit parent permissions"
+}
+if (-not (@((Get-Acl -LiteralPath $env:CACHE_DB).Access)[0].IsInherited)) {
+    throw "Cache database must inherit the private directory permissions"
+}
+"""
+    import os
+
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        env={**os.environ, "CACHE_DIR": str(inventory_cache._db_path().parent), "CACHE_DB": str(inventory_cache._db_path())},
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 async def test_cached_snapshot_still_requires_login_and_scopes_identity(mcp_client):
