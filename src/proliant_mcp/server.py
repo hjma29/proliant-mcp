@@ -16,7 +16,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_inventory, chat_login, com, compat, ilo, inventory_cli, login, oneview
+from proliant_mcp import __version__, chat_bulk, chat_inventory, chat_login, com, compat, ilo, inventory_cli, login, oneview
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -51,8 +51,11 @@ already gave it; never ask for it with a question tool, which may be auto-answer
 available": without an email the user types it on a local page), tell the user exactly what it
 returns (the page link, the Okta Verify number to tap) and keep calling com_login_status without waiting
 for the user to reply (it waits for them; the page walks them through every step), and call com_login_status until it says signed_in. If no iLO or OneView is
-configured, or the user wants to add servers, call add_server (one iLO or OneView) or
-import_inventory (a .ini or .csv file the user names in a pop-up). If add_server's pop-ups do not
+configured, or the user wants to add servers, call add_server (one iLO or OneView). For multiple
+iLOs, a list, a range, or a file, call add_servers_start, show its page link, and call
+add_servers_status until saved or failed without waiting for the user to reply. The user chooses
+the targets and enters credentials on the page; never ask for passwords in chat. The older
+import_inventory tool imports a .ini or .csv file via pop-ups. If add_server's pop-ups do not
 appear, call add_server_start (with the address only if the user gave it), relay the page link, and
 call add_server_status until it says saved, without waiting for the user to reply. For who logged in to iLOs (per day, user, source IP,
 failed logins) use get_ilo_logins: one call for all iLOs. Never ask the user to type
@@ -678,6 +681,27 @@ async def add_server_status() -> dict[str, Any]:
     `enter_password` (again, with the reason, if the password was wrong), `saved`, or `failed`.
     If `waiting` is true nothing changed yet: remind the user of the step and call it again."""
     return await chat_inventory.add_server_status()
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Add multiple iLO servers", readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+    )
+)
+async def add_servers_start() -> dict[str, Any]:
+    """Add multiple iLOs from an IP range, pasted list, CSV, INI, text file or Excel workbook.
+    Returns a local page link: show it to the user, who selects a file or enters addresses,
+    reviews the list and types credentials there, never in chat. The page checks the selected
+    logins and lets the user choose what to save. Call add_servers_status immediately and keep
+    calling it until saved or failed; do not ask the user to confirm in chat."""
+    return await chat_bulk.start()
+
+
+@mcp.tool(annotations=SIGN_IN)
+async def add_servers_status() -> dict[str, Any]:
+    """Wait for the bulk add started by add_servers_start. Returns progress, saved results,
+    or a failure. Keep calling while it is waiting; the browser page guides the user."""
+    return await chat_bulk.status()
 
 
 @mcp.tool(

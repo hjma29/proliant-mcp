@@ -284,7 +284,7 @@ class FlowPage:
     last: waiting steps refresh themselves, and forms post back to it. Bound to 127.0.0.1 with a
     random port and path; request bodies are never logged."""
 
-    def __init__(self, title: str) -> None:
+    def __init__(self, title: str, max_body_bytes: int = 8192) -> None:
         self._loop = asyncio.get_running_loop()
         self.token = secrets.token_urlsafe(24)
         self.title = title
@@ -312,7 +312,12 @@ class FlowPage:
             def do_POST(self) -> None:
                 if not self._ours():
                     return _send_html(self, 404, "Not found")
-                length = min(int(self.headers.get("Content-Length") or 0), 8192)
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    return _send_html(self, 400, "Invalid request length")
+                if length < 0 or length > max_body_bytes:
+                    return _send_html(self, 413, "Request too large")
                 form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"), keep_blank_values=True)
                 values = {k: v[0] for k, v in form.items()}
                 step, answer = page._step, page._answer

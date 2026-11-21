@@ -6,6 +6,12 @@ directly (see the README).
 
 ---
 
+## Unreleased
+
+- Add a local browser flow for adding multiple iLOs from IPv4 ranges, lists, CSV, INI, text, or Excel files. Review targets before checking logins and choose which results to save; passwords stay out of chat.
+
+---
+
 ## v0.15.12 — 2026-11-20
 
 ### Fixes

@@ -16,10 +16,28 @@ immediately, no restart. In AI clients without pop-ups (Claude Desktop, some Cod
 assistant asks for the address in the chat and uses `add_server_start` / `add_server_status`
 instead: it gives you the same secure page link, and tells you when the server is saved.
 
-**Import a list** (many servers): ask your assistant to *"import my servers from a file"*. The
+**Add multiple iLOs:** ask your assistant to *"add my iLO servers"*. It opens a local browser
+page where you can enter an IPv4 range or CIDR, paste one address per line (optionally preceded
+by a name), or choose a text, CSV, INI, or `.xlsx` file. For Excel, the first sheet must have a
+header row with an address column such as `host` or `iLO IP`; formulas are not supported. The
+limit is 500 entries and 1 MB per file. Remove passwords from files and enter one shared
+username and password on the page; use separate batches for different credentials. File-provided
+usernames are not used in this flow.
+
+Review and edit the list before confirming any network checks. The page checks the selected
+iLOs, shows individual results, and lets you retry failures or choose what to save. Successful
+checks are selected by default; saving failed checks is explicit. Existing names are kept unless
+you choose replacement, and an address already used by another name is skipped. Names configured
+through environment variables are also skipped, because the inventory cannot replace them. The page is
+served on the computer running the MCP server and is not reachable through `127.0.0.1` from a
+different computer. It does not send the file or password to the AI. Saved passwords are
+plaintext in the local inventory file.
+
+**Import a list** (older pop-up flow): ask your assistant to *"import my servers from a file"*. The
 `import_inventory` tool pops up for the **path** of an `.ini` or `.csv` file (the AI cannot choose the
 file; you type it), shows what it found, and optionally asks once for a password shared by entries
-that have none, then checks each login. The file stays where it is. For a spreadsheet, use **File >
+that have none. It saves before optional login checks, which cover at most the first 30 entries.
+The file stays where it is. For a spreadsheet, use **File >
 Save As > CSV** in Excel; the columns are `name, type, host, username, password`
 ([example](https://github.com/hjma29/proliant-mcp/blob/main/examples/inventory.example.csv)), and common variants such as `IP Address` or `Server Name`
 are recognised (`.xlsx` files are not read directly). Same thing in a terminal:

@@ -262,7 +262,7 @@ def _from_csv(text: str, name: str) -> Parsed:
     if not lines:
         raise InventoryError(f"{name} is empty")
     delimiter = max(",;\t", key=lambda d: lines[0].count(d))
-    if lines[0].count(delimiter) == 0:
+    if lines[0].count(delimiter) == 0 and _normalize_header(lines[0]) not in _COLUMNS["host"]:
         raise InventoryError(f"{name} does not look like a table with a header row (name, type, host, username, password)")
     reader = csv.reader(io.StringIO("\n".join(lines)), delimiter=delimiter)
     header = [_normalize_header(h) for h in next(reader)]
@@ -299,10 +299,17 @@ def parse_inventory_file(path_text: str) -> Parsed:
         raw = path.read_bytes()
     except OSError as exc:
         raise InventoryError(f"Cannot read {path}: {exc.__class__.__name__}") from exc
+    return parse_inventory_content(raw, path.name)
+
+
+def parse_inventory_content(raw: bytes, name: str) -> Parsed:
+    """Parse inventory bytes without creating a temporary file."""
+    if len(raw) > MAX_FILE_BYTES:
+        raise InventoryError(f"{name} is larger than {MAX_FILE_BYTES // 1000} KB; is it really an inventory?")
     if raw.startswith((b"PK\x03\x04", b"\xd0\xcf\x11\xe0")):
-        raise InventoryError(f"{path.name} is an Excel workbook. In Excel use File > Save As > CSV, then import the .csv")
+        raise InventoryError(f"{name} is an Excel workbook. In Excel use File > Save As > CSV, then import the .csv")
     text = _decode(raw)
-    parsed = _from_ini(text, path.name) if re.search(r"^\s*\[[^\]]+\]\s*$", text, re.MULTILINE) else _from_csv(text, path.name)
+    parsed = _from_ini(text, name) if re.search(r"^\s*\[[^\]]+\]\s*$", text, re.MULTILINE) else _from_csv(text, name)
 
     seen: set[str] = set()
     unique: list[Entry] = []
@@ -313,10 +320,10 @@ def parse_inventory_file(path_text: str) -> Parsed:
         seen.add(entry.name.lower())
         unique.append(entry)
     if len(unique) > MAX_ENTRIES:
-        raise InventoryError(f"{path.name} has {len(unique)} entries; the limit is {MAX_ENTRIES}")
+        raise InventoryError(f"{name} has {len(unique)} entries; the limit is {MAX_ENTRIES}")
     if not unique:
         detail = "; ".join(parsed.problems[:3])
-        raise InventoryError(f"No usable servers in {path.name}" + (f" ({detail})" if detail else ""))
+        raise InventoryError(f"No usable servers in {name}" + (f" ({detail})" if detail else ""))
     return Parsed(unique, parsed.problems)
 
 

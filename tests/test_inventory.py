@@ -1,4 +1,6 @@
 import configparser
+import base64
+import io
 import json
 import os
 import re
@@ -9,10 +11,11 @@ import httpx
 import pytest
 from fastmcp import Client
 from mcp_types import ElicitRequestURLParams, ElicitResult
+from openpyxl import Workbook
 
 from fake_ilo import fake_ilo
 from fake_mgmt import fake_mgmt
-from proliant_mcp import inventory, inventory_cli
+from proliant_mcp import bulk_inventory, chat_bulk, inventory, inventory_cli
 from proliant_mcp import server as srv
 from proliant_mcp.config import load_oneview, load_servers
 
@@ -339,3 +342,124 @@ async def test_new_add_reports_how_the_previous_add_ended(home):
     assert second["next_step"].startswith("The earlier add finished: lab1 (192.0.2.10) was checked and saved.")
     assert third["previous_add"]["status"] == "stopped" and "192.0.2.11" in third["next_step"]
     assert list(load_servers()) == ["lab1"]
+
+
+def test_bulk_input_ranges_lists_and_limits():
+    parsed, _ = bulk_inventory.parse_input(b"192.0.2.10-192.0.2.12\nlab 192.0.2.20\n192.0.2.10\n")
+    assert [entry.host for entry in parsed.entries] == ["192.0.2.10", "192.0.2.11", "192.0.2.12", "192.0.2.20"]
+    assert "duplicate" in parsed.problems[0]
+    parsed, _ = bulk_inventory.parse_input(b"192.0.2.0/30")
+    assert [entry.host for entry in parsed.entries] == ["192.0.2.1", "192.0.2.2"]
+    parsed, _ = bulk_inventory.parse_input(b"192.0.2.10-12")
+    assert [entry.host for entry in parsed.entries] == ["192.0.2.10", "192.0.2.11", "192.0.2.12"]
+    for data in (b"host\n192.0.2.10\n192.0.2.11\n", b"192.0.2.10\n192.0.2.11\n"):
+        parsed, _ = bulk_inventory.parse_input(data, "list.csv")
+        assert [entry.host for entry in parsed.entries] == ["192.0.2.10", "192.0.2.11"]
+    with pytest.raises(inventory.InventoryError, match="500"):
+        bulk_inventory.parse_input(b"192.0.2.0/16")
+    with pytest.raises(inventory.InventoryError, match="Invalid IP"):
+        bulk_inventory.parse_input(b"999.999.999.999")
+
+
+def test_bulk_input_excel_and_password_rejection():
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "iLOs"
+    sheet.append(["Server Name", "iLO IP"])
+    sheet.append(["lab", "192.0.2.10"])
+    output = io.BytesIO()
+    book.save(output)
+    parsed, note = bulk_inventory.parse_input(output.getvalue(), "servers.xlsx")
+    assert [(e.name, e.host) for e in parsed.entries] == [("lab", "192.0.2.10")]
+    assert "iLOs" in note
+    sheet["B2"] = "=1+1"
+    output = io.BytesIO()
+    book.save(output)
+    with pytest.raises(inventory.InventoryError, match="formulas"):
+        bulk_inventory.parse_input(output.getvalue(), "servers.xlsx")
+    with pytest.raises(inventory.InventoryError, match="Remove passwords"):
+        bulk_inventory.parse_input(b"host,password\n192.0.2.10,changeme\n", "servers.csv")
+
+
+def test_bulk_conflicts_with_new_explicit_inventory(home, monkeypatch):
+    monkeypatch.setenv("PROLIANT_MCP_CONFIG", str(home / "new.ini"))
+    monkeypatch.setenv("ILO_HOST", "192.0.2.10")
+    entry = inventory.make_entry("different", "ilo", "192.0.2.10")
+    usable, skipped = chat_bulk._conflicts([entry], False)
+    assert not usable and skipped == ["different: address already belongs to default"]
+    entry = inventory.make_entry("default", "ilo", "192.0.2.11")
+    usable, skipped = chat_bulk._conflicts([entry], True)
+    assert not usable and skipped == ["default: name is configured by environment variables"]
+
+
+async def _bulk_page_wait(browser, url, text):
+    import asyncio
+
+    for _ in range(100):
+        response = await browser.get(url)
+        if text in response.text:
+            return response.text
+        await asyncio.sleep(0.05)
+    pytest.fail(f"Page did not show {text}")
+
+
+async def test_bulk_add_page_preview_checks_and_partial_save(home):
+    requests = []
+
+    def transport(request):
+        requests.append(request)
+        return fake_world(request)
+
+    srv._transport = httpx.MockTransport(transport)
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("add_servers_start", {})).structured_content
+        assert first["status"] == "enter_servers"
+        url = first["url"]
+        await _bulk_page_wait(browser, url, "Addresses or range")
+        csv = b"name,host\nworking,192.0.2.10\noffline,192.0.2.99\n"
+        await browser.post(url, data={"step": "source", "filename": "inventory.csv", "data": base64.b64encode(csv).decode()})
+        page = await _bulk_page_wait(browser, url, "Preview iLOs")
+        assert "working" in page and "offline" in page and not requests and not our_inventory(home).exists()
+        await browser.post(url, data={
+            "step": "preview", "selected_0": "1", "name_0": "working", "host_0": "192.0.2.10",
+            "selected_1": "1", "name_1": "offline", "host_1": "192.0.2.99",
+        })
+        await _bulk_page_wait(browser, url, "Shared iLO credentials")
+        assert not requests
+        await browser.post(url, data={"step": "credentials", "username": "Administrator", "password": "good"})
+        page = await _bulk_page_wait(browser, url, "Check results")
+        assert "Unreachable or failed" in page and "working" in page and "good" not in page
+        assert not our_inventory(home).exists()
+        await browser.post(url, data={"step": "results", "action": "save", "save_0": "1"})
+        result = (await client.call_tool("add_servers_status", {})).structured_content
+    assert result["status"] == "saved" and result["added"] == ["working"]
+    assert result["failed"] == [{"name": "offline", "reason": "unreachable or failed"}]
+    assert set(load_servers()) == {"working"}
+    assert "good" not in json.dumps(result)
+
+
+async def test_bulk_conflicts_and_retry(home):
+    inventory.save_entries([inventory.make_entry("existing", "ilo", "192.0.2.10", "", "good")])
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        first = (await client.call_tool("add_servers_start", {})).structured_content
+        url = first["url"]
+        await browser.post(url, data={"step": "source", "source": "other 192.0.2.10\nnew 192.0.2.11"})
+        await _bulk_page_wait(browser, url, "Preview iLOs")
+        await browser.post(url, data={
+            "step": "preview", "selected_0": "1", "name_0": "other", "host_0": "192.0.2.10",
+            "selected_1": "1", "name_1": "new", "host_1": "192.0.2.11",
+        })
+        await _bulk_page_wait(browser, url, "Shared iLO credentials")
+        await browser.post(url, data={"step": "credentials", "username": "Administrator", "password": "wrong"})
+        page = await _bulk_page_wait(browser, url, "Check results")
+        assert "Login rejected" in page and "address already belongs" in page
+        await browser.post(url, data={"step": "results", "action": "retry"})
+        await _bulk_page_wait(browser, url, "Shared iLO credentials")
+        await browser.post(url, data={"step": "credentials", "username": "Administrator", "password": "good"})
+        page = await _bulk_page_wait(browser, url, "Check results")
+        assert "Login rejected" not in page and "OK:" in page
+        await browser.post(url, data={"step": "results", "action": "save", "save_0": "1"})
+        result = (await client.call_tool("add_servers_status", {})).structured_content
+    assert result["status"] == "saved" and result["added"] == ["new"]
+    assert "other: address already belongs to existing" in result["skipped"]
+    assert set(load_servers()) == {"existing", "new"}
