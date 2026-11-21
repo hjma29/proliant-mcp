@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import httpx
-import pytest
+import os
 import subprocess
 import sys
+
+import httpx
+import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
@@ -112,8 +114,8 @@ def test_cache_directory_and_database_have_private_windows_acls(mcp_client):
     script = """
 $ErrorActionPreference = 'Stop'
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-foreach ($path in @($env:CACHE_DIR, $env:CACHE_DB)) {
-    $acl = Get-Acl -LiteralPath $path
+foreach ($acl in @([System.IO.Directory]::GetAccessControl($env:CACHE_DIR),
+                   [System.IO.File]::GetAccessControl($env:CACHE_DB))) {
     $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
     if ($rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or
         $rules[0].AccessControlType -ne 'Allow' -or
@@ -122,15 +124,13 @@ foreach ($path in @($env:CACHE_DIR, $env:CACHE_DB)) {
         throw "Cache ACL must grant only the current user full control"
     }
 }
-if (-not (Get-Acl -LiteralPath $env:CACHE_DIR).AreAccessRulesProtected) {
+if (-not [System.IO.Directory]::GetAccessControl($env:CACHE_DIR).AreAccessRulesProtected) {
     throw "Cache directory must not inherit parent permissions"
 }
-if (-not (@((Get-Acl -LiteralPath $env:CACHE_DB).Access)[0].IsInherited)) {
+if (-not (@([System.IO.File]::GetAccessControl($env:CACHE_DB).Access)[0].IsInherited)) {
     throw "Cache database must inherit the private directory permissions"
 }
 """
-    import os
-
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
         env={**os.environ, "CACHE_DIR": str(inventory_cache._db_path().parent), "CACHE_DB": str(inventory_cache._db_path())},

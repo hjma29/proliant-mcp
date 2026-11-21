@@ -51,7 +51,8 @@ def _secure_directory() -> None:
                 "$acl.SetAccessRuleProtection($true,$false); $acl.SetOwner($sid); "
                 "$rule=[System.Security.AccessControl.FileSystemAccessRule]::new"
                 "($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); "
-                "$acl.SetAccessRule($rule); Set-Acl -LiteralPath $env:PROLIANT_CACHE_DIR -AclObject $acl"
+                "$acl.SetAccessRule($rule); "
+                "[System.IO.Directory]::SetAccessControl($env:PROLIANT_CACHE_DIR, $acl)"
             )
             subprocess.run(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
