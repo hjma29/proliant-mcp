@@ -38,6 +38,18 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 - **Claude Desktop:** *Settings > Developer > Edit Config*: `{"mcpServers": {"proliant": {"command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"]}}}`
 - **Claude Code:** `claude mcp add --scope user proliant -- uvx --python 3.13 proliant-mcp@latest`
+- **Any client with an "Add MCP server" form** (name, transport, command, args, environment): fill it in like this, then restart the client.
+
+  | Field | Value |
+  |---|---|
+  | Name | `proliant` (any name you like) |
+  | Transport | `stdio` |
+  | Command | `uvx` |
+  | Args | `--python 3.13 proliant-mcp@latest` |
+  | Environment | leave empty |
+
+  Don't put passwords in the form. After it connects, ask your assistant to add your servers (see below); passwords are typed on a page on your own computer. Some forms want the args one per line instead of separated by spaces. If the client cannot find `uvx`, use its full path as the Command, as described below.
+
 - **Codex, opencode and others:** see [AGENTS.md](https://github.com/hjma29/proliant-mcp/blob/main/AGENTS.md).
 
 `--python 3.13` keeps uv off the newest Python (3.15), which some dependencies do not support yet. If the client cannot find `uvx`, put its full path in `command`: `C:\Users\<you>\.local\bin\uvx.exe` on Windows, `/Users/<you>/.local/bin/uvx` on macOS.
