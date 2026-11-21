@@ -22,8 +22,12 @@ async def _snapshot(
     cache_key: str, enabled: bool, ttl: int, generation: int | None,
     refresh: bool, fetch: Callable[[], Awaitable[Any]],
 ) -> dict[str, Any]:
+    note = None
     if enabled and not refresh:
-        hit = await inventory_cache.get(cache_key, ttl)
+        try:
+            hit = await inventory_cache.get(cache_key, ttl)
+        except inventory_cache.CacheError as exc:
+            hit, note = None, f"Local cache unavailable ({exc}); data was read live."
         if hit is not None:
             data, collected = hit
             return {"source": "cache", "collected_at": inventory_cache.timestamp(collected),
@@ -33,18 +37,21 @@ async def _snapshot(
     stored = False
     if enabled:
         assert generation is not None
-        stored = await inventory_cache.put(cache_key, data, collected, ttl, generation)
+        try:
+            stored = await inventory_cache.put(cache_key, data, collected, ttl, generation)
+            if not stored:
+                note = "Not stored because the cache changed or a newer snapshot was already stored."
+        except inventory_cache.CacheError as exc:
+            note = f"Local cache unavailable ({exc}); data was read live."
     return {"source": "live", "collected_at": inventory_cache.timestamp(collected),
             "expires_at": inventory_cache.timestamp(collected + ttl) if stored else None,
-            **({"cache_note": "Not stored because the cache changed or a newer snapshot was already stored."}
-               if enabled and not stored else {}), "data": data}
+            **({"cache_note": note} if note else {}), "data": data}
 
 
 async def ilo_snapshot(
     servers: list[Server], categories: list[str], refresh: bool, transport: Any,
 ) -> dict[str, Any]:
-    enabled, ttl = inventory_cache.settings()
-    generation = await inventory_cache.generation() if enabled else None
+    enabled, ttl, generation, note = await inventory_cache.prepare()
     gate = asyncio.Semaphore(8)
 
     async def one(server: Server) -> dict[str, Any]:
@@ -65,14 +72,14 @@ async def ilo_snapshot(
 
     return {
         "cache_enabled": enabled,
+        **({"cache_note": note} if note else {}),
         "note": "Hardware snapshots can be stale, including component health. Use live health/status tools for current state.",
         "servers": await asyncio.gather(*(one(server) for server in servers)),
     }
 
 
 async def com_snapshot(client: com.ComClient, name_contains: str | None, refresh: bool) -> dict[str, Any]:
-    enabled, ttl = inventory_cache.settings()
-    generation = await inventory_cache.generation() if enabled else None
+    enabled, ttl, generation, note = await inventory_cache.prepare()
     rows = [com.server_row(server) for server in await client.get_all("/servers")]
     if name_contains:
         rows = [row for row in rows if name_contains.lower() in (row["name"] or "").lower()]
@@ -95,6 +102,7 @@ async def com_snapshot(client: com.ComClient, name_contains: str | None, refresh
 
     return {
         "cache_enabled": enabled,
+        **({"cache_note": note} if note else {}),
         "note": "These are hardware snapshots of COM's own inventory. Component health may be stale; use live health/status tools for current state.",
         "servers": await asyncio.gather(*(one(row) for row in rows)),
     }

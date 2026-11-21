@@ -91,30 +91,32 @@ chmod 600 ~/.config/proliant-mcp/inventory.ini
 
 A [proliant-cli](https://github.com/hjma29/proliant-cli) inventory at `~/.config/proliant-cli/inventory.ini` is also read.
 
-## Optional hardware snapshot cache
+## Hardware snapshot cache
 
-The local SQLite cache is **off by default**. Ask your assistant to enable the inventory cache
-and optionally specify a lifetime; the default is 15 minutes, with a maximum of 24 hours.
-`set_inventory_cache` saves this preference locally; `get_inventory_cache_status` shows it.
-Cached hardware snapshots are stored in `~/.config/proliant-mcp/cache/inventory.sqlite3`
-(Windows: `%USERPROFILE%\.config\proliant-mcp\cache\inventory.sqlite3`). They can contain
-server names, serial numbers and hardware details, so enable the cache only on a trusted
-computer. The cache never stores passwords or access tokens. Enabling the cache requires an
-owner-only cache directory; failure to secure it is reported instead of enabling caching.
+A local SQLite cache is **on by default** (15 minutes). `get_inventory_snapshot` (an iLO's
+processors, memory and firmware) and `get_com_inventory_snapshot` (COM hardware inventory) answer
+repeat questions from it in milliseconds instead of re-reading the server. Each result says whether
+it came from the cache or was read live, and when it was collected; ask for "fresh" or "current"
+data and the assistant passes `refresh=true`. In a test on a real iLO, reading processors, memory
+and firmware took about 3 s live and about 0.1 s from the cache.
 
-`get_inventory_snapshot` uses the cache for iLO processors, memory and firmware;
-`get_com_inventory_snapshot` uses it for COM hardware inventory. Each snapshot states whether
-it is local cache or a live fetch and when it was collected. The iLO is authenticated even on a
-cache hit; COM's server list is fetched live. COM's inventory itself may have been collected
-earlier, so also check its `inventory_collected_at` value. Use `refresh=true` to bypass the
-local cache. Expired entries and failed fetches are never returned as fresh cache hits.
-Snapshot component-health values may be old; use the existing live tools for current health,
-power, alerts and network status. No background polling is performed.
+The cache is created on first use in an owner-only folder,
+`~/.config/proliant-mcp/cache/inventory.sqlite3` (Windows:
+`%USERPROFILE%\.config\proliant-mcp\cache\inventory.sqlite3`). It holds hardware details
+such as server names, serial numbers, processors, DIMMs and firmware versions, and **never**
+passwords or access tokens. If the folder cannot be secured or the database cannot be used, the
+snapshot tools read live and say so; they never fail because of the cache.
 
-Ask to disable the cache to stop further reads and writes; this does not remove existing data.
-Ask to clear it to remove cached rows. Clearing does not guarantee erasure from filesystem
-backups or SQLite free pages. Clear the cache after changing permissions or replacing hardware.
-These snapshot tools are separate from existing live tools, which keep their existing behavior.
+- The iLO is still logged in to on every call, so a changed password or an unreachable iLO is
+  reported even when data is cached. COM's server list is always fetched live. COM's own inventory
+  may have been collected earlier; check its `inventory_collected_at` value.
+- Snapshots can be stale, including component health. Health, power, alerts, network and other
+  status questions use the live tools, which never use the cache. No background polling is done.
+- Ask your assistant to **turn the cache off** (`set_inventory_cache`), change its lifetime
+  (1 second to 24 hours), check it (`get_inventory_cache_status`), or **clear** it
+  (`clear_inventory_cache`). Turning it off stops reads and writes but keeps existing data; clearing
+  removes the rows but cannot guarantee erasure from filesystem backups or SQLite free pages. Clear
+  it after replacing hardware.
 
 ## iLO
 

@@ -43,11 +43,13 @@ table of each server's storage controllers, drives, GPUs and NICs use com_hardwa
 groups servers with identical hardware. For NICs, HBAs, link speeds or which network mode
 (Ethernet, InfiniBand, FibreChannel) is used, use com_list_nics. Never loop com_get_server
 or com_api_get over many servers.
-For explicitly requested cached hardware inventory, get_inventory_snapshot and
-get_com_inventory_snapshot include collection times and distinguish live from cached data. Use
-refresh=true when the user requests fresh inventory. Never use these snapshots as current
-health, power, alerts, link, or other operational status; use the live tools instead. The local
-cache is disabled until the user explicitly agrees to enable it with set_inventory_cache.
+For hardware inventory (an iLO's processors, memory DIMMs and firmware versions, or COM's hardware
+inventory) prefer get_inventory_snapshot and get_com_inventory_snapshot: a local cache, on by default
+for 15 minutes, answers repeats in milliseconds, and each result says whether it came from the cache
+or live and when it was collected. Pass refresh=true when the user asks for current or fresh data.
+Never use these snapshots as current health, power, alerts, link, or other operational status; use
+the live tools instead. Change the cache with set_inventory_cache (enabled, ttl_seconds) only when
+the user asks to turn it off or change its lifetime, and clear it with clear_inventory_cache only on request.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
 set up for the workspace, sign the user in right away in this chat; do not send them to a
 browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fails or is
@@ -268,8 +270,8 @@ async def get_network_adapters(server: ServerName) -> list[dict[str, Any]]:
 
 @mcp.tool(annotations=READ_ONLY)
 async def get_inventory_cache_status() -> dict[str, Any]:
-    """Whether optional local hardware snapshot caching is enabled and its TTL. It does not
-    inspect credentials or create a cache. Ask before changing the setting."""
+    """Whether local hardware snapshot caching is enabled (it is on by default) and its lifetime.
+    It does not inspect credentials or create a cache."""
     try:
         enabled, ttl = inventory_cache.settings()
         return {"enabled": enabled, "ttl_seconds": ttl, "path": str(inventory_cache._db_path()),
@@ -280,13 +282,14 @@ async def get_inventory_cache_status() -> dict[str, Any]:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def set_inventory_cache(
-    enabled: Annotated[bool, Field(description="Enable or disable local hardware snapshot caching; only with the user's explicit consent.")],
+    enabled: Annotated[bool, Field(description="True to use the local hardware snapshot cache (the default), false to turn it off.")],
     ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="Maximum snapshot age in seconds; omit to preserve the existing setting.")] = None,
 ) -> dict[str, Any]:
-    """Enable or disable local SQLite hardware caching, only when the user explicitly requests it.
-    Cached hardware is stored on the server computer and may contain sensitive inventory.
-    Disabling stops reads and writes but does not erase the existing cache; use clear_inventory_cache
-    when the user asks to remove it. Health, power and other live tools are unaffected."""
+    """Turn the local SQLite hardware snapshot cache on or off, or change its lifetime, when the user
+    asks. It is on by default. Cached hardware is stored on this computer in an owner-only folder and
+    may contain server names and serial numbers, never passwords. Turning it off stops reads and
+    writes but does not erase the existing cache; use clear_inventory_cache when the user asks to
+    remove it. Health, power and other live tools are unaffected."""
     try:
         return await asyncio.to_thread(inventory_cache.configure, enabled, ttl_seconds)
     except inventory_cache.CacheError as exc:
@@ -295,7 +298,7 @@ async def set_inventory_cache(
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
 async def clear_inventory_cache() -> dict[str, Any]:
-    """Remove locally cached hardware snapshots only when the user explicitly requests it.
+    """Remove locally cached hardware snapshots when the user asks.
     Does not change the cache setting or delete the inventory or credentials."""
     try:
         count = await asyncio.to_thread(inventory_cache.clear)
@@ -312,7 +315,7 @@ async def get_inventory_snapshot(
 ) -> dict[str, Any]:
     """Hardware snapshots for one or more iLOs. Each category reports whether it came from the
     cache or live, plus collection and expiry times. An iLO login is checked even for cache hits.
-    The cache is optional and disabled by default; refresh=true bypasses old entries. Component
+    The cache is on by default (15 minutes); refresh=true bypasses old entries. Component
     health in a snapshot may be stale: use live tools for current health and operational state."""
     targets = list(_servers().values()) if servers is None else list(dict.fromkeys(_resolve(name) for name in servers))
     if not targets:

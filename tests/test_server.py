@@ -61,7 +61,7 @@ async def test_server_summary(mcp_client):
     assert data["post_state"] == "InPostDiscoveryComplete"
 
 
-async def test_optional_inventory_cache_respects_refresh_and_live_state(mcp_client, monkeypatch):
+async def test_inventory_cache_is_on_by_default_and_respects_refresh_and_live_state(mcp_client, monkeypatch):
     requests = []
 
     def transport(request):
@@ -72,13 +72,9 @@ async def test_optional_inventory_cache_respects_refresh_and_live_state(mcp_clie
     args = {"servers": ["gen12"], "categories": ["processors"]}
     async with mcp_client as client:
         status = (await client.call_tool("get_inventory_cache_status", {})).structured_content
-        assert not status["enabled"] and not inventory_cache._db_path().exists()
-        uncached = (await client.call_tool("get_inventory_snapshot", args)).structured_content
-        assert uncached["servers"][0]["inventory"]["processors"]["source"] == "live"
-        assert not inventory_cache._db_path().exists()
-        enabled = (await client.call_tool("set_inventory_cache", {"enabled": True, "ttl_seconds": 60})).structured_content
-        assert enabled["enabled"] and inventory_cache._db_path().is_file()
+        assert status["enabled"] and status["ttl_seconds"] == 900 and not inventory_cache._db_path().exists()
         first = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        assert inventory_cache._db_path().is_file()  # created privately on first use, no setup step
         first_requests = len(requests)
         second = (await client.call_tool("get_inventory_snapshot", args)).structured_content
         second_requests = requests[first_requests:]
@@ -98,8 +94,26 @@ async def test_optional_inventory_cache_respects_refresh_and_live_state(mcp_clie
         assert after_clear["servers"][0]["inventory"]["processors"]["source"] == "live"
         await client.call_tool("set_inventory_cache", {"enabled": False})
         disabled = (await client.call_tool("get_inventory_snapshot", args)).structured_content
-        assert disabled["servers"][0]["inventory"]["processors"]["source"] == "live"
+        assert disabled["servers"][0]["inventory"]["processors"]["source"] == "live" and not disabled["cache_enabled"]
+        again = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        assert again["servers"][0]["inventory"]["processors"]["source"] == "live"  # off means off
     assert b"good" not in inventory_cache._db_path().read_bytes()
+
+
+async def test_unusable_cache_falls_back_to_a_live_read(mcp_client):
+    import sqlite3
+
+    path = inventory_cache._db_path()
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE unrelated (value TEXT)")
+        db.execute("INSERT INTO unrelated VALUES ('keep')")
+    async with mcp_client as client:
+        result = (await client.call_tool("get_inventory_snapshot", {"servers": ["gen12"], "categories": ["processors"]})).structured_content
+    assert not result["cache_enabled"] and "unavailable" in result["cache_note"]
+    assert result["servers"][0]["inventory"]["processors"]["source"] == "live"
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT value FROM unrelated").fetchone() == ("keep",)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")

@@ -16,12 +16,14 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `get_firmware_inventory` | Every firmware component and version |
 | `get_processors` | CPUs and GPUs |
 | `get_memory` | Total, populated/empty slots, each DIMM |
+| `get_inventory_snapshot` | Processors, memory and firmware for one or more iLOs, served from the local cache when fresh (on by default, 15 minutes); each category says `cache` or `live` and when it was collected; `refresh=true` forces a live read. Not for health or power |
 | `get_storage` | Controllers, drives, RAID volumes |
 | `get_network_adapters` | NICs, ports, MACs, link, LLDP neighbor (switch and port) |
 | `get_event_log` | Newest IML (hardware), IEL (iLO) or Security Log entries, filter by severity (exact or `min_severity`), time window (`since`/`until`: `7d`, `24h`, a date) and message text; entries with a wrong iLO clock are flagged and listed last; `summary` groups identical messages with counts and first/last time |
 | `get_fleet_event_summary` | Significant events for many iLOs in one call: per server, Warning and Critical (by default) IML, IEL or Security Log entries grouped by message, most severe first |
 | `get_ilo_logins` | Who logged in to the iLOs, for many servers in one call: logins per day, by type, user and source IP/host, failed logins and lockout alerts; says when a log wrapped before the window start; proliant-mcp's own sessions are counted separately (`include_this_computer` to count them) |
 | `redfish_get` | Raw read-only GET of any `/redfish/v1/...` resource |
+| `get_inventory_cache_status`, `set_inventory_cache`, `clear_inventory_cache` | Check, turn off or change the lifetime of, or clear the local snapshot cache (see [Configuration](configuration.md)); the last two only change files on this computer |
 
 ## HPE Compute Ops Management (fleet)
 
@@ -33,6 +35,7 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `com_hardware_report` | Whole-fleet hardware table, compact: servers with identical hardware grouped, with model, CPU, storage controllers and drives, direct-attached drives, GPUs and NICs (with mode), plus NIC mode totals |
 | `com_list_nics` | NIC / HBA report for the whole fleet in one call: per server each adapter's mode (Ethernet, InfiniBand, FibreChannel), ports up and link speeds; totals by mode (and the most used), by adapter model (cards, ports, ports up, speeds) and link speed |
 | `com_list_gpus` | GPU report for the whole fleet in one call: per server model, iLO firmware, CPU and GPUs, totals by GPU model, servers with no cached inventory |
+| `get_com_inventory_snapshot` | COM hardware inventory for the fleet (optionally filtered by name), served from the local cache when fresh; each server says `cache` or `live` and when it was collected |
 | `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, CPU and GPUs (with serial numbers), NIC ports (mode, link, speed, MAC), last firmware update, active alerts |
 | `com_list_alerts` | Newest alerts, uncleared by default; filter by server and severity |
 | `com_list_jobs` | Newest jobs (firmware updates, inventory, OneView sync) with state and result |
@@ -64,6 +67,7 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `com_login` | Sign in to HPE GreenLake with pop-ups (email, then Okta Verify number or a secure password page); creates a GreenLake API client for you (see [Configuration](configuration.md)) |
 | `com_login_start`, `com_login_status` | The same sign-in for clients that show no pop-ups: the assistant asks for your email and tells you the Okta Verify number (or gives you the password page link) in the chat |
 | `add_server_start`, `add_server_status` | `add_server` for clients that show no pop-ups: the assistant asks for the address in the chat and gives you the secure password page link |
+| `add_servers_start`, `add_servers_status` | Add many iLOs from an IPv4 range, a list, or a CSV, INI, text or Excel file on a local page: preview, one shared login, check each iLO, choose what to save |
 
 Every other tool is annotated `readOnlyHint`. The setup tools change no server: `add_server`,
 `add_server_start` and `import_inventory` only edit the inventory file on this computer, and `com_login` also creates a

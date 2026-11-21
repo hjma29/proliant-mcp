@@ -6,10 +6,14 @@ directly (see the README).
 
 ---
 
-## Unreleased
+## v0.16.0 — 2026-11-21
 
-- Add a local browser flow for adding multiple iLOs from IPv4 ranges, lists, CSV, INI, text, or Excel files. Review targets before checking logins and choose which results to save; passwords stay out of chat.
-- Add opt-in local SQLite hardware snapshots for iLO and COM, with timestamps, expiry, explicit refresh and cache clearing. Existing operational-status tools remain live.
+### New
+- Add a local browser flow for adding multiple iLOs from IPv4 ranges, lists, CSV, INI, text, or Excel files (`add_servers_start`, `add_servers_status`). Review targets before checking logins and choose which results to save; passwords stay out of chat.
+- Add a local hardware snapshot cache, **on by default** (15 minutes), with `get_inventory_snapshot` (iLO processors, memory, firmware) and `get_com_inventory_snapshot` (COM hardware inventory). Repeat questions are answered in about 0.1 s instead of about 3 s on a real iLO. Results say whether they came from the cache or live and when they were collected, and `refresh=true` forces a live read. The cache is created on first use in an owner-only folder, never stores passwords or tokens, and falls back to a live read if it cannot be used. Turn it off, change its lifetime or clear it with `set_inventory_cache` / `clear_inventory_cache`. Health, power, alerts and the other existing tools stay live.
+
+### Fixes
+- Windows: the cache folder is secured without PowerShell's `Set-Acl`, which cannot load on some machines.
 
 ---
 

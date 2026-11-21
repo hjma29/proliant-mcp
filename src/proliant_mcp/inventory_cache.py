@@ -66,9 +66,10 @@ def _secure_directory() -> None:
 
 
 def settings() -> tuple[bool, int]:
+    """(enabled, lifetime in seconds). The cache is on with the default lifetime until the user changes it."""
     path = _settings_path()
     if not path.exists():
-        return False, DEFAULT_TTL
+        return True, DEFAULT_TTL
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -99,6 +100,16 @@ def configure(enabled: bool, ttl_seconds: int | None = None) -> dict[str, Any]:
         raise CacheError(f"Cannot save cache settings: {type(exc).__name__}") from exc
     return {"enabled": enabled, "ttl_seconds": ttl_seconds, "path": str(_db_path()),
             "note": "The local cache contains hardware inventory, not passwords. Disabling does not erase existing data."}
+
+
+def ensure_ready() -> None:
+    """Create the private cache directory and database on first use (the cache is on by default)."""
+    if _db_path().exists():
+        return
+    _secure_directory()
+    db = _connect(True)
+    assert db is not None
+    db.close()
 
 
 def key(*parts: object) -> str:
@@ -241,6 +252,18 @@ def timestamp(value: float) -> str:
 
 async def get(cache_key: str, ttl: int) -> tuple[Any, float] | None:
     return await asyncio.to_thread(_get, cache_key, ttl)
+
+
+async def prepare() -> tuple[bool, int, int | None, str | None]:
+    """(enabled, ttl, generation, note). A cache that cannot be used never blocks a live read."""
+    try:
+        enabled, ttl = settings()
+        if not enabled:
+            return False, ttl, None, None
+        await asyncio.to_thread(ensure_ready)
+        return True, ttl, await generation(), None
+    except CacheError as exc:
+        return False, DEFAULT_TTL, None, f"Local cache unavailable ({exc}); data was read live."
 
 
 async def generation() -> int:
