@@ -16,7 +16,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_bulk, chat_inventory, chat_login, com, compat, ilo, inventory_cli, login, oneview
+from proliant_mcp import __version__, chat_bulk, chat_inventory, chat_login, com, compat, ilo, inventory_cache, inventory_cli, login, oneview, snapshots
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -43,6 +43,11 @@ table of each server's storage controllers, drives, GPUs and NICs use com_hardwa
 groups servers with identical hardware. For NICs, HBAs, link speeds or which network mode
 (Ethernet, InfiniBand, FibreChannel) is used, use com_list_nics. Never loop com_get_server
 or com_api_get over many servers.
+For explicitly requested cached hardware inventory, get_inventory_snapshot and
+get_com_inventory_snapshot include collection times and distinguish live from cached data. Use
+refresh=true when the user requests fresh inventory. Never use these snapshots as current
+health, power, alerts, link, or other operational status; use the live tools instead. The local
+cache is disabled until the user explicitly agrees to enable it with set_inventory_cache.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
 set up for the workspace, sign the user in right away in this chat; do not send them to a
 browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fails or is
@@ -259,6 +264,82 @@ async def get_network_adapters(server: ServerName) -> list[dict[str, Any]]:
     """Host network adapters: model, part number, slot, firmware, and ports (MAC, link,
     speed, LLDP neighbor switch/port when available)."""
     return await _run(server, ilo.network_adapters)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_inventory_cache_status() -> dict[str, Any]:
+    """Whether optional local hardware snapshot caching is enabled and its TTL. It does not
+    inspect credentials or create a cache. Ask before changing the setting."""
+    try:
+        enabled, ttl = inventory_cache.settings()
+        return {"enabled": enabled, "ttl_seconds": ttl, "path": str(inventory_cache._db_path()),
+                "note": "The cache contains local hardware inventory. Live status tools do not use it."}
+    except inventory_cache.CacheError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def set_inventory_cache(
+    enabled: Annotated[bool, Field(description="Enable or disable local hardware snapshot caching; only with the user's explicit consent.")],
+    ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="Maximum snapshot age in seconds; omit to preserve the existing setting.")] = None,
+) -> dict[str, Any]:
+    """Enable or disable local SQLite hardware caching, only when the user explicitly requests it.
+    Cached hardware is stored on the server computer and may contain sensitive inventory.
+    Disabling stops reads and writes but does not erase the existing cache; use clear_inventory_cache
+    when the user asks to remove it. Health, power and other live tools are unaffected."""
+    try:
+        return await asyncio.to_thread(inventory_cache.configure, enabled, ttl_seconds)
+    except inventory_cache.CacheError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+async def clear_inventory_cache() -> dict[str, Any]:
+    """Remove locally cached hardware snapshots only when the user explicitly requests it.
+    Does not change the cache setting or delete the inventory or credentials."""
+    try:
+        count = await asyncio.to_thread(inventory_cache.clear)
+        return {"removed": count, "note": "Cache rows cleared; filesystem backups or SQLite free pages may retain old data."}
+    except inventory_cache.CacheError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+async def get_inventory_snapshot(
+    servers: Annotated[list[str] | None, Field(description="Configured iLO names or addresses; omit for all.")] = None,
+    categories: Annotated[list[Literal["processors", "memory", "firmware"]] | None, Field(description="Hardware categories; omit for all three.")] = None,
+    refresh: Annotated[bool, Field(description="Fetch new data even when a cached snapshot is available.")] = False,
+) -> dict[str, Any]:
+    """Hardware snapshots for one or more iLOs. Each category reports whether it came from the
+    cache or live, plus collection and expiry times. An iLO login is checked even for cache hits.
+    The cache is optional and disabled by default; refresh=true bypasses old entries. Component
+    health in a snapshot may be stale: use live tools for current health and operational state."""
+    targets = list(_servers().values()) if servers is None else list(dict.fromkeys(_resolve(name) for name in servers))
+    if not targets:
+        raise ToolError("Select at least one iLO server.")
+    parts = list(dict.fromkeys(categories if categories is not None else ["processors", "memory", "firmware"]))
+    if not parts:
+        raise ToolError("Select at least one inventory category.")
+    try:
+        return await snapshots.ilo_snapshot(targets, parts, refresh, _transport)
+    except inventory_cache.CacheError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+async def get_com_inventory_snapshot(
+    account: AccountName = None,
+    name_contains: Annotated[str | None, Field(description="Only server names containing this text.")] = None,
+    refresh: Annotated[bool, Field(description="Fetch fresh COM inventory rather than using local cache entries.")] = False,
+) -> dict[str, Any]:
+    """Snapshot COM hardware inventory across the fleet. Collection time and cache/live source
+    are shown per server; COM itself may also have an older inventory collection timestamp.
+    refresh=true bypasses the local cache, not COM's own inventory. Use live COM tools for
+    current health, power, alerts and connection status."""
+    try:
+        return await _com(account, lambda client: snapshots.com_snapshot(client, name_contains, refresh))
+    except inventory_cache.CacheError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 When = Annotated[

@@ -10,7 +10,7 @@ from fastmcp.exceptions import ToolError
 import fake_mgmt as fake_mgmt_module
 from fake_ilo import fake_ilo
 from fake_mgmt import fake_mgmt
-from proliant_mcp import com
+from proliant_mcp import com, inventory_cache
 from proliant_mcp import server as srv
 
 
@@ -55,6 +55,128 @@ async def test_server_summary(mcp_client):
     assert data["processors"]["model"] == "AMD EPYC 9375F 32-Core Processor"
     assert data["uid_light"] == "Off"
     assert data["post_state"] == "InPostDiscoveryComplete"
+
+
+async def test_optional_inventory_cache_respects_refresh_and_live_state(mcp_client, monkeypatch):
+    requests = []
+
+    def transport(request):
+        requests.append((request.method, request.url.path))
+        return _fake(request)
+
+    monkeypatch.setattr(srv, "_transport", httpx.MockTransport(transport))
+    args = {"servers": ["gen12"], "categories": ["processors"]}
+    async with mcp_client as client:
+        status = (await client.call_tool("get_inventory_cache_status", {})).structured_content
+        assert not status["enabled"] and not inventory_cache._db_path().exists()
+        uncached = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        assert uncached["servers"][0]["inventory"]["processors"]["source"] == "live"
+        assert not inventory_cache._db_path().exists()
+        enabled = (await client.call_tool("set_inventory_cache", {"enabled": True, "ttl_seconds": 60})).structured_content
+        assert enabled["enabled"] and inventory_cache._db_path().is_file()
+        first = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        first_requests = len(requests)
+        second = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        second_requests = requests[first_requests:]
+        a = first["servers"][0]["inventory"]["processors"]
+        b = second["servers"][0]["inventory"]["processors"]
+        assert a["source"] == "live" and b["source"] == "cache"
+        assert a["data"] == b["data"] and a["collected_at"] == b["collected_at"]
+        assert any(method == "POST" and "Sessions" in path for method, path in second_requests)
+        assert not any(method == "GET" and "Processors" in path for method, path in second_requests)
+        fresh = (await client.call_tool("get_inventory_snapshot", {**args, "refresh": True})).structured_content
+        assert fresh["servers"][0]["inventory"]["processors"]["source"] == "live"
+        await client.call_tool("get_health", {"server": "gen12"})
+        assert any(method == "GET" and path.endswith("/Systems/1/") for method, path in requests[first_requests:])
+        cleared = (await client.call_tool("clear_inventory_cache", {})).structured_content
+        assert cleared["removed"] == 1
+        after_clear = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        assert after_clear["servers"][0]["inventory"]["processors"]["source"] == "live"
+        await client.call_tool("set_inventory_cache", {"enabled": False})
+        disabled = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        assert disabled["servers"][0]["inventory"]["processors"]["source"] == "live"
+    assert b"good" not in inventory_cache._db_path().read_bytes()
+
+
+async def test_cached_snapshot_still_requires_login_and_scopes_identity(mcp_client):
+    async with mcp_client as client:
+        await client.call_tool("set_inventory_cache", {"enabled": True})
+        result = (await client.call_tool("get_inventory_snapshot", {"servers": ["gen12"], "categories": ["processors"]})).structured_content
+        assert result["servers"][0]["inventory"]["processors"]["source"] == "live"
+        ini = srv.config_path()
+        ini.write_text(ini.read_text().replace("[gen12]\nhost = 192.0.2.10", "[gen12]\nhost = 192.0.2.10\npassword = wrong"))
+        failed = (await client.call_tool("get_inventory_snapshot", {"servers": ["gen12"], "categories": ["processors"]})).structured_content
+        assert "error" in failed["servers"][0] and "inventory" not in failed["servers"][0]
+
+
+async def test_com_snapshot_caches_inventory_but_reads_live_server_list(mcp_client, monkeypatch):
+    requests = []
+
+    def transport(request):
+        requests.append((request.method, request.url.path))
+        return _fake(request)
+
+    monkeypatch.setattr(srv, "_transport", httpx.MockTransport(transport))
+    args = {"name_contains": "esx2"}
+    async with mcp_client as client:
+        await client.call_tool("set_inventory_cache", {"enabled": True})
+        first = (await client.call_tool("get_com_inventory_snapshot", args)).structured_content
+        assert first["servers"] and all(row["inventory"]["source"] == "live" for row in first["servers"])
+        requests.clear()
+        second = (await client.call_tool("get_com_inventory_snapshot", args)).structured_content
+        assert all(row["inventory"]["source"] == "cache" for row in second["servers"])
+        assert any(path.endswith("/servers") for _, path in requests)
+        assert not any(path.endswith("/inventory") for _, path in requests)
+        refreshed = (await client.call_tool("get_com_inventory_snapshot", {**args, "refresh": True})).structured_content
+        assert all(row["inventory"]["source"] == "live" for row in refreshed["servers"])
+    assert b"csecret" not in inventory_cache._db_path().read_bytes()
+
+
+async def test_cache_expiry_clear_race_and_invalid_database(mcp_client):
+    import sqlite3
+    import time
+
+    async with mcp_client as client:
+        await client.call_tool("set_inventory_cache", {"enabled": True, "ttl_seconds": 1})
+        args = {"servers": ["gen12"], "categories": ["processors"]}
+        await client.call_tool("get_inventory_snapshot", args)
+        with sqlite3.connect(inventory_cache._db_path()) as db:
+            db.execute("UPDATE snapshots SET collected_at = ?", (time.time() - 10,))
+        refreshed = (await client.call_tool("get_inventory_snapshot", args)).structured_content
+        assert refreshed["servers"][0]["inventory"]["processors"]["source"] == "live"
+        generation = await inventory_cache.generation()
+        await client.call_tool("clear_inventory_cache", {})
+        assert not await inventory_cache.put("in-flight", {"safe": True}, time.time(), 1, generation)
+        assert await inventory_cache.get("in-flight", 1) is None
+
+
+async def test_cache_keeps_newer_concurrent_results(mcp_client):
+    import time
+
+    async with mcp_client as client:
+        await client.call_tool("set_inventory_cache", {"enabled": True})
+        generation = await inventory_cache.generation()
+        now = time.time()
+        assert await inventory_cache.put("newer", {"value": 2}, now - 1, 60, generation)
+        assert await inventory_cache.put("other", {"value": 1}, now - 2, 60, generation)
+        assert not await inventory_cache.put("newer", {"value": 0}, now - 3, 60, generation)
+        assert (await inventory_cache.get("newer", 60))[0] == {"value": 2}
+        assert (await inventory_cache.get("other", 60))[0] == {"value": 1}
+
+
+async def test_cache_does_not_overwrite_unrelated_database(mcp_client):
+    import sqlite3
+
+    path = inventory_cache._db_path()
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE unrelated (value TEXT)")
+        db.execute("INSERT INTO unrelated VALUES ('keep')")
+    async with mcp_client as client:
+        with pytest.raises(ToolError, match="unexpected format"):
+            await client.call_tool("set_inventory_cache", {"enabled": True})
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT value FROM unrelated").fetchone() == ("keep",)
 
 
 async def test_processors_split_gpus(mcp_client):

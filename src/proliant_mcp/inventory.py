@@ -194,8 +194,10 @@ def save_entries(entries: list[Entry], replace_existing: bool = True) -> SaveRes
 # ── importing a file ──────────────────────────────────────────────────────────
 
 _COLUMNS = {
-    "name": ("name", "server", "server name", "display name", "label"),
-    "host": ("host", "ip", "ip address", "address", "ilo ip", "ilo host", "ilo address", "ilo", "hostname", "fqdn", "management ip", "bmc ip"),
+    "name": ("name", "server", "server name", "device name", "display name", "label"),
+    "host": ("host", "ip", "ip address", "address", "ilo ip", "ilo ip address", "ilo ipv4 address",
+             "ilo host", "ilo hostname", "ilo address", "ilo", "hostname", "fqdn",
+             "management ip", "management ip address", "bmc ip", "bmc ip address"),
     "type": ("type", "kind", "product"),
     "username": ("username", "user", "user name", "login", "account"),
     "password": ("password", "pass", "passwd", "pwd"),

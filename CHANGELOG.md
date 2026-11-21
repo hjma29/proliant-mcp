@@ -9,6 +9,7 @@ directly (see the README).
 ## Unreleased
 
 - Add a local browser flow for adding multiple iLOs from IPv4 ranges, lists, CSV, INI, text, or Excel files. Review targets before checking logins and choose which results to save; passwords stay out of chat.
+- Add opt-in local SQLite hardware snapshots for iLO and COM, with timestamps, expiry, explicit refresh and cache clearing. Existing operational-status tools remain live.
 
 ---
 

@@ -365,8 +365,8 @@ def test_bulk_input_excel_and_password_rejection():
     book = Workbook()
     sheet = book.active
     sheet.title = "iLOs"
-    sheet.append(["Server Name", "iLO IP"])
-    sheet.append(["lab", "192.0.2.10"])
+    sheet.append(["Device Name", "iLO IP Address", "Rack"])
+    sheet.append(["lab", "192.0.2.10", "rack-a"])
     output = io.BytesIO()
     book.save(output)
     parsed, note = bulk_inventory.parse_input(output.getvalue(), "servers.xlsx")

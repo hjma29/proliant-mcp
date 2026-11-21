@@ -91,6 +91,31 @@ chmod 600 ~/.config/proliant-mcp/inventory.ini
 
 A [proliant-cli](https://github.com/hjma29/proliant-cli) inventory at `~/.config/proliant-cli/inventory.ini` is also read.
 
+## Optional hardware snapshot cache
+
+The local SQLite cache is **off by default**. Ask your assistant to enable the inventory cache
+and optionally specify a lifetime; the default is 15 minutes, with a maximum of 24 hours.
+`set_inventory_cache` saves this preference locally; `get_inventory_cache_status` shows it.
+Cached hardware snapshots are stored in `~/.config/proliant-mcp/cache/inventory.sqlite3`
+(Windows: `%USERPROFILE%\.config\proliant-mcp\cache\inventory.sqlite3`). They can contain
+server names, serial numbers and hardware details, so enable the cache only on a trusted
+computer. The cache never stores passwords or access tokens. Enabling the cache requires an
+owner-only cache directory; failure to secure it is reported instead of enabling caching.
+
+`get_inventory_snapshot` uses the cache for iLO processors, memory and firmware;
+`get_com_inventory_snapshot` uses it for COM hardware inventory. Each snapshot states whether
+it is local cache or a live fetch and when it was collected. The iLO is authenticated even on a
+cache hit; COM's server list is fetched live. COM's inventory itself may have been collected
+earlier, so also check its `inventory_collected_at` value. Use `refresh=true` to bypass the
+local cache. Expired entries and failed fetches are never returned as fresh cache hits.
+Snapshot component-health values may be old; use the existing live tools for current health,
+power, alerts and network status. No background polling is performed.
+
+Ask to disable the cache to stop further reads and writes; this does not remove existing data.
+Ask to clear it to remove cached rows. Clearing does not guarantee erasure from filesystem
+backups or SQLite free pages. Clear the cache after changing permissions or replacing hardware.
+These snapshot tools are separate from existing live tools, which keep their existing behavior.
+
 ## iLO
 
 A read-only iLO account (Login privilege only) is enough for every tool. iLO uses a
