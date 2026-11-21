@@ -463,3 +463,56 @@ async def test_bulk_conflicts_and_retry(home):
     assert result["status"] == "saved" and result["added"] == ["new"]
     assert "other: address already belongs to existing" in result["skipped"]
     assert set(load_servers()) == {"existing", "new"}
+
+
+@pytest.mark.parametrize("source", ["range", "text", "csv", "excel"])
+async def test_bulk_browser_import_and_save(home, source):
+    playwright = pytest.importorskip("playwright.async_api")
+    entries = [("server1", "192.0.2.10"), ("server2", "192.0.2.11"), ("server3", "192.0.2.12")]
+    path = home / {"text": "servers.txt", "csv": "servers.csv", "excel": "servers.xlsx"}.get(source, "unused")
+    if source == "text":
+        path.write_text("\n".join(f"{name} {host}" for name, host in entries), encoding="utf-8")
+    elif source == "csv":
+        path.write_text("name,host\n" + "\n".join(f"{name},{host}" for name, host in entries), encoding="utf-8")
+    elif source == "excel":
+        book = Workbook()
+        book.active.append(["name", "host"])
+        for entry in entries:
+            book.active.append(entry)
+        book.save(path)
+
+    async with playwright.async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            page = await browser.new_page()
+            async with Client(srv.mcp) as client:
+                first = (await client.call_tool("add_servers_start", {})).structured_content
+                assert first["status"] == "enter_servers"
+                await page.goto(first["url"])
+                if source == "range":
+                    await page.locator("#source").fill("192.0.2.10-192.0.2.12")
+                else:
+                    await page.locator("#file").set_input_files(str(path))
+                await page.get_by_role("button", name="Preview").click()
+                await playwright.expect(page.get_by_role("heading", name="Preview iLOs")).to_be_visible(timeout=15000)
+                assert await page.locator("tbody tr").count() == 3
+                for i, (_, host) in enumerate(entries):
+                    await playwright.expect(page.get_by_label(f"Address for row {i + 1}")).to_have_value(host)
+                assert not our_inventory(home).exists()
+                await page.get_by_label("Name for row 1").fill("lab")
+                await page.get_by_label("Select row 2").uncheck()
+                await page.get_by_label("Select row 3").uncheck()
+                await page.get_by_role("button", name="Continue to credentials").click()
+                await playwright.expect(page.get_by_role("heading", name="Shared iLO credentials")).to_be_visible(timeout=15000)
+                await page.locator("#password").fill("good")
+                await page.get_by_role("button", name="Check selected iLOs").click()
+                await playwright.expect(page.get_by_role("heading", name="Check results")).to_be_visible(timeout=15000)
+                await playwright.expect(page.get_by_text("OK:", exact=False)).to_be_visible()
+                assert not our_inventory(home).exists()
+                await page.get_by_role("button", name="Save selected").click()
+                await playwright.expect(page.get_by_text("Saved 1 iLOs", exact=False)).to_be_visible(timeout=15000)
+                result = (await client.call_tool("add_servers_status", {})).structured_content
+            assert result["status"] == "saved" and result["added"] == ["lab"]
+            assert set(load_servers()) == {"lab"}
+        finally:
+            await browser.close()

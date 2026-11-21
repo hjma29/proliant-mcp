@@ -1,0 +1,29 @@
+name: macOS customer tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install current commit as a customer
+        env:
+          PKG: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.zip
+        run: |
+          uvx --python 3.13 --from "$PKG" proliant-mcp --check | tee check.txt
+          grep -E 'proliant-mcp [0-9]+\.[0-9]+\.[0-9]+: [0-9]+ tools' check.txt
+      - name: Run full test suite
+        run: uv run pytest -q
+      - name: Install browser for GUI tests
+        run: uv run --with playwright==1.56.0 python -m playwright install chromium
+      - name: Test bulk onboarding in Chromium
+        run: uv run --with playwright==1.56.0 pytest -v tests/test_inventory.py -k test_bulk_browser
