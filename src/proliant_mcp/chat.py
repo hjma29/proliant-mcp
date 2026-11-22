@@ -337,7 +337,13 @@ class FlowPage:
     def link(self) -> str:
         """Start of a next_step: make sure the assistant shows the link (the user cannot see tool results)."""
         opened = "It was opened in the user's browser; show the link anyway in case it did not. " if self.opened else ""
-        return f"Show the user this link in your reply, as a clickable link, before calling any tool: {self.url} . {opened}"
+        port = self._server.server_address[1]
+        remote = (
+            "If the user cannot open it because this MCP server runs on another computer (a remote gateway: 127.0.0.1 is that "
+            f"computer, not theirs), do not keep waiting: they can forward the port with `ssh -L {port}:127.0.0.1:{port} "
+            "<user>@<server-host>` and open the same link on their own computer. Never ask for a password in the chat. "
+        )
+        return f"Show the user this link in your reply, as a clickable link, before calling any tool: {self.url} . {opened}{remote}"
 
     @staticmethod
     def _deliver(answer: asyncio.Future[dict[str, str]], values: dict[str, str]) -> None:

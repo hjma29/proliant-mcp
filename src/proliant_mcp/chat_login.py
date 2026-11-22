@@ -246,7 +246,10 @@ async def _ask_email_on_page(session: Relay, page: FlowPage, status_tool: str = 
         session.publish(
             "enter_email",
             f"{error + ' ' if error else ''}{page.link()}The user types their HPE GreenLake email on that page (it is not a "
-            "secret, but do not guess it) and can keep it open: it shows each next step. " + _keep_polling(status_tool),
+            "secret, but do not guess it) and can keep it open: it shows each next step. If the user cannot open the link because this "
+            "MCP server runs on another computer (a remote gateway), do not wait for the page: ask the user for their email in the "
+            "chat as plain text (not a secret) and call the start tool again with email set; an @hpe.com account then needs only "
+            "the Okta Verify number, relayed in the chat, and no page. " + _keep_polling(status_tool),
             url=page.url,
         )
         try:

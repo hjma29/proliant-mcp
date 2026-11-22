@@ -369,6 +369,21 @@ async def test_com_login_without_email_or_popups_asks_for_it_on_a_local_page(gre
     assert (step["status"], step["email"]) == ("signed_in", "you@hpe.com")
 
 
+async def test_server_on_another_computer_signs_in_without_any_page(greenlake):
+    """Remote gateway: the user cannot open 127.0.0.1 there, so the assistant asks for the email in the chat."""
+    greenlake()
+    async with Client(srv.mcp) as client:
+        first = (await client.call_tool("com_login_start", {})).structured_content
+        assert first["status"] == "enter_email"
+        hint = first["next_step"]
+        assert "runs on another computer" in hint and "ask the user for their email in the chat" in hint
+        assert f"ssh -L {first['url'].split(':')[2].split('/')[0]}:127.0.0.1:" in hint and "Never ask for a password" in hint
+        again = (await client.call_tool("com_login_start", {"email": "you@hpe.com"})).structured_content
+        assert (again["status"], again["number"]) == ("approve_push", 21) and "tap 21" in again["next_step"]
+        done = (await client.call_tool("com_login_status", {})).structured_content
+    assert (done["status"], done["servers"]) == ("signed_in", 7)  # the Okta number came back in the chat; no page was opened
+
+
 async def test_relay_sign_in_password_on_local_page(greenlake):
     greenlake()
     async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:

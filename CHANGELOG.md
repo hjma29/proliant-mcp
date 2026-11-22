@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## Unreleased
+
+### Fixes
+- Remote servers (for example an MCP server on a gateway, used from a desktop on another computer): the sign-in page is on the server's own 127.0.0.1, so the user cannot open it. The first sign-in step now tells the assistant not to wait for it: ask the user for their email in the chat and call `com_login_start` again with it. An `@hpe.com` account then needs only the Okta Verify number, relayed in the chat, and no page. Every page link also says how to forward the port with `ssh -L`. Passwords still never go through the chat.
+
+---
+
 ## v0.17.0 — 2026-11-21
 
 ### New

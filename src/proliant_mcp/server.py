@@ -55,7 +55,10 @@ set up for the workspace, sign the user in right away in this chat; do not send 
 browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fails or is
 cancelled without the user seeing a pop-up, call com_login_start (with the email only if the user
 already gave it; never ask for it with a question tool, which may be auto-answered "user not
-available": without an email the user types it on a local page), tell the user exactly what it
+available": without an email the user types it on a local page. If this MCP server runs on
+another computer than the user (a remote or gateway deployment), that page cannot be opened:
+ask the user for their email in the chat as plain text first and pass it; an @hpe.com account then
+needs only the Okta Verify number, no page), tell the user exactly what it
 returns (the page link, the Okta Verify number to tap) and keep calling com_login_status without waiting
 for the user to reply (it waits for them; the page walks them through every step), and call com_login_status until it says signed_in. If the user hit the limit of GreenLake API clients, or asks to see or delete them, use
 greenlake_list_api_clients_start / greenlake_delete_api_clients_start (the user picks what to delete on a page)
@@ -691,7 +694,7 @@ SIGN_IN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentH
 
 @mcp.tool(annotations=SIGN_IN)
 async def com_login_start(
-    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they already said it. Omit it otherwise: the user then types it on a local page (do not guess it).")] = None,
+    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they already said it. If this MCP server runs on another computer than the user (remote gateway), ask for it in the chat first and pass it. Otherwise omit it: the user then types it on a local page (do not guess it).")] = None,
     workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
     region: Annotated[Literal["us-west", "eu-central", "ap-northeast"] | None, Field(description="COM region; detected if omitted.")] = None,
 ) -> dict[str, Any]:
