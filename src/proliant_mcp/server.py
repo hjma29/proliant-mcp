@@ -16,7 +16,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_inventory, chat_login, com, compat, ilo, inventory_cache, inventory_cli, login, oneview, snapshots
+from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_inventory, chat_login, com, compat, fleet_table, ilo, inventory_cache, inventory_cli, login, oneview, snapshots
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -37,8 +37,10 @@ For the OS a server runs or why it isn't booting, see `os` in get_server_summary
 For significant events on several servers use get_fleet_event_summary. For Synergy uplinks use
 oneview_list_uplink_sets.
 For which HPE GreenLake services exist and which are set up in the workspace use greenlake_list_services.
-For tables or comparisons across servers use com_list_servers (add include_hardware for CPU, GPU
-and storage controller columns) or com_list_gpus; they return the whole fleet in one call. For a
+To show the user a list of servers use com_list_servers_table: it returns a ready-made table and exact
+counts, so present them as they are and never retype the data into a script. For analysis or
+comparisons across servers use com_list_servers (add include_hardware for CPU, GPU and storage
+controller columns) or com_list_gpus; they return the whole fleet in one call. For a
 table of each server's storage controllers, drives, GPUs and NICs use com_hardware_report: it is compact and
 groups servers with identical hardware. For NICs, HBAs, link speeds or which network mode
 (Ethernet, InfiniBand, FibreChannel) is used, use com_list_nics. Never loop com_get_server
@@ -542,8 +544,29 @@ async def com_list_servers(
     """Servers in Compute Ops Management: name, serial, model, generation, health, power,
     COM connection, subscription, iLO host/IP/version, OS, CPU vendor and firmware bundle.
     One call returns the whole fleet, so use it for any table or comparison across servers.
-    Set include_hardware for CPU, GPU and storage controller columns."""
+    Set include_hardware for CPU, GPU and storage controller columns. To simply SHOW the user the
+    list, prefer com_list_servers_table: a ready-made table with exact counts, much faster to present."""
     return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def com_list_servers_table(
+    account: AccountName = None,
+    health: Annotated[Literal["OK", "WARNING", "CRITICAL", "UNKNOWN"] | None, Field(description="Only servers with this health summary.")] = None,
+    connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
+    name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
+    columns: Annotated[
+        list[Literal["name", "model", "health", "power", "connected", "ilo_ip", "ilo_host", "os", "serial", "cpu", "generation", "subscription", "oneview"]] | None,
+        Field(description="Columns in order. Default: name, model, health, power, connected, ilo_ip. Add only what the user asks for: a longer table takes much longer to show."),
+    ] = None,
+) -> dict[str, Any]:
+    """The COM servers as a ready-made Markdown table with exact counts, for when the user wants to
+    SEE the list (\"list my servers\", \"which are critical\"). Show `table` as written and quote `counts`
+    (total, by health, power, model, connected): the server computed them, so do not recount rows or
+    retype the data into a script. The default columns keep the table short; pass `columns` for more.
+    Same filters as com_list_servers, which returns the full JSON when you must analyze the data."""
+    rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, False))
+    return fleet_table.build(rows, columns)
 
 
 @mcp.tool(annotations=READ_ONLY)

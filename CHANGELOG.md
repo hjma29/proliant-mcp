@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## Unreleased
+
+### New
+- `com_list_servers_table` returns the COM servers as a ready-made Markdown table with exact counts (total, by health, power and model, connected to COM). With the raw JSON of `com_list_servers`, an assistant has to write every row itself and miscounts: on a 49-server fleet with a local model, answering "show me my servers list in com" took 122 s, and the counts it gave were wrong. The table result is about 4.7 KB instead of 33 KB and the counts are exact. Default columns are name, model, health, power, connected and iLO IP; `columns` adds more. `com_list_servers` is unchanged, and the server instructions now point assistants to the table tool when the user wants to see the list.
+
+---
+
 ## v0.18.0 — 2026-11-21
 
 ### Fixes

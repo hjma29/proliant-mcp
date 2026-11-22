@@ -503,6 +503,45 @@ async def test_com_list_servers_with_hardware_and_server_detail(mcp_client):
     assert detail["hardware"]["gpus"][0]["serial_numbers"] == ["GSN3", "GSN4"]
 
 
+async def test_com_list_servers_table_has_exact_counts_and_a_short_default_table(mcp_client):
+    from collections import Counter
+
+    async with mcp_client as c:
+        rows = (await c.call_tool("com_list_servers", {})).structured_content["result"]
+        out = (await c.call_tool("com_list_servers_table", {})).structured_content
+        wide = (await c.call_tool("com_list_servers_table", {"columns": ["name", "serial", "ilo_host", "os"]})).structured_content
+        one = (await c.call_tool("com_list_servers_table", {"name_contains": "gpu1"})).structured_content
+        none = (await c.call_tool("com_list_servers_table", {"name_contains": "no-such-server"})).structured_content
+    lines = out["table"].splitlines()
+    assert out["total"] == len(rows) and len(lines) == len(rows) + 2  # header, separator, one line per server
+    assert out["columns"] == ["Name", "Model", "Health", "Power", "Connected", "iLO IP"]
+    assert out["counts"]["by_health"] == dict(Counter(r["health"] or "UNKNOWN" for r in rows))
+    assert out["counts"]["connected_to_com"] == {"yes": sum(1 for r in rows if r["connected"]), "no": sum(1 for r in rows if not r["connected"])}
+    assert sum(out["counts"]["by_model"].values()) == len(rows) and "do not recount" in out["note"]
+    assert all(r["name"] in out["table"] for r in rows) and "firmware" not in out["table"].lower()
+    assert wide["columns"] == ["Name", "Serial", "iLO host", "OS"] and wide["table"].splitlines()[0] == "| Name | Serial | iLO host | OS |"
+    assert one["total"] == 1 and "gpu1.example.com" in one["table"]
+    assert none["total"] == 0 and none["table"] == "No servers match."
+
+
+def test_fleet_table_cells_cannot_break_the_table():
+    from proliant_mcp import fleet_table
+
+    rows = [
+        {"name": "a|b", "model": "line\nbreak", "health": None, "power_state": "ON", "connected": None, "ilo": {"ip": None}},
+        {"name": "ok", "model": "M", "health": "CRITICAL", "power_state": None, "connected": True, "ilo": {"ip": "192.0.2.1"}},
+    ]
+    out = fleet_table.build(rows, ["bogus", "name", "model", "health", "connected", "ilo_ip"])
+    assert out["table"].splitlines() == [
+        "| Name | Model | Health | Connected | iLO IP |",
+        "|---|---|---|---|---|",
+        "| a\\|b | line break | ⚪ UNKNOWN | - | - |",
+        "| ok | M | 🔴 CRITICAL | Yes | 192.0.2.1 |",
+    ]
+    assert out["counts"]["by_health"] == {"UNKNOWN": 1, "CRITICAL": 1}
+    assert fleet_table.build([], ["bogus"])["columns"] == ["Name", "Model", "Health", "Power", "Connected", "iLO IP"]
+
+
 def _greenlake_by_region(totals):
     """Fake GreenLake where COM answers only in the regions listed in *totals* (others: routing 404)."""
 
