@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.20.1 — 2026-11-22
+
+### Fixed
+- An assistant that lists tools by name and first sentence (Hermes Agent shows `name: first sentence`, clipped to 80 characters) chose `com_list_servers`, the 35 KB raw JSON tool, for "show me my servers list in com". The hint to use `com_list_servers_table` was at the end of the description and was cut off. Both descriptions now start with the guidance: `com_list_servers` opens with "Raw COM JSON for analysis; to list servers use com_list_servers_table", and `com_list_servers_table` with "List or show the COM servers". A test keeps it that way. The wrong choice cost a 47 s context compression and a 40 s answer.
+
+---
+
 ## v0.20.0 — 2026-11-22
 
 ### Changed

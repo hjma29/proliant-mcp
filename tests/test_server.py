@@ -574,6 +574,15 @@ def test_fleet_table_cells_cannot_break_the_table():
     assert fleet_table.build([], ["bogus"])["columns"] == ["Name", "Model", "Health"]
 
 
+async def test_server_list_tools_steer_the_model_in_their_first_80_characters(mcp_client):
+    """Hermes (and clients like it) list deferred tools as `name: first sentence`, clipped to 80 characters, so the
+    model picks a tool from that alone. Without this, "list my servers in com" went to the 35 KB raw JSON tool."""
+    async with mcp_client as c:
+        tools = {t.name: " ".join((t.description or "").split()) for t in await c.list_tools()}
+    assert "com_list_servers_table" in tools["com_list_servers"][:80]
+    assert tools["com_list_servers_table"].lower().startswith("list or show") and "." in tools["com_list_servers_table"][:80]
+
+
 async def test_tool_definitions_stay_small(mcp_client):
     """Every tool's name, description and schema is sent to the model on every turn (about 200 tokens a tool),
     so they must stay short. If this fails, shorten the new text (the tool's runtime next_step can carry details)

@@ -525,10 +525,10 @@ async def com_list_servers(
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server (CPU, GPUs, storage controllers and drives) from COM's cached inventory. Slower: one read per server.")] = False,
 ) -> list[dict[str, Any]]:
-    """Servers in Compute Ops Management as JSON: name, serial, model, generation, health, power, COM
-    connection, subscription, iLO host/IP/version, OS, CPU vendor, firmware bundle. One call returns
-    the whole fleet; use it to analyze or compare. To just SHOW the list, prefer
-    com_list_servers_table (ready-made table, exact counts, much faster)."""
+    """Raw COM JSON for analysis; to list servers use com_list_servers_table.
+    Per server: name, serial, model, generation, health, power, COM connection, subscription,
+    iLO host/IP/version, OS, CPU vendor, firmware bundle. About 700 characters per server, so a
+    big fleet fills the model's context. One call returns the whole fleet."""
     return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
 
 
@@ -552,12 +552,12 @@ async def com_list_servers_table(
         ),
     ] = None,
 ) -> dict[str, Any]:
-    """The COM servers, ready to show, with exact counts: for "list my servers", "which are
-    critical", "storage of each server". With no `columns`, a big fleet comes back as a short
-    grouped list (health summary, the servers needing attention, the OK ones by model) that is
-    quick to write out; pass `columns` for a real table with exactly what was asked. Show `table`
-    as written and quote `counts`: do not retype the data into a script. Same filters as
-    com_list_servers, which returns the full JSON for analysis."""
+    """List or show the COM servers: ready to display, exact counts, fast. Use this for "list my
+    servers", "which are critical", "storage of each server". With no `columns`, a big fleet comes
+    back as a short grouped list (health summary, the servers needing attention, the OK ones by
+    model) that is quick to write out; pass `columns` for a real table with exactly what was asked.
+    Show `table` as written and quote `counts`; do not retype the data into a script. Same filters
+    as com_list_servers, which returns the full JSON for analysis."""
     wanted = fleet_table.pick_columns(columns)
     hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted))
     rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, "nics" in wanted))
