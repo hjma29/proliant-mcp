@@ -490,6 +490,14 @@ async def test_com_list_gpus_reports_the_fleet_in_one_call(mcp_client):
         everyone = (await c.call_tool("com_list_gpus", {"include_servers_without_gpus": True, "name_contains": "esx"})).structured_content
     assert [s["name"] for s in everyone["servers"]] == ["esx2.example.com"] and everyone["servers"][0]["gpu_count"] == 0
 
+    async with mcp_client as c:
+        l40s = (await c.call_tool("com_list_gpus", {"gpu_model": "l40S"})).structured_content  # any case
+        nothing = (await c.call_tool("com_list_gpus", {"gpu_model": "H100", "include_servers_without_gpus": True})).structured_content
+    assert [s["name"] for s in l40s["servers"]] == ["gpu1.example.com"]
+    assert (l40s["servers_checked"], l40s["servers_with_gpus"], l40s["total_gpus"], l40s["gpus_by_model"]) == (4, 1, 2, {"NVIDIA L40S": 2})
+    assert [g["name"] for g in l40s["servers"][0]["gpus"]] == ["NVIDIA L40S"] and l40s["servers"][0]["gpu_count"] == 2  # only the matching GPUs
+    assert nothing["servers"] == [] and nothing["total_gpus"] == 0 and nothing["inventory_unavailable"] == ["dl345.example.com"]
+
 
 async def test_com_list_servers_with_hardware_and_server_detail(mcp_client):
     async with mcp_client as c:

@@ -596,11 +596,13 @@ async def com_list_gpus(
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     include_servers_without_gpus: Annotated[bool, Field(description="Also list servers with no GPU.")] = False,
+    gpu_model: Annotated[str | None, Field(description="Only GPUs whose name contains this text, e.g. H100 or L40S.")] = None,
 ) -> dict[str, Any]:
     """GPU report for the whole COM fleet: per server the model, iLO firmware, health, CPU and GPUs
     (name, vendor, part number, count, health), plus totals by GPU model and the servers COM has
-    no inventory for (GPUs unknown, not absent). Start here for any GPU question."""
-    return await _com(account, lambda c: com.list_gpus(c, name_contains, connected, include_servers_without_gpus))
+    no inventory for (GPUs unknown, not absent). Start here for any GPU question; set gpu_model
+    (e.g. H100) to list only servers with that GPU."""
+    return await _com(account, lambda c: com.list_gpus(c, name_contains, connected, include_servers_without_gpus, gpu_model))
 
 
 @mcp.tool(annotations=READ_ONLY)

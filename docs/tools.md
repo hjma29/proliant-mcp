@@ -35,7 +35,7 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `greenlake_list_services` | Every HPE GreenLake service and where each is provisioned in your workspace (Compute Ops Management, Data Services, Aruba Central, ...) |
 | `com_hardware_report` | Whole-fleet hardware table, compact: servers with identical hardware grouped, with model, CPU, storage controllers and drives, direct-attached drives, GPUs and NICs (with mode), plus NIC mode totals |
 | `com_list_nics` | NIC / HBA report for the whole fleet in one call: per server each adapter's mode (Ethernet, InfiniBand, FibreChannel), ports up and link speeds; totals by mode (and the most used), by adapter model (cards, ports, ports up, speeds) and link speed |
-| `com_list_gpus` | GPU report for the whole fleet in one call: per server model, iLO firmware, CPU and GPUs, totals by GPU model, servers with no cached inventory |
+| `com_list_gpus` | GPU report for the whole fleet in one call (`gpu_model`, e.g. `H100`, lists only servers with that GPU): per server model, iLO firmware, CPU and GPUs, totals by GPU model, servers with no cached inventory |
 | `get_com_inventory_snapshot` | COM hardware inventory for the fleet (optionally filtered by name), served from the local cache when fresh; each server says `cache` or `live` and when it was collected |
 | `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, CPU and GPUs (with serial numbers), NIC ports (mode, link, speed, MAC), last firmware update, active alerts |
 | `com_list_alerts` | Newest alerts, uncleared by default; filter by server and severity |

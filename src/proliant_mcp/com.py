@@ -610,20 +610,32 @@ async def list_servers(
     return rows
 
 
-async def list_gpus(c: ComClient, name_contains: str | None, connected: bool | None, include_without_gpus: bool) -> dict[str, Any]:
-    """Fleet GPU report: one row per server with its model, iLO firmware, CPU and GPUs."""
+async def list_gpus(
+    c: ComClient, name_contains: str | None, connected: bool | None, include_without_gpus: bool, gpu_model: str | None = None,
+) -> dict[str, Any]:
+    """Fleet GPU report: one row per server with its model, iLO firmware, CPU and GPUs.
+
+    ``gpu_model`` keeps only GPUs whose name or vendor contains the text (any case), so only servers with
+    such a GPU are listed and the totals count only those GPUs."""
     rows = await list_servers(c, None, connected, name_contains, include_hardware=True)
+    wanted = (gpu_model or "").strip().lower()
     totals: Counter[str] = Counter()
-    report, unavailable = [], []
+    report, unavailable, with_gpus = [], [], 0
     for r in rows:
         hw = r["hardware"]
         if not hw.get("cpu_gpu_known"):
             unavailable.append(r["name"])
-        for g in hw.get("gpus", []):
+        gpus = [
+            g for g in hw.get("gpus", [])
+            if not wanted or wanted in f"{g.get('manufacturer') or ''} {g['name']}".lower()
+        ]
+        gpu_count = sum(g["count"] for g in gpus) if wanted else hw.get("gpu_count", 0)
+        with_gpus += bool(gpu_count)
+        for g in gpus:
             vendor = g["manufacturer"]
             label = f"{vendor} {g['name']}" if vendor and vendor.lower() not in g["name"].lower() else g["name"]
             totals[label] += g["count"]
-        if hw.get("gpu_count") or include_without_gpus:
+        if gpu_count or (include_without_gpus and not wanted):
             report.append({
                 "name": r["name"],
                 "serial_number": r["serial_number"],
@@ -634,13 +646,13 @@ async def list_gpus(c: ComClient, name_contains: str | None, connected: bool | N
                 "power_state": r["power_state"],
                 "connected": r["connected"],
                 "cpu": hw.get("cpu"),
-                "gpu_count": hw.get("gpu_count", 0),
-                "gpus": hw.get("gpus", []),
+                "gpu_count": gpu_count,
+                "gpus": gpus,
                 "inventory_collected_at": hw.get("inventory_collected_at"),
             })
     return {
         "servers_checked": len(rows),
-        "servers_with_gpus": sum(1 for r in rows if r["hardware"].get("gpu_count")),
+        "servers_with_gpus": with_gpus,
         "total_gpus": sum(totals.values()),
         "gpus_by_model": dict(totals),
         "inventory_unavailable": unavailable,
