@@ -6,7 +6,7 @@ directly (see the README).
 
 ---
 
-## Unreleased
+## v0.17.0 — 2026-11-21
 
 ### New
 - `greenlake_list_api_clients_start` lists your own personal GreenLake API clients, and `greenlake_delete_api_clients_start` deletes the ones you choose (both finish with `greenlake_api_clients_status`). Each GreenLake user can only have a few personal API clients and `com_login` makes one per computer, so old ones pile up. Both sign you in like `com_login_start`; the delete tool shows a page on your own computer with check boxes, and nothing is deleted until you tick the clients and confirm there. The client this computer's saved login uses is flagged and never pre-ticked. When `com_login` cannot create a client, its error now points to these tools.
