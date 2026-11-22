@@ -552,15 +552,16 @@ async def com_list_servers_table(
         ),
     ] = None,
 ) -> dict[str, Any]:
-    """The COM servers as a ready-made Markdown table with exact counts, for when the user wants to
-    SEE the list ("list my servers", "which are critical", "storage of each server"). Default
-    columns are name, model, health; pass `columns` for exactly what was asked. Show `table` as
-    written and quote `counts`: do not recount or retype the data into a script. Same filters as
+    """The COM servers, ready to show, with exact counts: for "list my servers", "which are
+    critical", "storage of each server". With no `columns`, a big fleet comes back as a short
+    grouped list (health summary, the servers needing attention, the OK ones by model) that is
+    quick to write out; pass `columns` for a real table with exactly what was asked. Show `table`
+    as written and quote `counts`: do not retype the data into a script. Same filters as
     com_list_servers, which returns the full JSON for analysis."""
     wanted = fleet_table.pick_columns(columns)
     hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted))
     rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, "nics" in wanted))
-    return fleet_table.build(rows, wanted)
+    return fleet_table.build(rows, columns)
 
 
 @mcp.tool(annotations=READ_ONLY)

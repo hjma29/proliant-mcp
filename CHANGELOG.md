@@ -6,10 +6,11 @@ directly (see the README).
 
 ---
 
-## Unreleased
+## v0.20.0 — 2026-11-22
 
 ### Changed
-- `com_list_servers_table` now returns only what was asked for. The default columns are name, model and health (was six); `columns` adds power, connected, iLO IP, iLO firmware, firmware bundle, and the new hardware columns `gpu`, `storage`, `nics` and `cpu_model`, which read COM's cached inventory only when requested (`unknown` where COM has none, never shown as none). The counts follow the columns shown: always by health, plus power, connected, or GPUs by model when those columns are in the table. A smaller result means fewer tokens for the model to read and to re-type into its answer. On a 49-server fleet the default result is about 3.5 KB.
+- `com_list_servers_table` is much quicker for a model to show. The model has to write out whatever the tool returns, at about 100 tokens a second on a single L40S, so the size of the answer is the wait: a 49-server answer written as a full table took 40 s. With no `columns`, a fleet of more than 15 servers now comes back as a compact list: a health summary, a small table of only the servers that are not OK, and the OK servers grouped by model. Every server appears once with its model and health. That is 779 tokens (about 6 s) instead of 1,335 for a plain three-column table. Pass `columns` to get a real table of exactly the columns you ask for.
+- The default columns are name, model and health (were six), health is the word without an emoji, and the model drops the repeated "HPE ProLiant Compute" prefix. `columns` adds power, connected, iLO IP, iLO firmware, firmware bundle, and the new hardware columns `gpu`, `storage`, `nics` and `cpu_model`, which read COM's cached inventory only when requested (`unknown` where COM has none, never shown as none). The counts follow the columns shown: always by health, plus power, connected, or GPUs by model when those columns are in the table.
 
 ---
 

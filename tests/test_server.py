@@ -543,6 +543,19 @@ async def test_com_list_servers_table_hardware_columns(mcp_client):
     assert out["counts"]["gpus_by_model"]["NVIDIA L40S"] >= 2 and out["counts"]["servers_with_unknown_gpus"] >= 1
 
 
+def test_fleet_table_compact_layout_for_a_big_fleet_lists_every_server_once():
+    from proliant_mcp import fleet_table
+
+    rows = [{"name": f"ok{i}", "model": "ProLiant DL360 Gen10", "health": "OK"} for i in range(14)]
+    rows += [{"name": "bad1", "model": "HPE ProLiant Compute DL380a Gen12", "health": "CRITICAL"}, {"name": "ok14", "model": "ProLiant DL360 Gen10", "health": "OK"}]
+    out = fleet_table.build(rows)
+    lines = out["table"].splitlines()
+    assert out["layout"] == "compact" and lines[0] == "16 servers: 15 OK, 1 CRITICAL"
+    assert "| bad1 | DL380a Gen12 | CRITICAL |" in lines and lines[-1].startswith("DL360 Gen10 (15): ok0, ok1")
+    assert all(r["name"] in out["table"] for r in rows)
+    assert fleet_table.build(rows, ["name"])["layout"] == "table" and fleet_table.build(rows[:3])["layout"] == "table"  # asked for columns, or small
+
+
 def test_fleet_table_cells_cannot_break_the_table():
     from proliant_mcp import fleet_table
 
@@ -554,8 +567,8 @@ def test_fleet_table_cells_cannot_break_the_table():
     assert out["table"].splitlines() == [
         "| Name | Model | Health | Connected | iLO IP |",
         "|---|---|---|---|---|",
-        "| a\\|b | line break | ⚪ UNKNOWN | - | - |",
-        "| ok | M | 🔴 CRITICAL | Yes | 192.0.2.1 |",
+        "| a\\|b | line break | UNKNOWN | - | - |",
+        "| ok | M | CRITICAL | Yes | 192.0.2.1 |",
     ]
     assert out["counts"]["by_health"] == {"UNKNOWN": 1, "CRITICAL": 1}
     assert fleet_table.build([], ["bogus"])["columns"] == ["Name", "Model", "Health"]
