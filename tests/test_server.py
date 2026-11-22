@@ -542,6 +542,21 @@ def test_fleet_table_cells_cannot_break_the_table():
     assert fleet_table.build([], ["bogus"])["columns"] == ["Name", "Model", "Health", "Power", "Connected", "iLO IP"]
 
 
+async def test_tool_definitions_stay_small(mcp_client):
+    """Every tool's name, description and schema is sent to the model on every turn (about 200 tokens a tool),
+    so they must stay short. If this fails, shorten the new text (the tool's runtime next_step can carry details)
+    before raising the limits."""
+    import json
+
+    async with mcp_client as c:
+        tools = await c.list_tools()
+    sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
+    assert sum(sizes.values()) <= 42_500, f"all tool definitions: {sum(sizes.values())} chars"
+    assert len(srv.INSTRUCTIONS) <= 3_800
+    too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
+    assert not too_long, f"descriptions over 600 chars: {too_long}"
+
+
 def _greenlake_by_region(totals):
     """Fake GreenLake where COM answers only in the regions listed in *totals* (others: routing 404)."""
 

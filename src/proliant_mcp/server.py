@@ -28,52 +28,40 @@ Read-only tools for HPE compute management, across three sources:
 - iLO (Redfish), one server at a time: tools without a prefix (get_server_summary, ...).
 - HPE Compute Ops Management (COM, GreenLake cloud), whole fleet: tools prefixed com_.
 - HPE OneView / Synergy Composer, on-prem appliance: tools prefixed oneview_.
-Start with list_servers: it returns the configured iLO server names, OneView appliances
-and COM accounts. For a fleet-wide question start with com_get_overview or
-oneview_get_appliance. The same physical server can appear in all three; match by
-serial number. If a tool returns an error, report it; never invent values.
-To find which server an IP, hostname or serial belongs to, call find_server (all sources at once).
-For the OS a server runs or why it isn't booting, see `os` in get_server_summary / get_fleet_summary.
-For significant events on several servers use get_fleet_event_summary. For Synergy uplinks use
-oneview_list_uplink_sets.
-For which HPE GreenLake services exist and which are set up in the workspace use greenlake_list_services.
-To show the user a list of servers use com_list_servers_table: it returns a ready-made table and exact
-counts, so present them as they are and never retype the data into a script. For analysis or
-comparisons across servers use com_list_servers (add include_hardware for CPU, GPU and storage
-controller columns) or com_list_gpus; they return the whole fleet in one call. For a
-table of each server's storage controllers, drives, GPUs and NICs use com_hardware_report: it is compact and
-groups servers with identical hardware. For NICs, HBAs, link speeds or which network mode
-(Ethernet, InfiniBand, FibreChannel) is used, use com_list_nics. Never loop com_get_server
-or com_api_get over many servers.
-For hardware inventory (an iLO's processors, memory DIMMs and firmware versions, or COM's hardware
-inventory) prefer get_inventory_snapshot and get_com_inventory_snapshot: a local cache, on by default
-for 15 minutes, answers repeats in milliseconds, and each result says whether it came from the cache
-or live and when it was collected. Pass refresh=true when the user asks for current or fresh data.
-Never use these snapshots as current health, power, alerts, link, or other operational status; use
-the live tools instead. Change the cache with set_inventory_cache (enabled, ttl_seconds) only when
-the user asks to turn it off or change its lifetime, and clear it with clear_inventory_cache only on request.
-If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not
-set up for the workspace, sign the user in right away in this chat; do not send them to a
-browser, terminal or the GreenLake website. Call com_login (pop-ups). If it fails or is
-cancelled without the user seeing a pop-up, call com_login_start (with the email only if the user
-already gave it; never ask for it with a question tool, which may be auto-answered "user not
-available": without an email the user types it on a local page. If this MCP server runs on
-another computer than the user (a remote or gateway deployment), that page cannot be opened:
-ask the user for their email in the chat as plain text first and pass it; an @hpe.com account then
-needs only the Okta Verify number, no page), tell the user exactly what it
-returns (the page link, the Okta Verify number to tap) and keep calling com_login_status without waiting
-for the user to reply (it waits for them; the page walks them through every step), and call com_login_status until it says signed_in. If the user hit the limit of GreenLake API clients, or asks to see or delete them, use
-greenlake_list_api_clients_start / greenlake_delete_api_clients_start (the user picks what to delete on a page)
-and greenlake_api_clients_status. If no iLO or OneView is
-configured, or the user wants to add servers, call add_server (one iLO or OneView). For multiple
-iLOs, a list, a range, or a file, call add_servers_start, show its page link, and call
-add_servers_status until saved or failed without waiting for the user to reply. The user chooses
-the targets and enters credentials on the page; never ask for passwords in chat. The older
-import_inventory tool imports a .ini or .csv file via pop-ups. If add_server's pop-ups do not
-appear, call add_server_start (with the address only if the user gave it), relay the page link, and
-call add_server_status until it says saved, without waiting for the user to reply. For who logged in to iLOs (per day, user, source IP,
-failed logins) use get_ilo_logins: one call for all iLOs. Never ask the user to type
-a password into the chat; these tools collect it on a secure page."""
+Start with list_servers (the configured iLOs, OneView appliances and COM accounts). For a fleet-wide
+question start with com_get_overview or oneview_get_appliance. The same physical server can appear in
+all three; match by serial number. If a tool returns an error, report it; never invent values.
+To find which server an IP, hostname or serial belongs to, call find_server. For the OS a server runs
+or why it isn't booting, see `os` in get_server_summary / get_fleet_summary. For significant events on
+several servers use get_fleet_event_summary; for who logged in use get_ilo_logins; for Synergy uplinks
+oneview_list_uplink_sets; for GreenLake services greenlake_list_services.
+To show the user a list of servers use com_list_servers_table: a ready-made table and exact counts, to
+present as they are (never retype the data into a script). For analysis across servers use
+com_list_servers (include_hardware adds CPU, GPU and storage) or com_list_gpus; for a table of storage
+controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link speeds or network mode
+com_list_nics. Never loop com_get_server or com_api_get over many servers.
+For hardware inventory (an iLO's processors, memory, firmware, or COM's hardware inventory) prefer
+get_inventory_snapshot and get_com_inventory_snapshot: a local cache (on, 15 minutes) answers repeats in
+milliseconds and each result says cache or live and when it was collected. Pass refresh=true when the
+user wants current data. Never use snapshots for health, power, alerts or links: use the live tools.
+Change the cache with set_inventory_cache, or clear it with clear_inventory_cache, only when asked.
+If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not set up,
+sign the user in right away in this chat; do not send them to a browser, terminal or the GreenLake site.
+Call com_login (pop-ups). If it fails or is cancelled without the user seeing a pop-up, call
+com_login_start, relay what it returns (page link, Okta Verify number) and call com_login_status without
+waiting for the user to reply, until signed_in. Pass the email only if the user gave it; never ask for it
+with a question tool (it may be auto-answered "user not available"). If this MCP server runs on another
+computer than the user (remote gateway), the page cannot be opened: ask for the email in chat as plain
+text and pass it; an @hpe.com account then needs only the Okta number, no page.
+If the user hit the limit of GreenLake API clients, or asks to see or delete them, use
+greenlake_list_api_clients_start / greenlake_delete_api_clients_start (the user picks on a page) and
+greenlake_api_clients_status.
+If no iLO or OneView is configured, or the user wants to add servers, call add_server (one). For several
+iLOs, a list, a range or a file call add_servers_start, show its page link and call add_servers_status
+until saved or failed; the user chooses targets and enters credentials on the page. import_inventory
+imports a .ini or .csv via pop-ups. If add_server's pop-ups do not appear, call add_server_start (address
+only if the user gave it), relay the page link and call add_server_status until saved.
+Never ask the user to type a password into the chat; these tools collect it on a secure page."""
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
@@ -193,11 +181,10 @@ async def find_server(
         bool, Field(description="If nothing matches and the query is an address, read the iLO's login-free identity pages.")
     ] = True,
 ) -> dict[str, Any]:
-    """Which server is this? Looks one name, iLO IP/hostname, serial or OS hostname up in the iLO
-    inventory, every COM account and every OneView appliance (servers and interconnect modules) in
-    one call. If nothing matches and the query is an IP or hostname, it reads that iLO's
-    unauthenticated identity pages to report its iLO model, firmware, hostname, server model and
-    serial. Use it instead of searching com_list_servers or oneview_list_server_hardware by hand."""
+    """Which server is this? Looks up a name, iLO IP/hostname, serial or OS hostname in the iLO
+    inventory, every COM account and every OneView appliance in one call. If nothing matches and the
+    query is an address, it reads that iLO's login-free identity pages (iLO model, firmware, server
+    model, serial). Use it instead of searching the list tools by hand."""
     from proliant_mcp import find
 
     return await find.find_server(query, probe, _transport)
@@ -292,11 +279,10 @@ async def set_inventory_cache(
     enabled: Annotated[bool, Field(description="True to use the local hardware snapshot cache (the default), false to turn it off.")],
     ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="Maximum snapshot age in seconds; omit to preserve the existing setting.")] = None,
 ) -> dict[str, Any]:
-    """Turn the local SQLite hardware snapshot cache on or off, or change its lifetime, when the user
-    asks. It is on by default. Cached hardware is stored on this computer in an owner-only folder and
-    may contain server names and serial numbers, never passwords. Turning it off stops reads and
-    writes but does not erase the existing cache; use clear_inventory_cache when the user asks to
-    remove it. Health, power and other live tools are unaffected."""
+    """Turn the local hardware snapshot cache on or off, or change its lifetime, when the user asks.
+    It is on by default and stored on this computer in an owner-only folder (server names and
+    serial numbers, never passwords). Turning it off keeps the existing data; clear_inventory_cache
+    removes it. Live tools are unaffected."""
     try:
         return await asyncio.to_thread(inventory_cache.configure, enabled, ttl_seconds)
     except inventory_cache.CacheError as exc:
@@ -320,10 +306,10 @@ async def get_inventory_snapshot(
     categories: Annotated[list[Literal["processors", "memory", "firmware"]] | None, Field(description="Hardware categories; omit for all three.")] = None,
     refresh: Annotated[bool, Field(description="Fetch new data even when a cached snapshot is available.")] = False,
 ) -> dict[str, Any]:
-    """Hardware snapshots for one or more iLOs. Each category reports whether it came from the
-    cache or live, plus collection and expiry times. An iLO login is checked even for cache hits.
-    The cache is on by default (15 minutes); refresh=true bypasses old entries. Component
-    health in a snapshot may be stale: use live tools for current health and operational state."""
+    """Hardware snapshots (processors, memory, firmware) for one or more iLOs, from the local cache
+    (on by default, 15 minutes) or live; each says which and when it was collected. refresh=true
+    forces a live read. The iLO login is checked even on a hit. Not for current health or power:
+    use the live tools."""
     targets = list(_servers().values()) if servers is None else list(dict.fromkeys(_resolve(name) for name in servers))
     if not targets:
         raise ToolError("Select at least one iLO server.")
@@ -342,10 +328,9 @@ async def get_com_inventory_snapshot(
     name_contains: Annotated[str | None, Field(description="Only server names containing this text.")] = None,
     refresh: Annotated[bool, Field(description="Fetch fresh COM inventory rather than using local cache entries.")] = False,
 ) -> dict[str, Any]:
-    """Snapshot COM hardware inventory across the fleet. Collection time and cache/live source
-    are shown per server; COM itself may also have an older inventory collection timestamp.
-    refresh=true bypasses the local cache, not COM's own inventory. Use live COM tools for
-    current health, power, alerts and connection status."""
+    """COM hardware inventory across the fleet, from the local cache or live; each server says which
+    and when. COM's own inventory may be older. refresh=true bypasses the local cache, not COM's
+    collection. Not for current health, power or alerts: use the live COM tools."""
     try:
         return await _com(account, lambda client: snapshots.com_snapshot(client, name_contains, refresh))
     except inventory_cache.CacheError as exc:
@@ -354,16 +339,16 @@ async def get_com_inventory_snapshot(
 
 When = Annotated[
     str | None,
-    Field(description="Relative (7d, 24h, 30m), a date (2026-11-12) or an ISO 8601 time; UTC unless it has a zone."),
+    Field(description="7d, 24h, 30m, a date (2026-11-12) or ISO 8601; UTC unless a zone is given."),
 ]
 
 
 LogName = Annotated[
     Literal["iml", "iel", "sl"],
-    Field(description="iml = Integrated Management Log (server hardware events); iel = iLO Event Log; sl = Security Log (iLO 6 and later)."),
+    Field(description="iml (hardware events), iel (iLO events) or sl (Security Log, iLO 6+)."),
 ]
 MinSeverity = Annotated[
-    Literal["Warning", "Critical"] | None, Field(description="Only entries at least this severe (Warning = Warning and Critical).")
+    Literal["Warning", "Critical"] | None, Field(description="Only entries at least this severe.")
 ]
 
 
@@ -385,14 +370,13 @@ async def get_event_log(
     contains: Annotated[str | None, Field(description="Only entries whose message contains this text (any case), e.g. 'login'.")] = None,
     min_severity: MinSeverity = None,
     summary: Annotated[
-        bool, Field(description="Group identical messages into one row with count and first/last time, most severe first.")
+        bool, Field(description="Group identical messages with count and first/last time, most severe first.")
     ] = False,
 ) -> list[dict[str, Any]]:
-    """Newest entries from the IML, iLO event log or Security Log, filtered by severity, time window
-    and message text; with summary, identical messages are grouped (compact; use it for "what
-    happened" or "significant events"). Entries the iLO stamped with a wrong clock (0000 or far-future
-    dates after an RTC reset) are marked `time_invalid`, listed last, and left out when since/until
-    is given. For several servers use get_fleet_event_summary; for who logged in use get_ilo_logins."""
+    """Newest entries from the IML, iLO event log or Security Log, filtered by severity, time and
+    text; with summary, identical messages are grouped (compact; use it for "what happened").
+    Entries with a wrong iLO clock are marked `time_invalid`, listed last, and left out when
+    since/until is set. For several servers use get_fleet_event_summary; for logins use get_ilo_logins."""
     now = dt.datetime.now(dt.UTC)
     start, end = _window(since, until, now)
     return await _run(server, lambda c: ilo.event_log(c, log, limit, severity, start, end, contains, now, min_severity, summary))
@@ -408,10 +392,9 @@ async def get_fleet_event_summary(
     contains: Annotated[str | None, Field(description="Only entries whose message contains this text (any case).")] = None,
     limit: Annotated[int, Field(ge=1, le=200, description="Most groups per server.")] = 30,
 ) -> dict[str, Any]:
-    """Significant events for many servers in one call: per server, the IML, iLO event log or
-    Security Log grouped by message (count, first/last time, repaired), Warning and Critical by
-    default, most severe first. Use it for "significant events / errors on these servers".
-    Unreachable iLOs return an `error`."""
+    """Significant events for many servers in one call: per server, the IML, iLO event log or Security
+    Log grouped by message (count, first/last time, repaired), Warning and Critical by default, most
+    severe first. Use it for "errors on these servers". Unreachable iLOs return an `error`."""
     targets = [_resolve(n) for n in servers] if servers else list(_servers().values())
     now = dt.datetime.now(dt.UTC)
     start, end = _window(since, until, now)
@@ -438,15 +421,14 @@ async def get_ilo_logins(
         float | None, Field(ge=-12, le=14, description="Time zone for by_day, e.g. -8 for PST; omit for this computer's zone.")
     ] = None,
     include_this_computer: Annotated[
-        bool, Field(description="Also count logins from the computer running proliant-mcp (its own Redfish sessions).")
+        bool, Field(description="Also count logins from the computer running proliant-mcp.")
     ] = False,
 ) -> dict[str, Any]:
-    """Who logged in to the iLOs, from each iLO Event Log, in one call for many servers: logins
-    per day (total and per server), by login type, user and source IP/host, failed logins and
-    lockout alerts. Says when an iLO's log does not reach back to the start of the window (the log
-    wrapped, so counts are a minimum) and how many entries have an invalid iLO clock. The iLO logs
-    Redfish/API sessions as Browser logins, including proliant-mcp's own: those are counted only in
-    `this_computer_logins` unless include_this_computer. Unreachable iLOs return an `error`."""
+    """Who logged in to the iLOs, from each iLO Event Log, for many servers in one call: logins per
+    day, by type, user and source IP/host, failed logins and lockout alerts. Says when a log does
+    not reach back to the window start (counts are then a minimum). proliant-mcp's own sessions
+    show as Browser logins and are counted only in `this_computer_logins` unless
+    include_this_computer. Unreachable iLOs return an `error`."""
     configured = _servers()
     targets = [_resolve(n) for n in servers] if servers else list(configured.values())
     now = dt.datetime.now(dt.UTC)
@@ -539,13 +521,12 @@ async def com_list_servers(
     health: Annotated[Literal["OK", "WARNING", "CRITICAL", "UNKNOWN"] | None, Field(description="Only servers with this health summary.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
-    include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server: CPU model/count/cores, GPUs (name, vendor, count, health) and storage (RAID/boot controllers with the drives behind them, and direct-attached drives) from COM's cached inventory. Slower (one read per server, done inside this call); use it for tables with CPU or GPU columns instead of calling com_get_server per server.")] = False,
+    include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server (CPU, GPUs, storage controllers and drives) from COM's cached inventory. Slower: one read per server.")] = False,
 ) -> list[dict[str, Any]]:
-    """Servers in Compute Ops Management: name, serial, model, generation, health, power,
-    COM connection, subscription, iLO host/IP/version, OS, CPU vendor and firmware bundle.
-    One call returns the whole fleet, so use it for any table or comparison across servers.
-    Set include_hardware for CPU, GPU and storage controller columns. To simply SHOW the user the
-    list, prefer com_list_servers_table: a ready-made table with exact counts, much faster to present."""
+    """Servers in Compute Ops Management as JSON: name, serial, model, generation, health, power, COM
+    connection, subscription, iLO host/IP/version, OS, CPU vendor, firmware bundle. One call returns
+    the whole fleet; use it to analyze or compare. To just SHOW the list, prefer
+    com_list_servers_table (ready-made table, exact counts, much faster)."""
     return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
 
 
@@ -557,14 +538,13 @@ async def com_list_servers_table(
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     columns: Annotated[
         list[Literal["name", "model", "health", "power", "connected", "ilo_ip", "ilo_host", "os", "serial", "cpu", "generation", "subscription", "oneview"]] | None,
-        Field(description="Columns in order. Default: name, model, health, power, connected, ilo_ip. Add only what the user asks for: a longer table takes much longer to show."),
+        Field(description="Columns in order. Default: name, model, health, power, connected, ilo_ip. Add only what the user asks for; wide tables are slow to show."),
     ] = None,
 ) -> dict[str, Any]:
     """The COM servers as a ready-made Markdown table with exact counts, for when the user wants to
-    SEE the list (\"list my servers\", \"which are critical\"). Show `table` as written and quote `counts`
-    (total, by health, power, model, connected): the server computed them, so do not recount rows or
-    retype the data into a script. The default columns keep the table short; pass `columns` for more.
-    Same filters as com_list_servers, which returns the full JSON when you must analyze the data."""
+    SEE the list ("list my servers", "which are critical"). Show `table` as written and quote
+    `counts` (total, by health, power, model, connected): do not recount or retype the data into a
+    script. Same filters as com_list_servers, which returns the full JSON for analysis."""
     rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, False))
     return fleet_table.build(rows, columns)
 
@@ -586,16 +566,13 @@ async def com_hardware_report(
     account: AccountName = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
-    storage_over_tb: Annotated[float | None, Field(description="Only servers whose total raw drive capacity is strictly more than this many TB (decimal; 1 = 1000 GB). Adds storage_filter with how many servers are over, not over or unknown.")] = None,
+    storage_over_tb: Annotated[float | None, Field(description="Only servers with more than this many TB of raw drive capacity (1 TB = 1000 GB); adds storage_filter counts.")] = None,
 ) -> dict[str, Any]:
-    """Whole-fleet hardware table in one compact call (about a tenth the size of com_list_servers
-    with include_hardware): servers with identical hardware are grouped into one configuration
-    with their names, model, CPU, storage controllers with the drives behind them, direct-attached
-    drives, GPUs and network adapters (with their mode: Ethernet, InfiniBand or FibreChannel), plus
-    NIC mode totals and the servers COM has no storage, GPU or NIC data for (unknown, not absent).
-    Each configuration has total_storage_gb (raw capacity of all drives). Use it for "table of each
-    server's storage controller, GPU and NIC config", and for "how many servers have more than N TB
-    of storage" (set storage_over_tb: storage_filter gives the counts). Prefer it to scripting sums."""
+    """Whole-fleet hardware table, compact: servers with identical hardware are grouped into one
+    configuration with their names, model, CPU, storage controllers and drives, GPUs and network
+    adapters (with mode), total_storage_gb, plus NIC mode totals and the servers COM has no data for
+    (unknown, not absent). Use it for "table of each server's storage, GPU and NIC config" and for
+    "how many servers have more than N TB" (storage_over_tb: storage_filter gives the counts)."""
     return await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb))
 
 
@@ -606,11 +583,10 @@ async def com_list_nics(
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     linked_only: Annotated[bool, Field(description="List only adapters with at least one port up.")] = False,
 ) -> dict[str, Any]:
-    """Network adapter report for the whole COM fleet in one call: per server each NIC/HBA
-    (name, mode Ethernet / InfiniBand / FibreChannel, ports, ports up, link speeds, firmware,
-    health), plus totals by mode (adapters, ports, linked ports, and the most used mode), by
-    adapter model and by link speed, and the servers COM has no network inventory for. Start
-    here for any NIC, HBA, link speed or network mode question."""
+    """Network adapter report for the whole COM fleet: per server each NIC/HBA (mode Ethernet /
+    InfiniBand / FibreChannel, ports, ports up, link speeds, firmware, health), plus totals by mode,
+    adapter model and link speed, and the servers COM has no network data for. Start here for any
+    NIC, HBA, link speed or network mode question."""
     return await _com(account, lambda c: com.list_nics(c, name_contains, connected, linked_only))
 
 
@@ -621,10 +597,9 @@ async def com_list_gpus(
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     include_servers_without_gpus: Annotated[bool, Field(description="Also list servers with no GPU.")] = False,
 ) -> dict[str, Any]:
-    """GPU report for the whole COM fleet in one call: per server the model, generation, iLO
-    firmware version, health, CPU and GPUs (name, vendor, part number, count, health), plus
-    totals by GPU model and the servers whose inventory COM does not have (their GPUs are
-    unknown, not absent). Start here for any GPU question."""
+    """GPU report for the whole COM fleet: per server the model, iLO firmware, health, CPU and GPUs
+    (name, vendor, part number, count, health), plus totals by GPU model and the servers COM has
+    no inventory for (GPUs unknown, not absent). Start here for any GPU question."""
     return await _com(account, lambda c: com.list_gpus(c, name_contains, connected, include_servers_without_gpus))
 
 
@@ -633,11 +608,9 @@ async def com_get_server(
     server: Annotated[str, Field(description="COM server name, serial number, iLO IP/hostname or id.")],
     account: AccountName = None,
 ) -> dict[str, Any]:
-    """One COM server in detail: identity, per-subsystem health, iLO, subscription, last
-    firmware update, full firmware inventory, CPU, GPUs (with serial numbers), storage
-    controllers and drives (with serial numbers), network adapters (each port's mode, link,
-    speed and MAC), and its
-    active alerts. For several servers use com_list_servers, com_list_gpus or com_list_nics, not one call each."""
+    """One COM server in detail: per-subsystem health, iLO, subscription, last firmware update,
+    firmware inventory, CPU, GPUs, storage controllers and drives, network ports (mode, link, speed,
+    MAC) and active alerts. For several servers use com_list_servers, com_list_gpus or com_list_nics."""
     return await _com(account, lambda c: com.get_server(c, server))
 
 
@@ -703,12 +676,10 @@ async def com_login(
     workspace: Annotated[str | None, Field(description="GreenLake workspace name; asked in a pop-up if omitted and the user has several.")] = None,
     region: Annotated[Literal["us-west", "eu-central", "ap-northeast"] | None, Field(description="COM region; detected if omitted.")] = None,
 ) -> dict[str, Any] | mcp_types.InputRequiredResult:
-    """Sign the user in to HPE GreenLake so the com_ tools work. Shows pop-ups in the chat:
-    the user's email, then for @hpe.com accounts the number to tap in Okta Verify, or for
-    other accounts (e.g. gmail.com) a secure local page with a masked password field. It then
-    creates a GreenLake API client for the read-only com_ tools and saves it on this computer.
-    Call it when a com_ tool says no COM account is configured or login failed, or when the
-    user asks to sign in. Never ask for the password in chat; the pop-ups collect everything."""
+    """Sign the user in to HPE GreenLake so the com_ tools work, with pop-ups: email, then an Okta
+    Verify number (@hpe.com) or a secure password page (other accounts). Creates a GreenLake API
+    client and saves it on this computer. Call it when a com_ tool says no COM account is configured
+    or login failed, or when asked to sign in. Never ask for the password in chat."""
     return await chat_login.com_login(ctx, email, workspace, region)
 
 
@@ -717,19 +688,15 @@ SIGN_IN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentH
 
 @mcp.tool(annotations=SIGN_IN)
 async def com_login_start(
-    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they already said it. If this MCP server runs on another computer than the user (remote gateway), ask for it in the chat first and pass it. Otherwise omit it: the user then types it on a local page (do not guess it).")] = None,
+    email: Annotated[str | None, Field(description="The user's GreenLake email, only if they said it (never guess). Omit to let them type it on a local page; if this server runs on another computer, ask in chat first.")] = None,
     workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
     region: Annotated[Literal["us-west", "eu-central", "ap-northeast"] | None, Field(description="COM region; detected if omitted.")] = None,
 ) -> dict[str, Any]:
-    """Sign the user in to HPE GreenLake without pop-ups, for clients where com_login's pop-ups
-    do not appear. Returns the first step for the user, which you must relay in the chat:
-    `enter_email` with a `url` of a local page where the user types their email (when you did not
-    pass one), `approve_push` with the `number` to tap in Okta Verify (@hpe.com accounts), or
-    `enter_password` with a `url` of a secure page on this computer for the password (other
-    accounts; never ask for the password in chat). All steps use one page link, which the user can
-    keep open: it shows the Okta number and a clickable workspace list. Then call com_login_status
-    right away, without waiting for the user to reply, until it returns `signed_in` (the com_ tools
-    work immediately) or `failed`."""
+    """Sign in to HPE GreenLake without pop-ups, for clients where com_login's pop-ups do not appear.
+    Returns the step to relay in the chat: `enter_email` (url of a local page; skipped if you passed
+    an email), `approve_push` (the `number` to tap in Okta Verify) or `enter_password` (url of a
+    secure page; never ask for the password in chat). Then call com_login_status until `signed_in`
+    or `failed`, without waiting for the user to reply."""
     return await chat_login.com_login_start(email, workspace, region)
 
 
@@ -737,10 +704,9 @@ async def com_login_start(
 async def com_login_status(
     workspace: Annotated[str | None, Field(description="The user's choice when the last status was choose_workspace.")] = None,
 ) -> dict[str, Any]:
-    """Next step of the sign-in begun by com_login_start. Waits up to 45 seconds for the user,
-    then returns the current step (`approve_push`, `enter_password`, `choose_workspace` with
-    `workspaces`), `signed_in` with the server count, or `failed`. If `waiting` is true nothing
-    changed yet: remind the user of the step and call it again."""
+    """Next step of com_login_start: waits up to 45 s for the user, returns `approve_push`,
+    `enter_password`, `choose_workspace` (with `workspaces`), `signed_in` (with the server count) or
+    `failed`. If `waiting` is true, remind the user of the step and call again."""
     return await chat_login.com_login_status(workspace)
 
 
@@ -756,11 +722,10 @@ async def add_server(
     name: Annotated[str | None, Field(description="Pre-fills the pop-up: short name for the server.")] = None,
     username: Annotated[str | None, Field(description="Pre-fills the pop-up: user name (default Administrator).")] = None,
 ) -> dict[str, Any] | mcp_types.InputRequiredResult:
-    """Add one iLO or OneView to the user's inventory with pop-ups in the chat: a form for the
-    type, address, name and user name, then a secure page for the password. The login is
-    checked before anything is saved. The tools use the new server immediately. Call it when
-    the user wants to add a server, or when no iLO or OneView is configured. Never ask for the
-    password in chat, and never pass one; the secure page collects it."""
+    """Add one iLO or OneView to the inventory with pop-ups: a form (type, address, name, user name),
+    then a secure page for the password. The login is checked before saving and the server is
+    usable at once. Call it when the user wants to add a server or none is configured. Never ask
+    for or pass a password."""
     return await chat_inventory.add_server(ctx, type, name, host, username)
 
 
@@ -775,15 +740,11 @@ async def add_server_start(
     name: Annotated[str | None, Field(description="Short name for it, e.g. dl380-lab; defaults to the address. An existing name is replaced.")] = None,
     username: Annotated[str | None, Field(description="User name; default Administrator.")] = None,
 ) -> dict[str, Any]:
-    """Add one iLO or OneView to the user's inventory without pop-ups, for clients where
-    add_server's pop-ups do not appear (or were cancelled). Returns `enter_server` (no host given:
-    the page asks for the address, user name and password) or `enter_password`, with a `url` of a
-    secure page on this computer: tell the user to open it and fill it in there (never in the chat;
-    never pass a password). Then call add_server_status right away, without waiting for the user to
-    reply, until it returns `saved` (the
-    tools use the server immediately) or `failed`. The login is checked before anything is saved.
-    Starting a new add ends the previous one: `previous_add` then says how it really ended
-    (`saved`, `failed`, or `stopped` if it was still waiting); tell the user that, not a guess."""
+    """Add one iLO or OneView without pop-ups, for clients where add_server's pop-ups do not appear.
+    Returns `enter_server` or `enter_password` with the `url` of a secure local page: tell the user
+    to fill it in there (never in chat; never pass a password). Then call add_server_status until
+    `saved` or `failed`, without waiting for the user to reply. The login is checked before saving.
+    A new add ends the previous one; `previous_add` says how it ended: report that, not a guess."""
     return await chat_inventory.add_server_start(type, host, name, username)
 
 
@@ -818,15 +779,13 @@ async def add_servers_status() -> dict[str, Any]:
 
 @mcp.tool(annotations=SIGN_IN)
 async def greenlake_list_api_clients_start(
-    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they said it. Omit it to use the email of this computer's saved GreenLake login, or let the user type it on a local page (do not guess it).")] = None,
+    email: Annotated[str | None, Field(description="The user's GreenLake email, only if they said it (never guess). Omit to use this computer's saved login or let them type it on a page.")] = None,
     workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
 ) -> dict[str, Any]:
-    """List the user's own personal HPE GreenLake API clients (name, client ID, created, and
-    whether this computer's saved login uses it). Use it when the user hit the limit of API
-    clients or asks what API clients they have. It signs the user in like com_login_start (an
-    Okta Verify number to tap, or a password on a local page) and changes nothing. Relay each step,
-    then call greenlake_api_clients_status right away, without waiting for the user to reply,
-    until it returns `listed`. Never shows secrets."""
+    """List the user's own personal HPE GreenLake API clients (name, client ID, created, and whether
+    this computer's saved login uses it), e.g. when they hit the limit. Signs in like
+    com_login_start; changes nothing and shows no secrets. Relay each step, then call
+    greenlake_api_clients_status until `listed`."""
     return await chat_api_clients.start(False, email, workspace)
 
 
@@ -836,17 +795,15 @@ async def greenlake_list_api_clients_start(
     )
 )
 async def greenlake_delete_api_clients_start(
-    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they said it. Omit it to use the email of this computer's saved GreenLake login, or let the user type it on a local page (do not guess it).")] = None,
+    email: Annotated[str | None, Field(description="The user's GreenLake email, only if they said it (never guess). Omit to use this computer's saved login or let them type it on a page.")] = None,
     workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
-    preselect: Annotated[list[str] | None, Field(description="Optional: words to pre-tick clients whose names contain them (for example a computer name the user mentioned). The user still chooses and confirms every deletion on the page; this only saves clicks.")] = None,
+    preselect: Annotated[list[str] | None, Field(description="Words to pre-tick clients whose names contain them. The user still chooses and confirms on the page.")] = None,
 ) -> dict[str, Any]:
-    """Delete personal HPE GreenLake API clients that the USER selects. Use it when the user wants
-    to free API clients (for example after hitting the limit). It signs the user in like
-    com_login_start, then shows a local page listing their API clients with check boxes; the user
-    ticks the ones to delete, reviews them and confirms there. You cannot choose what is deleted
-    and must not ask the user to confirm in the chat. Deletion is permanent, and anything using a
-    deleted client stops working. Relay each step, then call greenlake_api_clients_status right away
-    until it returns `deleted`, `cancelled` or `failed`."""
+    """Delete personal HPE GreenLake API clients that the USER selects, e.g. after hitting the limit.
+    Signs in like com_login_start, then a local page lists the clients with check boxes; the user
+    ticks, reviews and confirms there. You cannot choose or confirm for them. Deletion is permanent
+    and stops anything using those clients. Relay each step, then call greenlake_api_clients_status
+    until `deleted`, `cancelled` or `failed`."""
     return await chat_api_clients.start(True, email, workspace, preselect)
 
 
@@ -854,11 +811,10 @@ async def greenlake_delete_api_clients_start(
 async def greenlake_api_clients_status(
     workspace: Annotated[str | None, Field(description="The user's choice when the last status was choose_workspace.")] = None,
 ) -> dict[str, Any]:
-    """Next step of greenlake_list_api_clients_start or greenlake_delete_api_clients_start. Waits up to
-    45 seconds for the user, then returns the current step (`approve_push`, `enter_password`,
-    `choose_workspace`, `select_api_clients` with the clients, `confirm_deletion`), or the result
-    (`listed`, `deleted`, `cancelled`, `failed`). If `waiting` is true nothing changed yet: remind
-    the user of the step and call it again. It changes nothing itself."""
+    """Next step of greenlake_list_api_clients_start or greenlake_delete_api_clients_start: waits up to
+    45 s for the user, returns the step (`approve_push`, `enter_password`, `choose_workspace`,
+    `select_api_clients`, `confirm_deletion`) or the result (`listed`, `deleted`, `cancelled`,
+    `failed`). If `waiting` is true, remind the user and call again. Changes nothing itself."""
     return await chat_api_clients.status(workspace)
 
 
@@ -937,10 +893,10 @@ async def oneview_list_interconnects(appliance: ApplianceName = None) -> list[di
 
 @mcp.tool(annotations=READ_ONLY)
 async def oneview_list_uplink_sets(appliance: ApplianceName = None) -> dict[str, Any]:
-    """Synergy / Virtual Connect uplink status in one call: every uplink set with its status,
-    type, networks (with VLAN), reachability and each uplink port (module, port, linked or not,
-    Active / StandBy role, speed, LLDP neighbor switch and port), plus issues such as no networks,
-    unlinked ports or no module redundancy, and related active alerts. Use it for "uplink status"."""
+    """Synergy / Virtual Connect uplink status in one call: each uplink set (status, type, networks
+    with VLAN) and uplink port (module, port, linked or not, Active/StandBy, speed, LLDP neighbor),
+    plus issues (no networks, unlinked ports, no module redundancy) and related alerts. Use it for
+    "uplink status"."""
     return await _ov(appliance, oneview.list_uplink_sets)
 
 
