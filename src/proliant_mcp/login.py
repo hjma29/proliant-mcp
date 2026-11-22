@@ -36,6 +36,7 @@ import sys
 import time
 import urllib.parse
 from collections.abc import Callable
+from dataclasses import dataclass
 from html import unescape
 from typing import Any, Protocol
 
@@ -722,12 +723,66 @@ async def _create_api_client(access_token: str, ccs_session: str) -> dict[str, s
     if resp.status_code not in (200, 201):
         raise LoginError(
             f"GreenLake would not create an API client (HTTP {resp.status_code}). Your role may not allow it, "
-            "or the workspace is at its API client limit; delete one under Manage Workspace > API, or ask an administrator."
+            "or you are at the limit of personal API clients. Ask the assistant to delete old ones "
+            "(greenlake_delete_api_clients_start), or delete them under IAM and administration > API access in GreenLake."
         )
     data = resp.json()
     if not data.get("client_id") or not data.get("client_secret"):
         raise LoginError("GreenLake returned an API client without an ID or secret")
     return {"client_id": data["client_id"], "client_secret": data["client_secret"], "name": name}
+
+
+def _credential_items(body: Any) -> list[dict[str, Any]]:
+    items = body if isinstance(body, list) else body.get("items", body.get("credentials", []))
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _created_from(item: dict[str, Any], name: str) -> str:
+    """When the API client was made: GreenLake's own field when present, else the stamp in our own names."""
+    for key in ("created_at", "createdAt", "creation_time", "created", "created_date"):
+        if item.get(key):
+            return str(item[key])
+    stamp = re.search(r"-(\d{12})$", name)
+    if name.startswith(CRED_NAME_PREFIX) and stamp:
+        with contextlib.suppress(ValueError):
+            return datetime.datetime.strptime(stamp.group(1), "%y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M") + " (from the name)"
+    return ""
+
+
+async def list_api_clients(access_token: str, ccs_session: str) -> list[dict[str, Any]]:
+    """The signed-in user's own personal API clients in the open workspace (no secrets)."""
+    try:
+        async with _client(timeout=15) as client:
+            resp = await client.get(CREDENTIALS_URI, headers=_session_headers(access_token, ccs_session))
+        body = resp.json() if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError) as exc:
+        raise LoginError(f"Could not read your GreenLake API clients ({type(exc).__name__})") from exc
+    if body is None:
+        raise LoginError(f"GreenLake would not list your API clients (HTTP {resp.status_code})")
+    saved = load_login().get("credential_name", "")
+    clients = []
+    for item in _credential_items(body):
+        name = str(item.get("credential_name") or item.get("name") or "")
+        if name:
+            clients.append({
+                "name": name,
+                "client_id": str(item.get("client_id") or item.get("id") or ""),
+                "created": _created_from(item, name),
+                "created_by": "proliant-mcp" if name.startswith(CRED_NAME_PREFIX) else "other",
+                "this_computer": bool(saved) and name == saved,
+            })
+    return sorted(clients, key=lambda c: c["name"].lower())
+
+
+async def delete_api_client(access_token: str, ccs_session: str, name: str) -> None:
+    try:
+        async with _client(timeout=15) as client:
+            resp = await client.delete(f"{CREDENTIALS_URI}/{urllib.parse.quote(name, safe='')}",
+                                       headers=_session_headers(access_token, ccs_session))
+    except httpx.HTTPError as exc:
+        raise LoginError(f"request failed ({type(exc).__name__})") from exc
+    if resp.status_code not in (200, 202, 204):
+        raise LoginError(f"GreenLake refused (HTTP {resp.status_code})")
 
 
 # ── Saved login ───────────────────────────────────────────────────────────────
@@ -749,7 +804,17 @@ def load_login() -> dict[str, Any]:
         return {}
 
 
-async def login(email: str, ui: LoginUI, workspace: str | None = None, region: str | None = None) -> dict[str, Any]:
+@dataclass
+class WorkspaceSession:
+    """A signed-in GreenLake user session in one workspace. Held in memory only, never saved."""
+
+    access_token: str
+    ccs_session: str
+    workspace_id: str
+    workspace_name: str
+
+
+async def open_workspace(email: str, ui: LoginUI, workspace: str | None = None) -> WorkspaceSession:
     token = await sign_in(email, ui)
     access_token, id_token = token.get("access_token"), token.get("id_token")
     if not access_token or not id_token:
@@ -757,8 +822,15 @@ async def login(email: str, ui: LoginUI, workspace: str | None = None, region: s
     ui.say("Signed in. Opening your workspace...")
     workspaces, ccs_session = await _init_workspace_session(access_token, id_token)
     chosen = await choose_workspace(workspaces, workspace, ui)
-    workspace_id, workspace_name = chosen["platform_customer_id"], chosen.get("company_name", "")
+    workspace_id = chosen["platform_customer_id"]
     ccs_session = await _load_workspace(access_token, workspace_id, ccs_session)
+    return WorkspaceSession(access_token, ccs_session, workspace_id, chosen.get("company_name", ""))
+
+
+async def login(email: str, ui: LoginUI, workspace: str | None = None, region: str | None = None) -> dict[str, Any]:
+    session = await open_workspace(email, ui, workspace)
+    access_token, ccs_session = session.access_token, session.ccs_session
+    workspace_id, workspace_name = session.workspace_id, session.workspace_name
     resolved = await _resolve_region(access_token, ccs_session, region, ui.say)
     ui.say(f"Creating a GreenLake API client in '{workspace_name}'...")
     api_client = await _create_api_client(access_token, ccs_session)

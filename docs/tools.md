@@ -68,8 +68,10 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `com_login_start`, `com_login_status` | The same sign-in for clients that show no pop-ups: the assistant asks for your email and tells you the Okta Verify number (or gives you the password page link) in the chat |
 | `add_server_start`, `add_server_status` | `add_server` for clients that show no pop-ups: the assistant asks for the address in the chat and gives you the secure password page link |
 | `add_servers_start`, `add_servers_status` | Add many iLOs from an IPv4 range, a list, or a CSV, INI, text or Excel file on a local page: preview, one shared login, check each iLO, choose what to save |
+| `greenlake_list_api_clients_start`, `greenlake_api_clients_status` | List your own personal GreenLake API clients (name, client ID, created, and whether this computer's saved login uses it). Signs you in like `com_login_start`; changes nothing, shows no secrets. Useful when you hit GreenLake's limit on API clients |
+| `greenlake_delete_api_clients_start` (then `greenlake_api_clients_status`) | Delete personal GreenLake API clients **you choose**: after sign-in, a page on your own computer lists them with check boxes; you tick, review and confirm there. The AI cannot pick or confirm for you. Marked destructive; anything using a deleted client stops working |
 
 Every other tool is annotated `readOnlyHint`. The setup tools change no server: `add_server`,
-`add_server_start` and `import_inventory` only edit the inventory file on this computer, and `com_login` also creates a
-GreenLake API client. None of them takes a password (or, for `import_inventory`, a file path) as an
+`add_server_start` and `import_inventory` only edit the inventory file on this computer, `com_login` also creates a
+GreenLake API client, and `greenlake_delete_api_clients_start` deletes the API clients you tick and confirm on its page. None of them takes a password (or, for `import_inventory`, a file path) as an
 argument, so the AI cannot see a password or choose which file is read.

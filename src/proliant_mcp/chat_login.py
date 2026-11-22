@@ -145,19 +145,26 @@ STATUS_WAIT = 45.0
 START_WAIT = 40.0
 
 
-# Every step tells the assistant to keep polling instead of asking the user to report back.
-_KEEP_POLLING = (
-    "Then call com_login_status right away: it waits up to 45 seconds for the user and returns as soon as they "
-    "finish this step. Do not ask the user to confirm in the chat."
-)
+DEFAULT_PURPOSE = "the proliant-mcp Compute Ops Management tools"
+
+
+def _keep_polling(status_tool: str) -> str:
+    """Every step tells the assistant to keep polling instead of asking the user to report back."""
+    return (
+        f"Then call {status_tool} right away: it waits up to 45 seconds for the user and returns as soon as they "
+        "finish this step. Do not ask the user to confirm in the chat."
+    )
 
 
 class RelayUI:
     """``login.LoginUI`` that shows each step on one local sign-in page and publishes it for the next tool call."""
 
-    def __init__(self, session: Relay, page: FlowPage) -> None:
+    def __init__(self, session: Relay, page: FlowPage, status_tool: str = "com_login_status", purpose: str = DEFAULT_PURPOSE) -> None:
         self.session = session
         self.page = page
+        self.status_tool = status_tool
+        self.purpose = purpose
+        self.poll = _keep_polling(status_tool)
 
     def say(self, message: str) -> None:
         self.session.notes.append(message)
@@ -171,14 +178,14 @@ class RelayUI:
                 who=email,
                 label="GreenLake password",
                 button="Sign in",
-                note="For the proliant-mcp Compute Ops Management tools. The password is used once to sign in and is not stored.",
+                note=f"For {self.purpose}. The password is used once to sign in and is not stored.",
             ),
             error,
         )
         self.session.publish(
             "enter_password",
             f"{error + ' ' if error else ''}{self.page.link()}The user types the GreenLake password for {email} on that page "
-            f"(the same page as before, if it is open; never in the chat). {_KEEP_POLLING}",
+            f"(the same page as before, if it is open; never in the chat). {self.poll}",
             url=self.page.url,
         )
         try:
@@ -194,7 +201,7 @@ class RelayUI:
         self.session.publish(
             "approve_push",
             f"Tell the user: open Okta Verify on your phone and {tap} on the newest request (the sign-in page shows it "
-            f"too). {_KEEP_POLLING}",
+            f"too). {self.poll}",
             number=number,
             url=self.page.url,
         )
@@ -203,12 +210,11 @@ class RelayUI:
     async def workspace(self, names: list[str]) -> str:
         self.session.choice = asyncio.get_running_loop().create_future()
         clicked = self.page.ask_choice(
-            "workspace", "Signed in. One more step: choose the HPE GreenLake workspace for the Compute Ops Management "
-            "tools, then click Continue.", names)
+            "workspace", f"Signed in. One more step: choose the HPE GreenLake workspace for {self.purpose}, then click Continue.", names)
         self.session.publish(
             "choose_workspace",
             f"{self.page.link()}The user clicks the workspace to use on that page (the same page, if it is open). If they "
-            "name one in the chat instead, call com_login_status with workspace set to it. " + _KEEP_POLLING,
+            f"name one in the chat instead, call {self.status_tool} with workspace set to it. " + self.poll,
             workspaces=names,
             url=self.page.url,
         )
@@ -224,13 +230,13 @@ class RelayUI:
 _relay: Relay | None = None
 
 
-async def _ask_email_on_page(session: Relay, page: FlowPage) -> str:
+async def _ask_email_on_page(session: Relay, page: FlowPage, status_tool: str = "com_login_status", purpose: str = DEFAULT_PURPOSE) -> str:
     prompt = SecretPrompt(
         message="Type your HPE GreenLake email.",
         title="Sign in to HPE GreenLake",
         label="HPE GreenLake email",
         button="Continue",
-        note="For the proliant-mcp Compute Ops Management tools. HPE accounts then approve an Okta Verify push; other "
+        note=f"For {purpose}. HPE accounts then approve an Okta Verify push; other "
         "accounts type their password on the next step.",
         input_type="email",
     )
@@ -240,7 +246,7 @@ async def _ask_email_on_page(session: Relay, page: FlowPage) -> str:
         session.publish(
             "enter_email",
             f"{error + ' ' if error else ''}{page.link()}The user types their HPE GreenLake email on that page (it is not a "
-            "secret, but do not guess it) and can keep it open: it shows each next step. " + _KEEP_POLLING,
+            "secret, but do not guess it) and can keep it open: it shows each next step. " + _keep_polling(status_tool),
             url=page.url,
         )
         try:
@@ -251,6 +257,15 @@ async def _ask_email_on_page(session: Relay, page: FlowPage) -> str:
             return email
         error = "That is not an email address."
     raise login.LoginError("A GreenLake email address is required")
+
+
+async def relay_workspace(
+    session: Relay, page: FlowPage, email: str | None, workspace: str | None, status_tool: str, purpose: str,
+) -> login.WorkspaceSession:
+    """Sign in on *page* (email, Okta push or password, workspace) and return the open workspace session."""
+    email = email or await _ask_email_on_page(session, page, status_tool, purpose)
+    page.show("<p>Signing in...</p>")
+    return await login.open_workspace(email, RelayUI(session, page, status_tool, purpose), workspace)
 
 
 async def _relay_sign_in(session: Relay, email: str | None, workspace: str | None, region: str | None) -> dict[str, Any]:

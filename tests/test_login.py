@@ -1,5 +1,6 @@
 import json
 import re
+import urllib.parse
 
 import httpx
 import pytest
@@ -28,7 +29,8 @@ def idx(handle, *remediation, **extra):
     return {"stateHandle": handle, "remediation": {"value": [dict(zip(("name", "href"), r)) for r in remediation]}, **extra}
 
 
-def fake_greenlake(*, push=True, pending_polls=1, workspaces=("Lab",)):
+def fake_greenlake(*, push=True, pending_polls=1, workspaces=("Lab",), api_clients=None, refuse_delete=()):
+    """api_clients: the personal API clients the fake lists (and removes on delete); None keeps the default two."""
     polls = {"n": 0}
     created = []
 
@@ -99,11 +101,18 @@ def fake_greenlake(*, push=True, pending_polls=1, workspaces=("Lab",)):
             if path == "/ui-doorway/ui/v1/applications/provisions":
                 provision = {"name": "Compute Ops Management", "region": "eu-central", "provision_status": "PROVISIONED"}
                 return httpx.Response(200, json={"provisions": [provision]})
+            if path == "/authn/v1/token-management/credentials" and request.method == "GET" and api_clients is not None:
+                return httpx.Response(200, json=list(api_clients))
             if path == "/authn/v1/token-management/credentials" and request.method == "GET":
                 stale = login._credential_prefix() + "000000000000"
                 return httpx.Response(200, json=[{"credential_name": stale}, {"credential_name": "someone-elses"}])
             if path.startswith("/authn/v1/token-management/credentials/") and request.method == "DELETE":
-                created.append(("deleted", path.rsplit("/", 1)[1]))
+                name = urllib.parse.unquote(path.rsplit("/", 1)[1])
+                if name in refuse_delete:
+                    return httpx.Response(403)
+                created.append(("deleted", name))
+                if api_clients is not None:
+                    api_clients[:] = [c for c in api_clients if c["credential_name"] != name]
                 return httpx.Response(204)
             if path == "/authn/v1/token-management/credentials" and request.method == "POST":
                 created.append(("created", json.loads(request.content)["credential_name"]))
@@ -399,3 +408,106 @@ async def test_relay_sign_in_runs_on_one_page_with_a_clickable_workspace(greenla
         final = (await browser.get(step["url"])).text
     assert (done["status"], done["workspace"]) == ("signed_in", "Other")
     assert "Signed in to <b>Other</b>" in final and "refresh" not in final
+
+
+# ── list and delete the user's personal API clients ───────────────────────────
+
+MINE = "GLP-proliant-mcp-HSTHJMA02-1965c8-261118004207"
+
+
+def api_clients_fixture(home):
+    login.save_login({"client_id": "saved", "client_secret": "s", "region": "us-west", "credential_name": MINE, "email": "you@hpe.com"})
+    return [
+        {"credential_name": MINE, "client_id": "id-mine"},
+        {"credential_name": "GLP-proliant-mcp-WIN11-1a6598-261120144148", "client_id": "id-win-1"},
+        {"credential_name": "GLP-proliant-mcp-WIN11-5800a7-261118220322", "client_id": "id-win-2"},
+        {"credential_name": "terraform-ci", "client_id": "id-tf"},
+    ]
+
+
+async def next_step(client, step, wanted):
+    """Follow start/status until the flow reaches *wanted* (the fake sign-in may finish before start returns)."""
+    for _ in range(5):
+        if step["status"] == wanted:
+            return step
+        step = (await client.call_tool("greenlake_api_clients_status", {})).structured_content
+    raise AssertionError(f"never reached {wanted}: {step}")
+
+
+async def test_list_api_clients_flags_this_computer_and_foreign_ones(home, greenlake):
+    clients = api_clients_fixture(home)
+    greenlake(api_clients=clients)
+    async with Client(srv.mcp) as client:  # the saved login's email is used, so no email page
+        first = (await client.call_tool("greenlake_list_api_clients_start", {})).structured_content
+        assert (first["status"], first["number"]) == ("approve_push", 21) and "greenlake_api_clients_status" in first["next_step"]
+        done = await next_step(client, first, "listed")
+    assert (done["status"], done["count"]) == ("listed", 4)
+    by_name = {c["name"]: c for c in done["clients"]}
+    assert by_name[MINE]["note"].startswith("used by this computer")
+    assert by_name["terraform-ci"]["note"] == "not created by proliant-mcp"
+    assert by_name["GLP-proliant-mcp-WIN11-1a6598-261120144148"]["created"] == "2026-11-20 14:41 (from the name)"
+    assert "secret" not in json.dumps(done) and len(clients) == 4  # read-only
+
+
+async def test_delete_api_clients_only_what_the_user_ticks_and_confirms(home, greenlake):
+    clients = api_clients_fixture(home)
+    greenlake(api_clients=clients)
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        step = await next_step(client, (await client.call_tool("greenlake_delete_api_clients_start", {"preselect": ["win11", MINE[:20]]})).structured_content, "select_api_clients")
+        assert step["status"] == "select_api_clients" and "Do not choose for them" in step["next_step"]
+        page = (await browser.get(step["url"])).text
+        assert page.count("checked") == 2  # the two WIN11 clients; this computer's client is never pre-ticked
+        assert "Used by this computer" in page and "Not created by proliant-mcp" in page
+
+        nothing = await browser.post(step["url"], data={"step": "select", "action": "review"}, follow_redirects=True)
+        assert "Tick at least one" in nothing.text and len(clients) == 4
+
+        await browser.post(step["url"], data={"step": "select", "action": "review", "selected_1": "1", "selected_3": "1"})
+        status = (await client.call_tool("greenlake_api_clients_status", {})).structured_content
+        assert status["status"] == "confirm_deletion" and len(status["selected"]) == 2
+        assert len(clients) == 4  # nothing is deleted before the confirmation
+        confirm = (await browser.get(step["url"])).text
+        assert "Permanently delete 2 API clients" in confirm and "cannot be undone" in confirm
+
+        await browser.post(step["url"], data={"step": "confirm", "action": "delete"})
+        done = (await client.call_tool("greenlake_api_clients_status", {})).structured_content
+    assert done["status"] == "deleted" and done["remaining"] == 2 and not done["failed"]
+    assert sorted(done["deleted"]) == sorted(["terraform-ci", "GLP-proliant-mcp-WIN11-1a6598-261120144148"])
+    assert {c["credential_name"] for c in clients} == {MINE, "GLP-proliant-mcp-WIN11-5800a7-261118220322"}
+    assert "note" not in done  # this computer's login was not touched
+
+
+async def test_delete_reports_refusals_warns_about_this_computers_login_and_can_be_cancelled(home, greenlake):
+    clients = api_clients_fixture(home)
+    greenlake(api_clients=clients, refuse_delete={"terraform-ci"})
+    async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:
+        step = await next_step(client, (await client.call_tool("greenlake_delete_api_clients_start", {})).structured_content, "select_api_clients")
+        await browser.post(step["url"], data={"step": "select", "action": "review", "selected_0": "1", "selected_3": "1"})
+        await client.call_tool("greenlake_api_clients_status", {})
+        assert "includes the API client used by this computer" in (await browser.get(step["url"])).text
+        await browser.post(step["url"], data={"step": "confirm", "action": "back"})
+        again = (await client.call_tool("greenlake_api_clients_status", {})).structured_content
+        assert again["status"] == "select_api_clients"
+        await browser.post(step["url"], data={"step": "select", "action": "review", "selected_0": "1", "selected_3": "1"})
+        await client.call_tool("greenlake_api_clients_status", {})
+        await browser.post(step["url"], data={"step": "confirm", "action": "delete"})
+        done = (await client.call_tool("greenlake_api_clients_status", {})).structured_content
+        assert done["deleted"] == [MINE] and done["failed"] == [{"name": "terraform-ci", "reason": "GreenLake refused (HTTP 403)"}]
+        assert "saved GreenLake login was deleted" in done["note"]
+
+        step = await next_step(client, (await client.call_tool("greenlake_delete_api_clients_start", {})).structured_content, "select_api_clients")
+        await browser.post(step["url"], data={"step": "select", "action": "cancel", "selected_0": "1"})
+        cancelled = (await client.call_tool("greenlake_api_clients_status", {})).structured_content
+    assert cancelled["status"] == "cancelled" and cancelled["deleted"] == []
+    assert len(clients) == 3  # only the one successful deletion happened
+
+
+async def test_creating_an_api_client_over_the_limit_points_to_the_delete_tool(home, monkeypatch):
+    def handler(request):
+        if request.method == "POST":
+            return httpx.Response(400)
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr(login, "_transport", httpx.MockTransport(handler))
+    with pytest.raises(login.LoginError, match="greenlake_delete_api_clients_start"):
+        await login._create_api_client("at", "c1")

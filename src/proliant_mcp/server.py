@@ -16,7 +16,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_bulk, chat_inventory, chat_login, com, compat, ilo, inventory_cache, inventory_cli, login, oneview, snapshots
+from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_inventory, chat_login, com, compat, ilo, inventory_cache, inventory_cli, login, oneview, snapshots
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -57,7 +57,9 @@ cancelled without the user seeing a pop-up, call com_login_start (with the email
 already gave it; never ask for it with a question tool, which may be auto-answered "user not
 available": without an email the user types it on a local page), tell the user exactly what it
 returns (the page link, the Okta Verify number to tap) and keep calling com_login_status without waiting
-for the user to reply (it waits for them; the page walks them through every step), and call com_login_status until it says signed_in. If no iLO or OneView is
+for the user to reply (it waits for them; the page walks them through every step), and call com_login_status until it says signed_in. If the user hit the limit of GreenLake API clients, or asks to see or delete them, use
+greenlake_list_api_clients_start / greenlake_delete_api_clients_start (the user picks what to delete on a page)
+and greenlake_api_clients_status. If no iLO or OneView is
 configured, or the user wants to add servers, call add_server (one iLO or OneView). For multiple
 iLOs, a list, a range, or a file, call add_servers_start, show its page link, and call
 add_servers_status until saved or failed without waiting for the user to reply. The user chooses
@@ -786,6 +788,52 @@ async def add_servers_status() -> dict[str, Any]:
     """Wait for the bulk add started by add_servers_start. Returns progress, saved results,
     or a failure. Keep calling while it is waiting; the browser page guides the user."""
     return await chat_bulk.status()
+
+
+@mcp.tool(annotations=SIGN_IN)
+async def greenlake_list_api_clients_start(
+    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they said it. Omit it to use the email of this computer's saved GreenLake login, or let the user type it on a local page (do not guess it).")] = None,
+    workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
+) -> dict[str, Any]:
+    """List the user's own personal HPE GreenLake API clients (name, client ID, created, and
+    whether this computer's saved login uses it). Use it when the user hit the limit of API
+    clients or asks what API clients they have. It signs the user in like com_login_start (an
+    Okta Verify number to tap, or a password on a local page) and changes nothing. Relay each step,
+    then call greenlake_api_clients_status right away, without waiting for the user to reply,
+    until it returns `listed`. Never shows secrets."""
+    return await chat_api_clients.start(False, email, workspace)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Delete GreenLake API clients", readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+    )
+)
+async def greenlake_delete_api_clients_start(
+    email: Annotated[str | None, Field(description="The user's HPE GreenLake email, only if they said it. Omit it to use the email of this computer's saved GreenLake login, or let the user type it on a local page (do not guess it).")] = None,
+    workspace: Annotated[str | None, Field(description="GreenLake workspace name, if the user already said which.")] = None,
+    preselect: Annotated[list[str] | None, Field(description="Optional: words to pre-tick clients whose names contain them (for example a computer name the user mentioned). The user still chooses and confirms every deletion on the page; this only saves clicks.")] = None,
+) -> dict[str, Any]:
+    """Delete personal HPE GreenLake API clients that the USER selects. Use it when the user wants
+    to free API clients (for example after hitting the limit). It signs the user in like
+    com_login_start, then shows a local page listing their API clients with check boxes; the user
+    ticks the ones to delete, reviews them and confirms there. You cannot choose what is deleted
+    and must not ask the user to confirm in the chat. Deletion is permanent, and anything using a
+    deleted client stops working. Relay each step, then call greenlake_api_clients_status right away
+    until it returns `deleted`, `cancelled` or `failed`."""
+    return await chat_api_clients.start(True, email, workspace, preselect)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def greenlake_api_clients_status(
+    workspace: Annotated[str | None, Field(description="The user's choice when the last status was choose_workspace.")] = None,
+) -> dict[str, Any]:
+    """Next step of greenlake_list_api_clients_start or greenlake_delete_api_clients_start. Waits up to
+    45 seconds for the user, then returns the current step (`approve_push`, `enter_password`,
+    `choose_workspace`, `select_api_clients` with the clients, `confirm_deletion`), or the result
+    (`listed`, `deleted`, `cancelled`, `failed`). If `waiting` is true nothing changed yet: remind
+    the user of the step and call it again. It changes nothing itself."""
+    return await chat_api_clients.status(workspace)
 
 
 @mcp.tool(
