@@ -91,6 +91,24 @@ chmod 600 ~/.config/proliant-mcp/inventory.ini
 
 A [proliant-cli](https://github.com/hjma29/proliant-cli) inventory at `~/.config/proliant-cli/inventory.ini` is also read.
 
+## Pages for a server on another computer
+
+Passwords are typed on a short-lived page that proliant-mcp serves on its own computer
+(`http://127.0.0.1:<port>/<random path>`), never in the chat. If proliant-mcp runs on another
+computer than the one you sit at (a remote gateway or server), `127.0.0.1` is that computer and
+your browser cannot open the page. Pick one:
+
+- **No page for an `@hpe.com` GreenLake sign-in:** give the assistant your email in the chat. You then
+  only tap the Okta Verify number it shows you.
+- **Forward the port** over SSH: `ssh -L <port>:127.0.0.1:<port> <user>@<server>`, then open the same
+  link on your computer.
+- **Serve the pages on a reachable address:** set `PROLIANT_MCP_PAGE_HOST` to one address of the server's
+  computer, for example its Tailscale or VPN address, in the MCP server's environment
+  (`PROLIANT_MCP_PAGE_HOST=100.64.0.10`). The links then use that address. The pages are **plain HTTP**
+  and anyone who can reach the address and knows the random link can use it, so use this only on a private,
+  encrypted network (Tailscale, a VPN), never on the open internet. It must be an address of that computer
+  (not `0.0.0.0`). It is off by default.
+
 ## Hardware snapshot cache
 
 A local SQLite cache is **on by default** (15 minutes). `get_inventory_snapshot` (an iLO's

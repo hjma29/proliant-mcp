@@ -6,7 +6,8 @@ questions. ``run_flow`` shows them: as live pop-ups on 2025-11-25-era connection
 2026-07-28 connections.
 
 Passwords are never collected in a chat form: the MCP spec forbids it and forms cannot mask
-input. ``Prompter.secret`` serves a one-time page on 127.0.0.1 with a masked field and opens
+input. ``Prompter.secret`` serves a one-time page on 127.0.0.1 (or the address in
+``PROLIANT_MCP_PAGE_HOST`` on a remote server) with a masked field and opens
 it with URL-mode elicitation (or links it from a form on clients without URL mode). The
 password goes from the browser straight to this server, never through the AI client or model.
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
+import ipaddress
 import os
 import secrets
 import subprocess
@@ -43,6 +45,35 @@ class FlowError(RuntimeError):
 
 class PopupCancelled(FlowError):
     """A pop-up was declined or cancelled, often automatically by the client (e.g. VS Code Autopilot)."""
+
+
+PAGE_HOST_ENV = "PROLIANT_MCP_PAGE_HOST"
+
+
+def page_host() -> str:
+    """Where the local pages are served: this computer's loopback, unless the user opts in with
+    PROLIANT_MCP_PAGE_HOST (one address of this computer) because the server runs on another computer."""
+    return os.environ.get(PAGE_HOST_ENV, "").strip() or "127.0.0.1"
+
+
+def page_is_remote() -> bool:
+    return bool(os.environ.get(PAGE_HOST_ENV, "").strip())
+
+
+def _serve_page(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, str]:
+    """Start the page server on a random port; returns it and its base URL (no path)."""
+    host = page_host()
+    with contextlib.suppress(ValueError):  # a host name is checked by the bind below
+        if ipaddress.ip_address(host).is_unspecified:
+            raise FlowError(f"{PAGE_HOST_ENV} must be one address of this computer, not {host}")
+    try:
+        server = ThreadingHTTPServer((host, 0), handler)
+    except (OSError, UnicodeError) as exc:
+        raise FlowError(
+            f"Cannot serve the page on {PAGE_HOST_ENV}={host} ({type(exc).__name__}); it must be an IPv4 address or name "
+            "of the computer that runs proliant-mcp"
+        ) from exc
+    return server, f"http://{host}:{server.server_address[1]}"
 
 
 def popup_failed(exc: BaseException, unsupported: str) -> bool:
@@ -229,8 +260,8 @@ class _PasswordPage:
                 loop.call_soon_threadsafe(deliver, value)
                 self._send(200, _page(f"{prompt.label} received", "<p>Received. Go back to your AI chat; you can close this tab.</p>"))
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self._server.server_address[1]}/{self.token}"
+        self._server, base = _serve_page(Handler)
+        self.url = f"{base}/{self.token}"
         threading.Thread(target=self._server.serve_forever, name="proliant-mcp-password-page", daemon=True).start()
 
     def close(self) -> None:
@@ -281,8 +312,8 @@ def open_in_browser(url: str) -> bool:
 class FlowPage:
     """One local page that walks the user through a whole flow without pop-ups (email, Okta
     Verify number, password, workspace...). The same link stays valid from the first step to the
-    last: waiting steps refresh themselves, and forms post back to it. Bound to 127.0.0.1 with a
-    random port and path; request bodies are never logged."""
+    last: waiting steps refresh themselves, and forms post back to it. Bound to 127.0.0.1 (or
+    PROLIANT_MCP_PAGE_HOST) with a random port and path; request bodies are never logged."""
 
     def __init__(self, title: str, max_body_bytes: int = 8192) -> None:
         self._loop = asyncio.get_running_loop()
@@ -329,20 +360,27 @@ class FlowPage:
                     page._loop.call_soon_threadsafe(page._deliver, answer, {f: values.get(f, "") for f in page._fields})
                 _send_html(self, 303, "", location=f"/{page.token}")
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self._server.server_address[1]}/{self.token}"
+        self._server, base = _serve_page(Handler)
+        self.url = f"{base}/{self.token}"
         threading.Thread(target=self._server.serve_forever, name="proliant-mcp-flow-page", daemon=True).start()
-        self.opened = open_in_browser(self.url)
+        self.opened = False if page_is_remote() else open_in_browser(self.url)  # a remote server has no browser the user sees
 
     def link(self) -> str:
         """Start of a next_step: make sure the assistant shows the link (the user cannot see tool results)."""
         opened = "It was opened in the user's browser; show the link anyway in case it did not. " if self.opened else ""
         port = self._server.server_address[1]
-        remote = (
-            "If the user cannot open it because this MCP server runs on another computer (a remote gateway: 127.0.0.1 is that "
-            f"computer, not theirs), do not keep waiting: they can forward the port with `ssh -L {port}:127.0.0.1:{port} "
-            "<user>@<server-host>` and open the same link on their own computer. Never ask for a password in the chat. "
-        )
+        if page_is_remote():
+            remote = (
+                f"This page is served on {page_host()} because {PAGE_HOST_ENV} is set. It is plain HTTP, so the user should open it "
+                "only from a trusted private network (VPN or Tailscale). Never ask for a password in the chat. "
+            )
+        else:
+            remote = (
+                "If the user cannot open it because this MCP server runs on another computer (a remote gateway: 127.0.0.1 is that "
+                f"computer, not theirs), do not keep waiting: they can forward the port with `ssh -L {port}:127.0.0.1:{port} "
+                f"<user>@<server-host>` and open the same link on their own computer, or whoever runs the server can set "
+                f"{PAGE_HOST_ENV} to an address of that computer the user can reach. Never ask for a password in the chat. "
+            )
         return f"Show the user this link in your reply, as a clickable link, before calling any tool: {self.url} . {opened}{remote}"
 
     @staticmethod

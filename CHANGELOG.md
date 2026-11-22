@@ -11,6 +11,9 @@ directly (see the README).
 ### Fixes
 - Remote servers (for example an MCP server on a gateway, used from a desktop on another computer): the sign-in page is on the server's own 127.0.0.1, so the user cannot open it. The first sign-in step now tells the assistant not to wait for it: ask the user for their email in the chat and call `com_login_start` again with it. An `@hpe.com` account then needs only the Okta Verify number, relayed in the chat, and no page. Every page link also says how to forward the port with `ssh -L`. Passwords still never go through the chat.
 
+### New
+- `PROLIANT_MCP_PAGE_HOST` (off by default) serves the sign-in, password and selection pages on an address of the server's computer that you can reach, for example a Tailscale address, instead of `127.0.0.1`. Set it in the MCP server's environment when proliant-mcp runs on a remote gateway with no SSH. The pages are plain HTTP, so use it only on a private encrypted network. Links then use that address, and no browser is opened on the server.
+
 ---
 
 ## v0.17.0 — 2026-11-21

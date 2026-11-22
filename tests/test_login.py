@@ -384,6 +384,32 @@ async def test_server_on_another_computer_signs_in_without_any_page(greenlake):
     assert (done["status"], done["servers"]) == ("signed_in", 7)  # the Okta number came back in the chat; no page was opened
 
 
+async def test_pages_are_on_loopback_unless_the_user_opts_in_for_a_remote_server(monkeypatch):
+    monkeypatch.delenv("PROLIANT_MCP_PAGE_HOST", raising=False)
+    local = chat.FlowPage("t")
+    try:
+        assert local.url.startswith("http://127.0.0.1:") and "ssh -L" in local.link()
+    finally:
+        local.close()
+
+    monkeypatch.setenv("PROLIANT_MCP_PAGE_HOST", "localhost")  # stands for an address of the server the user can reach
+    remote = chat.FlowPage("t")
+    try:
+        assert remote.url.startswith("http://localhost:") and remote.opened is False
+        link = remote.link()
+        assert "PROLIANT_MCP_PAGE_HOST" in link and "plain HTTP" in link and "ssh -L" not in link
+        async with httpx.AsyncClient() as browser:
+            assert (await browser.get(remote.url)).status_code == 200
+            assert (await browser.get(remote.url + "x")).status_code == 404
+    finally:
+        remote.close()
+
+    for bad, message in (("0.0.0.0", "one address of this computer"), ("203.0.113.9", "Cannot serve the page")):
+        monkeypatch.setenv("PROLIANT_MCP_PAGE_HOST", bad)
+        with pytest.raises(chat.FlowError, match=message):
+            chat.FlowPage("t")
+
+
 async def test_relay_sign_in_password_on_local_page(greenlake):
     greenlake()
     async with Client(srv.mcp) as client, httpx.AsyncClient() as browser:

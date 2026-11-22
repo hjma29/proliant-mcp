@@ -114,3 +114,7 @@ Copy them into your agent's skills folder (for example `~/.copilot/skills/` or
   OneView GET tools redact keys such as `activationKey` and `password`.
 - Each iLO and OneView tool call opens and closes its own session. COM access tokens
   are cached in memory only, until they expire.
+- The password and sign-in pages are served on `127.0.0.1` with a random port and path, accept
+  one answer, and never log what you type. `PROLIANT_MCP_PAGE_HOST` (off by default) serves them on
+  another address for a server on a remote computer; that makes them plain HTTP on the network, so
+  use it only over Tailscale or a VPN (see [Configuration](configuration.md)).
