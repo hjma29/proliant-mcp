@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## Unreleased
+
+### Changed
+- `com_list_servers_table` now returns only what was asked for. The default columns are name, model and health (was six); `columns` adds power, connected, iLO IP, iLO firmware, firmware bundle, and the new hardware columns `gpu`, `storage`, `nics` and `cpu_model`, which read COM's cached inventory only when requested (`unknown` where COM has none, never shown as none). The counts follow the columns shown: always by health, plus power, connected, or GPUs by model when those columns are in the table. A smaller result means fewer tokens for the model to read and to re-type into its answer. On a 49-server fleet the default result is about 3.5 KB.
+
+---
+
 ## v0.19.0 — 2026-11-22
 
 ### New

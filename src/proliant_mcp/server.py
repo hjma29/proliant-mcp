@@ -36,7 +36,9 @@ or why it isn't booting, see `os` in get_server_summary / get_fleet_summary. For
 several servers use get_fleet_event_summary; for who logged in use get_ilo_logins; for Synergy uplinks
 oneview_list_uplink_sets; for GreenLake services greenlake_list_services.
 To show the user a list of servers use com_list_servers_table: a ready-made table and exact counts, to
-present as they are (never retype the data into a script). For analysis across servers use
+present as they are (never retype the data into a script). Default columns are name, model, health: pass
+`columns` for exactly what was asked (power, connected, ilo_ip, ilo_version, firmware_bundle, gpu, storage,
+nics, cpu_model), nothing more. For analysis across servers use
 com_list_servers (include_hardware adds CPU, GPU and storage) or com_list_gpus; for a table of storage
 controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link speeds or network mode
 com_list_nics. Never loop com_get_server or com_api_get over many servers.
@@ -537,16 +539,28 @@ async def com_list_servers_table(
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     columns: Annotated[
-        list[Literal["name", "model", "health", "power", "connected", "ilo_ip", "ilo_host", "os", "serial", "cpu", "generation", "subscription", "oneview"]] | None,
-        Field(description="Columns in order. Default: name, model, health, power, connected, ilo_ip. Add only what the user asks for; wide tables are slow to show."),
+        list[
+            Literal[
+                "name", "model", "health", "power", "connected", "ilo_ip", "ilo_host", "ilo_version", "firmware_bundle", "os",
+                "serial", "cpu", "cpu_model", "gpu", "storage", "nics", "generation", "subscription", "oneview",
+            ]
+        ]
+        | None,
+        Field(
+            description="Columns in order. Default: name, model, health. Add only what the user asks for: power, connected, "
+            "ilo_ip, ilo_version, firmware_bundle; or gpu, storage, nics, cpu_model (read per server from COM's cached inventory, slower)."
+        ),
     ] = None,
 ) -> dict[str, Any]:
     """The COM servers as a ready-made Markdown table with exact counts, for when the user wants to
-    SEE the list ("list my servers", "which are critical"). Show `table` as written and quote
-    `counts` (total, by health, power, model, connected): do not recount or retype the data into a
-    script. Same filters as com_list_servers, which returns the full JSON for analysis."""
-    rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, False))
-    return fleet_table.build(rows, columns)
+    SEE the list ("list my servers", "which are critical", "storage of each server"). Default
+    columns are name, model, health; pass `columns` for exactly what was asked. Show `table` as
+    written and quote `counts`: do not recount or retype the data into a script. Same filters as
+    com_list_servers, which returns the full JSON for analysis."""
+    wanted = fleet_table.pick_columns(columns)
+    hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted))
+    rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, "nics" in wanted))
+    return fleet_table.build(rows, wanted)
 
 
 @mcp.tool(annotations=READ_ONLY)

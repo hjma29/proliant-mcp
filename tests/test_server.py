@@ -518,18 +518,29 @@ async def test_com_list_servers_table_has_exact_counts_and_a_short_default_table
         rows = (await c.call_tool("com_list_servers", {})).structured_content["result"]
         out = (await c.call_tool("com_list_servers_table", {})).structured_content
         wide = (await c.call_tool("com_list_servers_table", {"columns": ["name", "serial", "ilo_host", "os"]})).structured_content
+        status = (await c.call_tool("com_list_servers_table", {"columns": ["name", "power", "connected"]})).structured_content
         one = (await c.call_tool("com_list_servers_table", {"name_contains": "gpu1"})).structured_content
         none = (await c.call_tool("com_list_servers_table", {"name_contains": "no-such-server"})).structured_content
     lines = out["table"].splitlines()
     assert out["total"] == len(rows) and len(lines) == len(rows) + 2  # header, separator, one line per server
-    assert out["columns"] == ["Name", "Model", "Health", "Power", "Connected", "iLO IP"]
-    assert out["counts"]["by_health"] == dict(Counter(r["health"] or "UNKNOWN" for r in rows))
-    assert out["counts"]["connected_to_com"] == {"yes": sum(1 for r in rows if r["connected"]), "no": sum(1 for r in rows if not r["connected"])}
-    assert sum(out["counts"]["by_model"].values()) == len(rows) and "do not recount" in out["note"]
+    assert out["columns"] == ["Name", "Model", "Health"]
+    assert out["counts"] == {"by_health": dict(Counter(r["health"] or "UNKNOWN" for r in rows))}  # only counts for shown columns
+    assert status["counts"]["connected_to_com"] == {"yes": sum(1 for r in rows if r["connected"]), "no": sum(1 for r in rows if not r["connected"])}
+    assert sum(status["counts"]["by_power"].values()) == len(rows) and "do not recount" in out["note"]
     assert all(r["name"] in out["table"] for r in rows) and "firmware" not in out["table"].lower()
     assert wide["columns"] == ["Name", "Serial", "iLO host", "OS"] and wide["table"].splitlines()[0] == "| Name | Serial | iLO host | OS |"
     assert one["total"] == 1 and "gpu1.example.com" in one["table"]
     assert none["total"] == 0 and none["table"] == "No servers match."
+
+
+async def test_com_list_servers_table_hardware_columns(mcp_client):
+    async with mcp_client as c:
+        out = (await c.call_tool("com_list_servers_table", {"columns": ["name", "gpu", "storage", "nics", "cpu_model"]})).structured_content
+    rows = {line.split(" | ")[0].strip("| "): line for line in out["table"].splitlines()[2:]}
+    assert "2 x NVIDIA L40S" in rows["gpu1.example.com"] and "| 10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter 2p Ethernet," in rows["gpu1.example.com"]
+    assert "| none | 2 x 960GB SSD, 1 x 1920GB SSD, 2 x 3200GB NVMe (10.24 TB) |" in rows["esx2.example.com"]
+    assert "| unknown | unknown | unknown | unknown |" in rows["dl345.example.com"]
+    assert out["counts"]["gpus_by_model"]["NVIDIA L40S"] >= 2 and out["counts"]["servers_with_unknown_gpus"] >= 1
 
 
 def test_fleet_table_cells_cannot_break_the_table():
@@ -547,7 +558,7 @@ def test_fleet_table_cells_cannot_break_the_table():
         "| ok | M | 🔴 CRITICAL | Yes | 192.0.2.1 |",
     ]
     assert out["counts"]["by_health"] == {"UNKNOWN": 1, "CRITICAL": 1}
-    assert fleet_table.build([], ["bogus"])["columns"] == ["Name", "Model", "Health", "Power", "Connected", "iLO IP"]
+    assert fleet_table.build([], ["bogus"])["columns"] == ["Name", "Model", "Health"]
 
 
 async def test_tool_definitions_stay_small(mcp_client):
