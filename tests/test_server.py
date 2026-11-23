@@ -764,6 +764,14 @@ async def test_oneview_uplink_sets_report_ports_roles_neighbors_and_issues(mcp_c
         ("Enclosure-01, interconnect 6", "Q1:1", "Linked", "StandBy", "10G", "tor-02 Eth1/11"),
     ]
     assert span["issues"] == ["no interconnect redundancy: all linked ports are on one module"]
+    # A switch still named "switch" (the default) is identified by its chassis ID, and listed once however many ports it has
+    assert [p["neighbor"] for p in aci["ports"] if p["link"] == "Linked"] == ["switch (78:0c:f0:7d:8a:c3) Eth1/6"]
+    assert span["ports"][0]["neighbor"] == "switch (78:0c:f0:7d:8a:c8) Eth1/10" and span["ports"][0]["neighbor_chassis_id"] == "78:0c:f0:7d:8a:c8"
+    # the two "switch" ports have chassis MACs that differ only in the last byte: one switch, not two
+    by_name = {s["name"]: s for s in data["neighbor_switches"]}
+    assert sorted(by_name) == ["switch", "tor-01", "tor-02"] and by_name["switch"]["software"].startswith("Cisco Nexus")
+    assert by_name["switch"]["chassis_ids"] == ["78:0c:f0:7d:8a:c3", "78:0c:f0:7d:8a:c8"] and len(by_name["switch"]["connections"]) == 2
+    assert "Do not guess how many switches" in data["note"]
 
 
 async def test_find_server_searches_every_source_and_probes_unknown_ilos(mcp_client, monkeypatch):

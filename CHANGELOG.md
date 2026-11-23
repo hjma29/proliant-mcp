@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## Unreleased
+
+### Changed
+- `oneview_list_uplink_sets`: a switch that still advertises the default LLDP name `switch` (Cisco ACI/NX-OS leaves do until they are renamed) is now shown with its chassis MAC, `switch (78:0c:f0:7d:8a:c3) Eth1/5`, and each port has `neighbor_chassis_id`. A new `neighbor_switches` list groups the neighbors into switches by system name and chassis MAC (ignoring the last byte, since ACI leaves use a different MAC on every port), with software version and each connection. OneView reports only what the switch sends, so the real leaf name has to be set on the switch side.
+
+---
+
 ## v0.21.0 — 2026-11-23
 
 ### New

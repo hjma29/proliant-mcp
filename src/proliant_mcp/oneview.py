@@ -371,11 +371,19 @@ def _speed(value: str | None) -> str | None:
     return value[len("Speed"):]
 
 
+# LLDP system names a switch advertises before anyone has renamed it: they don't say which switch it is.
+_GENERIC_SWITCH_NAMES = {"switch", "localhost", "unknown", "none", "(none)"}
+
+
 def _neighbor(n: dict[str, Any] | None) -> str | None:
     if not n:
         return None
-    text = " ".join(x for x in (n.get("remoteSystemName"), n.get("remotePortId")) if x)
-    return text or n.get("remoteChassisId")
+    name = (n.get("remoteSystemName") or "").strip()
+    chassis = n.get("remoteChassisId")
+    if chassis and (not name or name.lower() in _GENERIC_SWITCH_NAMES):
+        name = f"{name or 'unnamed switch'} ({chassis})"
+    text = " ".join(x for x in (name, n.get("remotePortId")) if x)
+    return text or chassis
 
 
 async def list_uplink_sets(c: OneViewClient) -> dict[str, Any]:
@@ -396,6 +404,7 @@ async def list_uplink_sets(c: OneViewClient) -> dict[str, Any]:
     set_names = _names(net_sets)
 
     rows = []
+    switches: dict[tuple[str | None, str], dict[str, Any]] = {}
     for us in uplink_sets:
         name = us.get("name")
         net_uris = [*(us.get("networkUris") or []), *(us.get("fcNetworkUris") or []), *(us.get("fcoeNetworkUris") or [])]
@@ -420,7 +429,23 @@ async def list_uplink_sets(c: OneViewClient) -> dict[str, Any]:
                 "health": p.get("portHealthStatus"),
                 "lag": p.get("lagName") or None,
                 "neighbor": _neighbor(p.get("neighbor")),
+                "neighbor_chassis_id": (p.get("neighbor") or {}).get("remoteChassisId"),
             })
+            remote = p.get("neighbor") or {}
+            if remote:
+                chassis = remote.get("remoteChassisId") or ""
+                # ACI leaves report a different chassis MAC on every port (base + port number), so the last byte is dropped
+                octets = chassis.split(":")
+                key = (remote.get("remoteSystemName"), ":".join(octets[:5]) if len(octets) == 6 else chassis)
+                sw = switches.setdefault(key, {
+                    "name": remote.get("remoteSystemName"),
+                    "chassis_ids": [],
+                    "software": (remote.get("remoteSystemDescription") or "").split("\n")[0] or None,
+                    "connections": [],
+                })
+                if chassis and chassis not in sw["chassis_ids"]:
+                    sw["chassis_ids"].append(chassis)
+                sw["connections"].append(f"{name}: {port_rows[-1]['interconnect']} {port_rows[-1]['port']} -> {remote.get('remotePortId')}")
         port_rows.sort(key=lambda r: (r["interconnect"] or "", r["port"] or ""))
         linked = [r for r in port_rows if r["link"] == "Linked"]
         issues = []
@@ -462,7 +487,12 @@ async def list_uplink_sets(c: OneViewClient) -> dict[str, Any]:
         "by_status": dict(Counter(r["status"] or "Unknown" for r in rows)),
         "ports": {"total": sum(len(r["ports"]) for r in rows), "linked": sum(r["ports_linked"] for r in rows)},
         "with_issues": [r["name"] for r in rows if r["issues"] or (r["status"] or "OK") != "OK"],
+        "neighbor_switches": list(switches.values()),
         "sets": rows,
         "note": "role is the failover state of a linked port: Active carries traffic, StandBy takes over if the active "
-        "ports fail; None on a linked port means it carries nothing. neighbor is the switch and port seen over LLDP.",
+        "ports fail; None on a linked port means it carries nothing. neighbor is the switch and port seen over LLDP; "
+        "neighbor_switches groups the neighbors into switches by system name and chassis MAC (ignoring the last byte, because "
+        "ACI leaves use a different MAC per port) and lists each one's connections. A system name such as 'switch' is the "
+        "default name the switch advertises: OneView cannot report a better one, so give the MAC and, to get real names, "
+        "rename the nodes on the switch side. Do not guess how many switches there are beyond neighbor_switches.",
     }

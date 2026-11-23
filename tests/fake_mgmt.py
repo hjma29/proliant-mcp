@@ -14,11 +14,14 @@ GL_GLOBAL = "global.api.greenlake.hpe.com"
 _SH_URI = "/rest/server-hardware/HW1"
 
 
-def _port(ic: str, name: str, status: str, role: str, uplink_set: str, switch: str | None, switch_port: str | None) -> dict:
+def _port(
+    ic: str, name: str, status: str, role: str, uplink_set: str, switch: str | None, switch_port: str | None, chassis: str | None = None
+) -> dict:
     return {"uri": f"/rest/interconnects/{ic}/ports/{ic}:{name}", "portName": name, "portType": "Uplink", "portStatus": status,
             "portStatusReason": role, "portHealthStatus": "Normal", "operationalSpeed": "Speed10G" if status == "Linked" else "Speed0M",
             "associatedUplinkSetUri": uplink_set,
-            "neighbor": {"remoteSystemName": switch, "remotePortId": switch_port} if switch else None}
+            "neighbor": {"remoteSystemName": switch, "remotePortId": switch_port, "remoteChassisId": chassis,
+                         "remoteSystemDescription": "Cisco Nexus Operating System (NX-OS) Software 16.0(7e)\nTAC support"} if switch else None}
 
 
 def _uplink_set(uid: str, name: str, status: str, networks: list[str], ports: list[tuple[str, str]]) -> dict:
@@ -51,8 +54,8 @@ FAKE_OV: dict[str, dict] = {
     ]},
     "/rest/interconnects/IC3/ports": {"members": [
         _port("IC3", "Q1:1", "Linked", "Active", "/rest/uplink-sets/US1", "tor-01", "Eth1/11"),
-        _port("IC3", "Q5:2", "Linked", "None", "/rest/uplink-sets/US2", "switch", "Eth1/6"),
-        _port("IC3", "X1", "Linked", "Active", "/rest/uplink-sets/US3", "switch", "Eth1/10"),
+        _port("IC3", "Q5:2", "Linked", "None", "/rest/uplink-sets/US2", "switch", "Eth1/6", "78:0c:f0:7d:8a:c3"),
+        _port("IC3", "X1", "Linked", "Active", "/rest/uplink-sets/US3", "switch", "Eth1/10", "78:0c:f0:7d:8a:c8"),
     ]},
     "/rest/interconnects/IC6/ports": {"members": [
         _port("IC6", "Q1:1", "Linked", "StandBy", "/rest/uplink-sets/US1", "tor-02", "Eth1/11"),
