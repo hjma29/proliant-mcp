@@ -6,6 +6,14 @@ directly (see the README).
 
 ---
 
+## v0.21.0 — 2026-11-23
+
+### New
+- `generation` filter (for example `Gen11`, `11` or `GEN_11`) on `com_list_servers_table`, `com_list_servers`, `com_list_nics` and `com_hardware_report`.
+- `com_list_servers_table` columns `storage_controllers` (controller model and firmware) and `nic_firmware` (adapter model and firmware). "Gen11 servers with their NIC and storage controller model and firmware version" used to take an assistant 30 steps (the raw server JSON, a script, then one `com_get_server` per server) because no tool had a generation filter or the controller firmware. It is now one call: 26 Gen11 servers in 1.9 s.
+
+---
+
 ## v0.20.1 — 2026-11-22
 
 ### Fixed

@@ -72,6 +72,7 @@ ServerName = Annotated[str, Field(description="Server name from list_servers (or
 ApplianceName = Annotated[str | None, Field(description="OneView appliance name from list_servers; omit to use the first one.")]
 AccountName = Annotated[str | None, Field(description="COM account name from list_servers; omit to use the first one.")]
 Limit = Annotated[int, Field(ge=1, le=1000)]
+Generation = Annotated[str | None, Field(description="Only this server generation, e.g. 11 or Gen11.")]
 
 compat.install()
 mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS, version=__version__)
@@ -524,12 +525,13 @@ async def com_list_servers(
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server (CPU, GPUs, storage controllers and drives) from COM's cached inventory. Slower: one read per server.")] = False,
+    generation: Generation = None,
 ) -> list[dict[str, Any]]:
     """Raw COM JSON for analysis; to list servers use com_list_servers_table.
     Per server: name, serial, model, generation, health, power, COM connection, subscription,
     iLO host/IP/version, OS, CPU vendor, firmware bundle. About 700 characters per server, so a
     big fleet fills the model's context. One call returns the whole fleet."""
-    return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware))
+    return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware, generation=generation))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -538,29 +540,33 @@ async def com_list_servers_table(
     health: Annotated[Literal["OK", "WARNING", "CRITICAL", "UNKNOWN"] | None, Field(description="Only servers with this health summary.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
+    generation: Generation = None,
     columns: Annotated[
         list[
             Literal[
                 "name", "model", "health", "power", "connected", "ilo_ip", "ilo_host", "ilo_version", "firmware_bundle", "os",
-                "serial", "cpu", "cpu_model", "gpu", "storage", "nics", "generation", "subscription", "oneview",
+                "serial", "cpu", "cpu_model", "gpu", "storage", "storage_controllers", "nics", "nic_firmware", "generation",
+                "subscription", "oneview",
             ]
         ]
         | None,
         Field(
             description="Columns in order. Default: name, model, health. Add only what the user asks for: power, connected, "
-            "ilo_ip, ilo_version, firmware_bundle; or gpu, storage, nics, cpu_model (read per server from COM's cached inventory, slower)."
+            "ilo_ip, ilo_version, firmware_bundle; or gpu, storage (drives), storage_controllers (model + firmware), "
+            "nics (ports, mode), nic_firmware (model + firmware), cpu_model (read per server from COM's cached inventory, slower)."
         ),
     ] = None,
 ) -> dict[str, Any]:
     """List or show the COM servers: ready to display, exact counts, fast. Use this for "list my
-    servers", "which are critical", "storage of each server". With no `columns`, a big fleet comes
-    back as a short grouped list (health summary, the servers needing attention, the OK ones by
-    model) that is quick to write out; pass `columns` for a real table with exactly what was asked.
-    Show `table` as written and quote `counts`; do not retype the data into a script. Same filters
-    as com_list_servers, which returns the full JSON for analysis."""
+    servers", "which are critical", "Gen11 servers with their NIC and storage controller firmware".
+    With no `columns`, a big fleet comes back as a short grouped list (health summary, the servers
+    needing attention, the OK ones by model); pass `columns` for a real table with exactly what was
+    asked. Show `table` as written and quote `counts`; do not retype the data into a script. Same
+    filters as com_list_servers, which returns the full JSON for analysis."""
     wanted = fleet_table.pick_columns(columns)
     hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted))
-    rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, "nics" in wanted))
+    network = bool(fleet_table.NETWORK_COLUMNS & set(wanted))
+    rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, network, generation))
     return fleet_table.build(rows, columns)
 
 
@@ -582,13 +588,14 @@ async def com_hardware_report(
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     storage_over_tb: Annotated[float | None, Field(description="Only servers with more than this many TB of raw drive capacity (1 TB = 1000 GB); adds storage_filter counts.")] = None,
+    generation: Generation = None,
 ) -> dict[str, Any]:
     """Whole-fleet hardware table, compact: servers with identical hardware are grouped into one
     configuration with their names, model, CPU, storage controllers and drives, GPUs and network
     adapters (with mode), total_storage_gb, plus NIC mode totals and the servers COM has no data for
     (unknown, not absent). Use it for "table of each server's storage, GPU and NIC config" and for
     "how many servers have more than N TB" (storage_over_tb: storage_filter gives the counts)."""
-    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb))
+    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb, generation))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -597,12 +604,13 @@ async def com_list_nics(
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     linked_only: Annotated[bool, Field(description="List only adapters with at least one port up.")] = False,
+    generation: Generation = None,
 ) -> dict[str, Any]:
     """Network adapter report for the whole COM fleet: per server each NIC/HBA (mode Ethernet /
     InfiniBand / FibreChannel, ports, ports up, link speeds, firmware, health), plus totals by mode,
     adapter model and link speed, and the servers COM has no network data for. Start here for any
     NIC, HBA, link speed or network mode question."""
-    return await _com(account, lambda c: com.list_nics(c, name_contains, connected, linked_only))
+    return await _com(account, lambda c: com.list_nics(c, name_contains, connected, linked_only, generation))
 
 
 @mcp.tool(annotations=READ_ONLY)

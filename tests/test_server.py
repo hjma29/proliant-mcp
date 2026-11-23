@@ -556,6 +556,20 @@ def test_fleet_table_compact_layout_for_a_big_fleet_lists_every_server_once():
     assert fleet_table.build(rows, ["name"])["layout"] == "table" and fleet_table.build(rows[:3])["layout"] == "table"  # asked for columns, or small
 
 
+async def test_com_list_servers_table_generation_filter_and_controller_firmware(mcp_client):
+    async with mcp_client as c:
+        all_rows = (await c.call_tool("com_list_servers", {})).structured_content["result"]
+        gen10 = (await c.call_tool("com_list_servers_table", {"generation": "Gen10", "columns": ["name", "generation"]})).structured_content
+        raw11 = (await c.call_tool("com_list_servers", {"generation": "11"})).structured_content["result"]
+        both = (await c.call_tool("com_list_servers_table", {"columns": ["name", "storage_controllers", "nic_firmware"]})).structured_content
+        nics = (await c.call_tool("com_list_nics", {"generation": "GEN_11"})).structured_content
+    assert gen10["total"] == sum(1 for r in all_rows if r["generation"] == "GEN_10") and "GEN_11" not in gen10["table"]
+    assert [r["generation"] for r in raw11] == ["GEN_11"] and nics["servers_checked"] == 1
+    cells = {line.split(" | ")[0].strip("| "): line for line in both["table"].splitlines()[2:]}
+    assert "Smart Array P408i-a SR Gen10 fw " in cells["esx2.example.com"] and "| unknown | unknown |" in cells["dl345.example.com"]
+    assert "10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter fw " in cells["gpu1.example.com"]
+
+
 def test_fleet_table_cells_cannot_break_the_table():
     from proliant_mcp import fleet_table
 

@@ -58,11 +58,30 @@ def _storage(s: dict[str, Any]) -> str | None:
     return f"{', '.join(groups)} ({storage.get('total_gb', 0) / 1000:g} TB)" if groups else "no drives"
 
 
+def _with_counts(items: list[str]) -> str:
+    return ", ".join(f"{n} x {item}" if n > 1 else item for item, n in Counter(items).items())
+
+
+def _storage_controllers(s: dict[str, Any]) -> str | None:
+    storage = _hw(s).get("storage") or {}
+    if not storage.get("known"):
+        return "unknown"
+    found = [f"{c['model']} fw {c.get('firmware') or '?'}" for c in storage.get("controllers") or []]
+    return _with_counts(found) if found else "none (direct-attached drives)" if storage.get("direct_drives") else "none"
+
+
 def _nics(s: dict[str, Any]) -> str | None:
     network = (_hw(s).get("network") or {})
     if not network.get("known"):
         return "unknown"
     return ", ".join(f"{a['name']} {a['ports']}p {a['mode'] or ''}".strip() for a in network.get("adapters") or []) or "none"
+
+
+def _nic_firmware(s: dict[str, Any]) -> str | None:
+    network = (_hw(s).get("network") or {})
+    if not network.get("known"):
+        return "unknown"
+    return _with_counts([f"{a['name']} fw {a.get('firmware') or '?'}" for a in network.get("adapters") or []]) or "none"
 
 
 # column key -> (heading, value)
@@ -85,11 +104,14 @@ COLUMNS: dict[str, tuple[str, Callable[[dict[str, Any]], Any]]] = {
     "cpu_model": ("CPU model", _cpu_model),
     "gpu": ("GPUs", _gpu),
     "storage": ("Storage", _storage),
+    "storage_controllers": ("Storage controllers", _storage_controllers),
     "nics": ("NICs", _nics),
+    "nic_firmware": ("NIC firmware", _nic_firmware),
 }
 
 # These read COM's cached hardware inventory, one request per server, so they are fetched only when asked for.
-HARDWARE_COLUMNS = {"cpu_model", "gpu", "storage", "nics"}
+HARDWARE_COLUMNS = {"cpu_model", "gpu", "storage", "storage_controllers", "nics", "nic_firmware"}
+NETWORK_COLUMNS = {"nics", "nic_firmware"}  # also need the network adapter inventory
 
 
 def pick_columns(columns: list[str] | None) -> list[str]:

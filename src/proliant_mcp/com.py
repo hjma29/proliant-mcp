@@ -589,6 +589,11 @@ async def overview(c: ComClient) -> dict[str, Any]:
     }
 
 
+def _generation_number(value: str | None) -> str:
+    """'GEN_11', 'Gen11', 'gen 11' and '11' all mean 11."""
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
 async def list_servers(
     c: ComClient,
     health: str | None,
@@ -596,12 +601,15 @@ async def list_servers(
     name_contains: str | None,
     include_hardware: bool = False,
     network: bool = False,
+    generation: str | None = None,
 ) -> list[dict[str, Any]]:
     rows = [server_row(s) for s in await c.get_all("/servers")]
     if health:
         rows = [r for r in rows if (r["health"] or "").upper() == health.upper()]
     if connected is not None:
         rows = [r for r in rows if bool(r["connected"]) == connected]
+    if generation:
+        rows = [r for r in rows if _generation_number(r["generation"]) == _generation_number(generation)]
     if name_contains:
         rows = [r for r in rows if name_contains.lower() in (r["name"] or "").lower()]
     if include_hardware:
@@ -678,13 +686,13 @@ def _mode_totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def hardware_report(
-    c: ComClient, name_contains: str | None, connected: bool | None, storage_over_tb: float | None = None
+    c: ComClient, name_contains: str | None, connected: bool | None, storage_over_tb: float | None = None, generation: str | None = None
 ) -> dict[str, Any]:
     """Fleet hardware table in one compact answer: servers with identical hardware share one row.
 
     ``storage_over_tb`` keeps only servers whose raw drive capacity (RAID, boot and direct-attached
     drives together, decimal TB) is strictly greater, and counts matching, smaller and unknown servers."""
-    rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True)
+    rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True, generation=generation)
     groups: dict[str, dict[str, Any]] = {}
     storage_unknown: list[str] = []
     gpu_unknown: list[str] = []
@@ -747,9 +755,11 @@ async def hardware_report(
     }
 
 
-async def list_nics(c: ComClient, name_contains: str | None, connected: bool | None, linked_only: bool) -> dict[str, Any]:
+async def list_nics(
+    c: ComClient, name_contains: str | None, connected: bool | None, linked_only: bool, generation: str | None = None
+) -> dict[str, Any]:
     """Fleet network adapter report: per server its adapters with mode, ports and link speeds, plus totals."""
-    rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True)
+    rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True, generation=generation)
     by_model: dict[str, dict[str, Any]] = {}
     speeds: Counter[str] = Counter()
     report, unknown = [], []
