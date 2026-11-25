@@ -65,6 +65,16 @@ imports a .ini or .csv via pop-ups. If add_server's pop-ups do not appear, call 
 only if the user gave it), relay the page link and call add_server_status until saved.
 Never ask the user to type a password into the chat; these tools collect it on a secure page."""
 
+GUIDE = """proliant-mcp answers questions about HPE ProLiant servers from three sources: iLO (a few servers reached directly), HPE Compute Ops Management (COM, the GreenLake cloud service, usually the whole fleet) and HPE OneView (Synergy frames). Start with list_servers: it shows which iLOs, OneView appliances and COM accounts are configured. Then pick by question:
+
+COM fleet (how many, which, health, power, connected, generation, model, iLO firmware, subscriptions): com_get_overview for counts; com_list_servers_table for a list, with filters health, connected, generation, name_contains and storage_controller (e.g. NS204) and columns such as gpu, storage_controllers, nics, nic_firmware, ilo_version.
+COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, drives and capacity com_hardware_report (storage_controller, storage_over_tb); NICs and ports com_list_nics. One server: com_get_server. Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services.
+Find a server by name, serial number or IP: find_server.
+One iLO server (name or IP from list_servers): get_server_summary (model, serial, BIOS, iLO version, power, health, OS), get_health, get_processors (CPUs and GPUs), get_memory, get_storage, get_network_adapters (MACs, links, firmware), get_firmware_inventory, get_event_log, get_ilo_info. All iLOs at once: get_fleet_summary, get_fleet_event_summary.
+OneView: oneview_get_appliance, oneview_list_enclosures, oneview_list_server_hardware, oneview_list_server_profiles (template compliance), oneview_list_alerts, oneview_list_interconnects, oneview_list_uplink_sets, oneview_list_firmware_baselines.
+
+Counts in results are exact: quote them. "unknown" means the source has no data, not that the part is absent. Never guess a value; if no tool covers it, say so."""
+
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
 ServerName = Annotated[str, Field(description="Server name from list_servers (or its iLO host/IP).")]
@@ -81,6 +91,11 @@ StorageController = Annotated[
 compat.install()
 mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS, version=__version__)
 mcp.add_middleware(usage_stats.UsageMiddleware())
+
+
+@mcp.resource("proliant://guide", name="proliant-mcp guide", description="Which proliant-mcp tool answers which question (iLO, COM, OneView).", mime_type="text/markdown")
+def guide() -> str:
+    return GUIDE
 
 LATEST_RELEASE_API = "https://api.github.com/repos/hjma29/proliant-mcp/releases/latest"
 
@@ -686,7 +701,7 @@ async def com_list_alerts(
     include_cleared: Annotated[bool, Field(description="Also return alerts that have cleared.")] = False,
     limit: Limit = 50,
 ) -> list[dict[str, Any]]:
-    """Newest COM alerts (hardware, security, service events), uncleared only by default."""
+    """Newest COM alerts (uncleared, 50 by default; each names its server). For "which servers have critical alerts" pass severity=CRITICAL; com_get_overview has the counts."""
     return await _com(account, lambda c: com.list_alerts(c, server, severity, include_cleared, limit))
 
 

@@ -882,3 +882,24 @@ async def test_usage_stats_are_on_by_default_and_count_names_and_timings_only(mc
         assert (await c.call_tool("get_usage_stats", {})).structured_content["total_calls"] == 3  # off: nothing new counted
         assert (await c.call_tool("set_usage_stats", {"enabled": False, "clear": True})).structured_content["cleared"] == 3
         assert (await c.call_tool("get_usage_stats", {})).structured_content["total_calls"] == 0
+
+
+async def test_guide_resource_routes_questions_to_real_tools(mcp_client):
+    """Some assistants discover a server through its resources (OpenCode's list_mcp_resources); every tool the guide names must exist."""
+    import re
+
+    async with mcp_client as c:
+        resources = await c.list_resources()
+        text = (await c.read_resource("proliant://guide"))[0].text
+        names = {t.name for t in await c.list_tools()}
+    assert [str(r.uri) for r in resources] == ["proliant://guide"]
+    named = set(re.findall(r"\b((?:com|oneview|get|greenlake|find|list)_[a-z_]+)\b", text))
+    assert named and named <= names, named - names
+    assert "COM" in text and "NS204" in text
+
+
+async def test_hardware_report_lists_servers_without_any_inventory(mcp_client):
+    async with mcp_client as c:
+        report = (await c.call_tool("com_hardware_report", {})).structured_content
+    unknown = set(report["storage_unknown"]) & set(report["gpu_unknown"]) & set(report["nic_unknown"])
+    assert set(report["no_inventory"]) == unknown and "dl345.example.com" in unknown

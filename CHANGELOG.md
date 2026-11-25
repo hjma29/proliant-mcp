@@ -6,6 +6,17 @@ directly (see the README).
 
 ---
 
+## v0.22.2 — 2026-11-24
+
+### New
+- A `proliant://guide` resource that says which tool answers which kind of question (iLO, COM, OneView) and what COM, iLO and OneView mean here. In a 50-question test with a small local model (Qwen3.6 35B in OpenCode), a third of the failures were the model concluding "I have no access to any server tools" after `list_mcp_resources` came back empty; clients that list resources now find this guide.
+- `com_hardware_report` returns `no_inventory`: the servers COM has no hardware data for at all (storage, GPU and NIC). "How many servers have no hardware inventory" had two different answers (5 with no storage data, 18 with no GPU data).
+
+### Changed
+- `com_list_alerts` says that it returns 50 alerts by default and that `severity=CRITICAL` answers "which servers have critical alerts" (133 alerts were active, so the 9 critical ones were mostly cut off).
+
+---
+
 ## v0.22.1 — 2026-11-24
 
 ### Changed

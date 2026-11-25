@@ -777,11 +777,12 @@ async def hardware_report(
         "configurations": [{"count": len(g["servers"]), **g} for g in configs],
         "nic_modes": modes,
         "most_used_nic_mode": next(iter(modes), None),
+        "no_inventory": [n for n in dict.fromkeys(storage_unknown) if n in set(gpu_unknown) and n in set(nic_unknown)],
         "storage_unknown": storage_unknown,
         "gpu_unknown": gpu_unknown,
         "nic_unknown": nic_unknown,
         "note": "Servers with identical hardware share one configuration. null means COM has no cached data for that part "
-        "(unknown, not absent); an empty list means none. Drive sizes are decimal GB; total_storage_gb is the raw capacity of "
+        "(unknown, not absent; no_inventory lists servers COM has no data for at all); an empty list means none. Drive sizes are decimal GB; total_storage_gb is the raw capacity of "
         "all drives (boot, RAID and direct-attached), not usable RAID space. NIC mode is the port's network "
         "technology (Ethernet, InfiniBand, FibreChannel); nic_modes counts adapters, ports and linked ports per mode.",
     }
