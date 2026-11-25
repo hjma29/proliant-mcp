@@ -6,11 +6,18 @@ directly (see the README).
 
 ---
 
+## v0.22.1 — 2026-11-24
+
+### Changed
+- The local tool-call counters (`get_usage_stats`, `set_usage_stats`, added in v0.22.0 as opt-in) are now on by default, like the inventory cache: nothing is lost before you think to look at it. They hold tool names and timings only, on your computer only; `set_usage_stats` with `enabled: false` turns them off and `clear: true` deletes them.
+
+---
+
 ## v0.22.0 — 2026-11-24
 
 ### New
 - `storage_controller` filter (for example `NS204`, `MR416` or `P408`; any case, dashes and spaces ignored) on `com_list_servers_table` and `com_hardware_report`. "Show me servers with NS204" used to depend on the assistant knowing to read the storage controller column of the whole fleet: in a test of 10 free models and 3 assistants, models that searched by name answered "none" or invented servers. Now it is one call that returns exactly the matching servers with their controllers (10 of 42 in 3 s on a live fleet) and counts `servers_with`, `servers_without` and `servers_unknown` (servers COM has no storage inventory for are unknown, not absent).
-- Opt-in local tool-call counters: `set_usage_stats` turns them on or off or deletes them, `get_usage_stats` shows calls, errors and time per tool and client, calls per day and the longest bursts of calls (dozens of calls in a row means the assistant was lost). Off by default. Stored only on your computer in `~/.config/proliant-mcp/usage.sqlite3`: tool name, client name, time, duration, ok or error and result size; never arguments, results, server names or credentials, and nothing is sent anywhere. Rows older than 90 days are removed; counting never makes a tool call fail.
+- Opt-in local tool-call counters: `set_usage_stats` turns them on or off or deletes them, `get_usage_stats` shows calls, errors and time per tool and client, calls per day and the longest bursts of calls (dozens of calls in a row means the assistant was lost). Opt-in in this version (on by default from v0.22.1). Stored only on your computer in `~/.config/proliant-mcp/usage.sqlite3`: tool name, client name, time, duration, ok or error and result size; never arguments, results, server names or credentials, and nothing is sent anywhere. Rows older than 90 days are removed; counting never makes a tool call fail.
 
 ### Changed
 - `oneview_list_uplink_sets`: a switch that still advertises the default LLDP name `switch` (Cisco ACI/NX-OS leaves do until they are renamed) is now shown with its chassis MAC, `switch (78:0c:f0:7d:8a:c3) Eth1/5`, and each port has `neighbor_chassis_id`. A new `neighbor_switches` list groups the neighbors into switches by system name and chassis MAC (ignoring the last byte, since ACI leaves use a different MAC on every port), with software version and each connection. OneView reports only what the switch sends, so the real leaf name has to be set on the switch side.

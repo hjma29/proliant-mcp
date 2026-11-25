@@ -854,16 +854,13 @@ def test_generic_intel_gpu_name_resolved_from_pci_id():
     assert [(g["name"], g["count"]) for g in hw["gpus"]] == [("Intel Data Center GPU Max 1100", 2)]
 
 
-async def test_usage_stats_are_off_by_default_and_count_names_and_timings_only(mcp_client):
+async def test_usage_stats_are_on_by_default_and_count_names_and_timings_only(mcp_client):
     import sqlite3
 
     from proliant_mcp import usage_stats
 
+    usage_stats._state["checked"] = None
     async with mcp_client as c:
-        await c.call_tool("list_servers", {})
-        off = (await c.call_tool("get_usage_stats", {})).structured_content
-        assert off["enabled"] is False and off["total_calls"] == 0 and not usage_stats._db_path().exists()
-        assert (await c.call_tool("set_usage_stats", {"enabled": True})).structured_content["enabled"] is True
         await c.call_tool("list_servers", {})
         await c.call_tool("com_list_servers_table", {"columns": ["name"]})
         with pytest.raises(Exception):
@@ -880,6 +877,8 @@ async def test_usage_stats_are_off_by_default_and_count_names_and_timings_only(m
     db.close()
     assert columns == ["ts", "tool", "client", "ms", "ok", "bytes"] and "no-such-server" not in stored and "example.com" not in stored
     async with mcp_client as c:
-        assert (await c.call_tool("set_usage_stats", {"enabled": False, "clear": True})).structured_content["cleared"] == 3
+        assert (await c.call_tool("set_usage_stats", {"enabled": False})).structured_content["enabled"] is False
         await c.call_tool("list_servers", {})
+        assert (await c.call_tool("get_usage_stats", {})).structured_content["total_calls"] == 3  # off: nothing new counted
+        assert (await c.call_tool("set_usage_stats", {"enabled": False, "clear": True})).structured_content["cleared"] == 3
         assert (await c.call_tool("get_usage_stats", {})).structured_content["total_calls"] == 0

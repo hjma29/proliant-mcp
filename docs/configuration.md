@@ -136,11 +136,11 @@ snapshot tools read live and say so; they never fail because of the cache.
   removes the rows but cannot guarantee erasure from filesystem backups or SQLite free pages. Clear
   it after replacing hardware.
 
-## Tool-call counters (off by default)
+## Tool-call counters
 
-To see which tools your assistant calls, how often, how long they take and how many fail, ask it to
-**turn the counters on** (`set_usage_stats`) and later to **show them** (`get_usage_stats`). Nothing is
-recorded until you do. The counts are kept only on your computer, in
+proliant-mcp counts which tools your assistant calls, how often, how long they take and how many fail, so
+tool descriptions can be improved. Ask your assistant to **show them** (`get_usage_stats`), **turn them off**
+(`set_usage_stats`) or **delete them** (`clear`). The counts are kept only on your computer, in
 `~/.config/proliant-mcp/usage.sqlite3` (Windows: `%USERPROFILE%\.config\proliant-mcp\usage.sqlite3`): per
 call the tool name, the client's name, the time, the duration, ok or error and the size of the result.
 **Never** the arguments, the results, server names, addresses or credentials, and nothing is sent anywhere.

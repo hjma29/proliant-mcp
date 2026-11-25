@@ -312,7 +312,7 @@ async def clear_inventory_cache() -> dict[str, Any]:
 async def get_usage_stats(
     days: Annotated[int, Field(ge=1, le=90, description="Look back this many days.")] = 30,
 ) -> dict[str, Any]:
-    """Local tool-call counters (off until set_usage_stats): calls, errors and time per tool and client,
+    """Local tool-call counters (on by default; set_usage_stats turns them off): calls, errors and time per tool and client,
     calls per day, and the longest bursts of calls (dozens in a row means a lost assistant)."""
     try:
         return await asyncio.to_thread(usage_stats.summary, days)

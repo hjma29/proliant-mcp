@@ -1,6 +1,6 @@
 """Opt-in local counters of which tools are called, how long they take and whether they fail.
 
-Off until the user turns it on. Stored only on this computer in ``~/.config/proliant-mcp/usage.sqlite3``:
+On by default, and the user can turn it off or delete it. Stored only on this computer in ``~/.config/proliant-mcp/usage.sqlite3``:
 tool name, client name, time, duration, ok or error and result size. Never arguments, results, server
 names, addresses or credentials, and nothing is sent anywhere. Recording never makes a tool call fail.
 """
@@ -49,7 +49,9 @@ def enabled() -> bool:
     if _state["checked"] is not None and now - _state["checked"] < _SETTINGS_REFRESH:
         return _state["enabled"]
     try:
-        value = json.loads(_settings_path().read_text(encoding="utf-8")).get("enabled") is True
+        value = json.loads(_settings_path().read_text(encoding="utf-8")).get("enabled") is not False
+    except FileNotFoundError:
+        value = True
     except (OSError, ValueError, AttributeError):
         value = False
     _state.update(checked=now, enabled=value)

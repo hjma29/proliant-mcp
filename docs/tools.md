@@ -23,7 +23,7 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `get_fleet_event_summary` | Significant events for many iLOs in one call: per server, Warning and Critical (by default) IML, IEL or Security Log entries grouped by message, most severe first |
 | `get_ilo_logins` | Who logged in to the iLOs, for many servers in one call: logins per day, by type, user and source IP/host, failed logins and lockout alerts; says when a log wrapped before the window start; proliant-mcp's own sessions are counted separately (`include_this_computer` to count them) |
 | `redfish_get` | Raw read-only GET of any `/redfish/v1/...` resource |
-| `get_usage_stats`, `set_usage_stats` | Opt-in local counters of which tools are called (off by default): calls, errors and time per tool and client, calls per day and the longest bursts of calls. Only names and timings, on this computer (see [Configuration](configuration.md)) |
+| `get_usage_stats`, `set_usage_stats` | Local counters of which tools are called (on by default, can be turned off): calls, errors and time per tool and client, calls per day and the longest bursts of calls. Only names and timings, on this computer (see [Configuration](configuration.md)) |
 | `get_inventory_cache_status`, `set_inventory_cache`, `clear_inventory_cache` | Check, turn off or change the lifetime of, or clear the local snapshot cache (see [Configuration](configuration.md)); the last two only change files on this computer |
 
 ## HPE Compute Ops Management (fleet)
