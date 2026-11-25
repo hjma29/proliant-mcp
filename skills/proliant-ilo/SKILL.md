@@ -6,7 +6,12 @@ description: "Read HPE ProLiant server state through the proliant-mcp iLO tools:
 # ProLiant iLO (proliant-mcp)
 
 All data comes live from each server's iLO Redfish API through the
-`proliant-mcp` MCP server. Every tool is read-only. For fleet-wide
+`proliant-mcp` MCP server. Every tool is read-only except the iLO firmware update:
+`ilo_firmware_list_updates` shows the latest iLO firmware from HPE and the steps to it;
+`ilo_firmware_update_start` lets the user pick servers, versions and sequential or parallel
+and confirm on a page (never pick or confirm for them), then `ilo_firmware_update_status`
+reports each phase (about 10 minutes a step; hand the polling to a background sub-agent if
+you can). For fleet-wide
 questions through Compute Ops Management or OneView, use the
 `hpe-compute-fleet` skill.
 

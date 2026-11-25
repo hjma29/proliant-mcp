@@ -96,6 +96,21 @@ class RedfishClient:
             raise RedfishError(f"{self.server.name}: GET {uri} -> HTTP {resp.status_code} {_error_detail(resp)}")
         return resp.json() if resp.content else {}
 
+    async def post(self, uri: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST a Redfish action. Only the opt-in firmware update tools use this."""
+        if self._http is None:
+            raise RedfishError("Redfish session is not open")
+        try:
+            resp = await self._http.post(uri, json=body)
+        except httpx.TransportError as exc:
+            raise RedfishError(f"{self.server.name}: POST {uri} failed ({exc.__class__.__name__})") from exc
+        if resp.status_code >= 400:
+            raise RedfishError(f"{self.server.name}: POST {uri} -> HTTP {resp.status_code} {_error_detail(resp)}")
+        try:
+            return resp.json() if resp.content else {}
+        except ValueError:
+            return {}
+
     async def root(self) -> dict[str, Any]:
         if self._root is None:
             self._root = await self.get("/redfish/v1/")

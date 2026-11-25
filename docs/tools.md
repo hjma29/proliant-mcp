@@ -26,6 +26,28 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `get_usage_stats`, `set_usage_stats` | Local counters of which tools are called (on by default, can be turned off): calls, errors and time per tool and client, calls per day and the longest bursts of calls. Only names and timings, on this computer (see [Configuration](configuration.md)) |
 | `get_inventory_cache_status`, `set_inventory_cache`, `clear_inventory_cache` | Check, turn off or change the lifetime of, or clear the local snapshot cache (see [Configuration](configuration.md)); the last two only change files on this computer |
 
+## iLO firmware update
+
+The only tools that change a server. Nothing is flashed unless the user picks and confirms it on a local page.
+
+| Tool | What it does |
+|---|---|
+| `ilo_firmware_list_updates` | Read-only. Installed iLO firmware and the newer versions in HPE's firmware repository (downloads.linux.hpe.com/SDR, the newest firmware packs for the server's generation), with release dates, the steps each version needs (a package's `MinimumActiveVersion` can force an older one first, e.g. iLO 7 1.21.00 -> 1.24.00 -> 1.25.02) and about how many minutes |
+| `ilo_firmware_update_start` | Opens a local page listing every configured iLO with the versions it can take. The user ticks servers, picks a version for each, chooses **sequential** (one at a time, stops after a failure) or **parallel** (all at once), reviews the plan with time estimates and clicks Start. The same page then shows live progress. `servers`, `version` and `mode` only pre-fill the page |
+| `ilo_firmware_update_status` | Progress: the page step the user is on, then per server the step (`1/2`), phase, flash percent, elapsed and minutes left; at the end `done`, `partly_done` or `failed` per server. Waits up to 40 s for a change |
+
+Each step takes about 10 minutes:
+
+| Phase | About | What happens |
+|---|---|---|
+| downloading | 1 min | the iLO downloads and checks the package from HPE (it needs internet access, or a proxy set on the iLO) |
+| flashing | 5-6 min | the iLO writes the new firmware; `flash_percent` shows progress |
+| activating | 1-2 min | flash finished; the iLO prepares to restart |
+| resetting | 2-3 min | the iLO restarts: web UI, Redfish and remote console are unreachable. The host OS keeps running |
+| verifying | seconds | the iLO is back on the new version |
+
+The times start from measurements on iLO 7; after each real update proliant-mcp saves the measured phase times (`~/.config/proliant-mcp/firmware-history.json`) and later estimates use their median. The update runs inside the proliant-mcp process and continues without the chat, so an assistant can hand the polling to a background sub-agent. Progress is also saved to `~/.config/proliant-mcp/firmware-update.json`, which another proliant-mcp process reads when it has no update of its own. If the proliant-mcp process stops, a flash that already started still finishes on the iLO; check with `get_ilo_info`.
+
 ## HPE Compute Ops Management (fleet)
 
 | Tool | What it returns |

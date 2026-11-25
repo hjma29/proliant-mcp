@@ -151,7 +151,8 @@ the data; `clear` deletes it. Counting never makes a tool call fail.
 
 ## iLO
 
-A read-only iLO account (Login privilege only) is enough for every tool. iLO uses a
+A read-only iLO account (Login privilege only) is enough for every tool except the iLO firmware
+update, which needs the "Configure iLO Settings" privilege (an Administrator account has it). iLO uses a
 self-signed certificate by default, so TLS verification is off unless you set
 `verify_ssl = true`. One iLO can also come from environment variables:
 `ILO_HOST`, `ILO_USERNAME`, `ILO_PASSWORD` (`ILO_NAME` sets its name, default `default`).

@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.23.0 — 2026-11-25
+
+### New Features
+- iLO firmware update, the first tools that change a server. `ilo_firmware_list_updates` (read-only) shows each iLO's installed firmware and the newer versions in HPE's firmware repository, with the steps each needs and minutes: a package's `MinimumActiveVersion` can force an older one first (iLO 7 1.21.00 cannot take 1.25.02 directly, it goes through 1.24.00). `ilo_firmware_update_start` opens a local page where the user ticks the servers, picks a version for each, chooses sequential or parallel and reviews the plan with a time estimate per phase; nothing is flashed unless they click Start there. The page and `ilo_firmware_update_status` then show each server's step, phase (downloading, flashing with percent, activating, resetting, verifying) and minutes left. The update runs on its own inside proliant-mcp, so an assistant can hand the polling to a background sub-agent; progress is also saved to a file another proliant-mcp process can read. Measured phase times are saved and later estimates use their median.
+
+---
+
 ## v0.22.2 — 2026-11-24
 
 ### New

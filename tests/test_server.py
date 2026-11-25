@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -12,9 +13,9 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 import fake_mgmt as fake_mgmt_module
-from fake_ilo import fake_ilo
+from fake_ilo import FAKE_ILO, fake_ilo
 from fake_mgmt import fake_mgmt
-from proliant_mcp import com, inventory_cache
+from proliant_mcp import chat_firmware, com, ilo_firmware, inventory_cache
 from proliant_mcp import server as srv
 
 
@@ -621,7 +622,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 42_500, f"all tool definitions: {sum(sizes.values())} chars"
+    assert sum(sizes.values()) <= 43_500, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"
@@ -903,3 +904,150 @@ async def test_hardware_report_lists_servers_without_any_inventory(mcp_client):
         report = (await c.call_tool("com_hardware_report", {})).structured_content
     unknown = set(report["storage_unknown"]) & set(report["gpu_unknown"]) & set(report["nic_unknown"])
     assert set(report["no_inventory"]) == unknown and "dl345.example.com" in unknown
+
+
+_SDR = "https://downloads.linux.hpe.com/SDR/repo/fwpp-gen12/"
+_ADD_FROM_URI = "/redfish/v1/UpdateService/Actions/Oem/Hpe/HpeiLOUpdateServiceExt.AddFromUri/"
+
+
+class FlashingIlo:
+    """The fake iLO plus HPE's repository; AddFromUri plays the real iLO 7 states, an iLO reset and the new version."""
+
+    def __init__(self) -> None:
+        self.version = "1.21.00 Apr 07 2026"
+        self.script: list = []
+        self.posts: list[dict] = []
+        self.idle = "Idle"  # State reported outside a scripted update
+        self.after_post: list | None = None  # replaces the default script after AddFromUri
+
+    def _sdr(self, request: httpx.Request) -> httpx.Response:
+        listings = {
+            "/SDR/repo/fwpp-gen12/": '<a href="2026.07.00.00/">x</a><a href="2026.09.00.00/">x</a>',
+            "/SDR/repo/fwpp-gen12/2026.07.00.00/": '<a href="ilo7_1.24.00.fwpkg">x</a>',
+            "/SDR/repo/fwpp-gen12/2026.09.00.00/": '<a href="ilo7_1.24.00.fwpkg">x</a><a href="ilo7_1.25.02.fwpkg">x</a>',
+            "/SDR/repo/fwpp-gen12/2026.09.00.00/ilo7_1.25.02.json": json.dumps({"MinimumActiveVersion": "1.24.00"}),
+            "/SDR/repo/fwpp-gen12/2026.09.00.00/ilo7_1.24.00.json": json.dumps({"Package": {"ReleaseDate": "2026-07-25T00:00:00"}}),
+        }
+        path = request.url.path
+        return httpx.Response(200, text=listings[path]) if path in listings else httpx.Response(404)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "downloads.linux.hpe.com":
+            return self._sdr(request)
+        if self.script and self.script[0] == "offline":
+            self.script.pop(0)
+            raise httpx.ConnectError("iLO resetting", request=request)
+        path = request.url.path
+        if request.method == "POST" and path == _ADD_FROM_URI:
+            body = json.loads(request.read())
+            self.posts.append(body)
+            new = body["ImageURI"].rsplit("ilo7_", 1)[1].removesuffix(".fwpkg")
+            self.script = [("Uploading", None), ("Updating", 40), ("Updating", 100), ("Complete", None), *["offline"] * 4, ("new", new)]
+            if self.after_post is not None:
+                self.script = [*self.after_post, ("new", new)]
+            return httpx.Response(200, json={})
+        if request.method == "GET" and path == "/redfish/v1/UpdateService/" and request.headers.get("X-Auth-Token") == "tok":
+            state, percent = self.idle, None
+            if self.script and isinstance(self.script[0], tuple):
+                state, percent = self.script.pop(0)
+                if state == "new":
+                    self.version, state, percent = f"{percent} Jan 01 2027", "Idle", None
+            return httpx.Response(200, json={"Oem": {"Hpe": {"State": state, "FlashProgressPercent": percent, "Actions": {
+                "#HpeiLOUpdateServiceExt.AddFromUri": {"target": _ADD_FROM_URI}}}}})
+        if request.method == "GET" and path == "/redfish/v1/Managers/1/" and request.headers.get("X-Auth-Token") == "tok":
+            return httpx.Response(200, json={**FAKE_ILO[path], "FirmwareVersion": self.version})
+        return _fake(request)
+
+
+@pytest.fixture
+def flashing_ilo(mcp_client, monkeypatch):
+    ilo = FlashingIlo()
+    monkeypatch.setattr(srv, "_transport", httpx.MockTransport(ilo))
+    monkeypatch.setattr(ilo_firmware, "POLL_SECONDS", 0)
+    monkeypatch.setattr(chat_firmware, "_run", None)
+    ilo_firmware._catalog_cache.clear()
+    return ilo
+
+
+async def test_firmware_list_updates_plans_steps_from_minimum_active_version(mcp_client, flashing_ilo):
+    async with mcp_client as c:
+        data = (await c.call_tool("ilo_firmware_list_updates", {})).structured_content
+    gen12, badpass = data["servers"]
+    assert gen12["latest"] == "1.25.02" and not gen12["up_to_date"]
+    newest, older = gen12["available"]
+    assert newest["steps"] == ["1.24.00", "1.25.02"] and newest["requires_at_least"] == "1.24.00"
+    assert newest["url"] == _SDR + "2026.09.00.00/ilo7_1.25.02.fwpkg"
+    assert older["steps"] == ["1.24.00"] and older["release_date"] == "2026-07-25" and newest["about_minutes"] == 2 * older["about_minutes"]
+    assert "login failed" in badpass["error"]
+    assert [p["phase"] for p in data["one_step"]["phases"]] == list(ilo_firmware.PHASES)
+    assert not flashing_ilo.posts  # read-only
+
+
+async def test_firmware_update_flashes_only_after_the_user_confirms_on_the_page(mcp_client, flashing_ilo, tmp_path):
+    async with mcp_client as c, httpx.AsyncClient() as browser:
+        step = (await c.call_tool("ilo_firmware_update_start", {"servers": ["gen12"], "version": "1.25.02"})).structured_content
+        while step["status"] == "checking":
+            step = (await c.call_tool("ilo_firmware_update_status", {})).structured_content
+        assert step["status"] == "select_servers" and "Do not choose for them" in step["next_step"]
+        page = (await browser.get(step["url"])).text
+        assert "name='sel_0' value='1' checked" in page and "value='1.25.02' selected" in page and "via 1.24.00" in page
+        assert "login failed" in page  # badpass is listed with its error, without a check box
+
+        await browser.post(step["url"], data={"step": "select", "action": "review", "sel_0": "1", "ver_0": "1.25.02", "mode": "parallel"})
+        step = (await c.call_tool("ilo_firmware_update_status", {})).structured_content
+        assert step["status"] == "confirm_update" and step["plan"]["mode"] == "parallel"
+        assert step["plan"]["servers"][0]["steps"] == ["1.24.00", "1.25.02"] and step["plan"]["about_minutes_total"] >= 20
+        assert "Start update" in (await browser.get(step["url"])).text
+        assert not flashing_ilo.posts  # nothing is flashed before the user clicks Start
+
+        await browser.post(step["url"], data={"step": "confirm", "action": "start"})
+        for _ in range(20):
+            step = (await c.call_tool("ilo_firmware_update_status", {})).structured_content
+            if step["status"] != "updating":
+                break
+    assert step["status"] == "done", step
+    server = step["servers"][0]
+    assert (server["server"], server["status"], server["to"], server["path"]) == ("gen12", "done", "1.25.02", ["1.24.00", "1.25.02"])
+    assert [p["ImageURI"].rsplit("/", 1)[1] for p in flashing_ilo.posts] == ["ilo7_1.24.00.fwpkg", "ilo7_1.25.02.fwpkg"]
+    assert all(p["UpdateTarget"] for p in flashing_ilo.posts) and flashing_ilo.version.startswith("1.25.02")
+    phases = " ".join(server["recent"])
+    assert all(p in phases for p in ("downloading", "flashing", "activating", "resetting", "verifying"))
+    history = json.loads((tmp_path / ".config/proliant-mcp/firmware-history.json").read_text())
+    assert [h["version"] for h in history] == ["1.24.00", "1.25.02"] and "flashing" in history[0]["phases"]
+    saved = json.loads((tmp_path / ".config/proliant-mcp/firmware-update.json").read_text())
+    assert saved["status"] == "done"
+    monkeypatch_run = chat_firmware._run
+    chat_firmware._run = None  # another proliant-mcp process (e.g. a sub-agent's) reads the saved progress
+    try:
+        other = await chat_firmware.status()
+    finally:
+        chat_firmware._run = monkeypatch_run
+    assert other["from_file"] and other["status"] == "done"
+
+
+async def test_firmware_update_sequential_stops_after_a_failure_parallel_does_not(mcp_client, flashing_ilo):
+    servers = srv._servers()
+    pkg = ilo_firmware.Package("ilo7", "1.24.00", "ilo7_1.24.00.fwpkg", _SDR + "2026.09.00.00/ilo7_1.24.00.fwpkg", "2026.09.00.00")
+    results = {}
+    for mode in ("sequential", "parallel"):
+        flashing_ilo.version = "1.21.00 Apr 07 2026"
+        run = chat_firmware.Run()
+        run.mode = mode
+        run.progress = [ilo_firmware.Progress(name, "ilo7", "1.21.00", "1.24.00", [pkg]) for name in ("badpass", "gen12")]
+        await chat_firmware._execute(run, servers, srv._transport)
+        results[mode] = [(p.status, p.error or "") for p in run.progress]
+    assert results["sequential"][0][0] == "failed" and "login failed" in results["sequential"][0][1]
+    assert results["sequential"][1][0] == "skipped"
+    assert [s for s, _ in results["parallel"]] == ["failed", "done"]
+
+
+async def test_firmware_flash_survives_a_network_blip_and_a_stale_error_state(mcp_client, flashing_ilo, monkeypatch):
+    """A leftover Error from an earlier attempt, and two failed polls mid-flash, are not the result or the iLO restart."""
+    monkeypatch.setattr(ilo_firmware, "RETURN_TIMEOUT", 0)
+    flashing_ilo.idle = "Error"
+    flashing_ilo.after_post = [("Error", None), ("Uploading", None), *["offline"] * 3, ("Updating", 50), ("Updating", 50),
+                               ("Updating", 100), ("Complete", None), *["offline"] * 4]
+    pkg = ilo_firmware.Package("ilo7", "1.24.00", "ilo7_1.24.00.fwpkg", _SDR + "2026.09.00.00/ilo7_1.24.00.fwpkg", "2026.09.00.00")
+    progress = ilo_firmware.Progress("gen12", "ilo7", "1.21.00", "1.24.00", [pkg], step=1)
+    await ilo_firmware.flash(srv._servers()["gen12"], pkg, progress, lambda: None, srv._transport)
+    assert progress.installed.startswith("1.24.00") and progress.phase == "verifying"

@@ -1,4 +1,5 @@
-"""HPE compute MCP server: read-only tools for ProLiant iLO, Compute Ops Management and OneView."""
+"""HPE compute MCP server: read-only tools for ProLiant iLO, Compute Ops Management and OneView,
+plus an opt-in iLO firmware update that the user picks and confirms on a local page."""
 
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_inventory, chat_login, com, compat, fleet_table, ilo, inventory_cache, inventory_cli, login, oneview, snapshots, usage_stats
+from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_firmware, chat_inventory, chat_login, com, compat, fleet_table, ilo, ilo_firmware, inventory_cache, inventory_cli, login, oneview, snapshots, usage_stats
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -72,6 +73,7 @@ COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, dr
 Find a server by name, serial number or IP: find_server.
 One iLO server (name or IP from list_servers): get_server_summary (model, serial, BIOS, iLO version, power, health, OS), get_health, get_processors (CPUs and GPUs), get_memory, get_storage, get_network_adapters (MACs, links, firmware), get_firmware_inventory, get_event_log, get_ilo_info. All iLOs at once: get_fleet_summary, get_fleet_event_summary.
 OneView: oneview_get_appliance, oneview_list_enclosures, oneview_list_server_hardware, oneview_list_server_profiles (template compliance), oneview_list_alerts, oneview_list_interconnects, oneview_list_uplink_sets, oneview_list_firmware_baselines.
+iLO firmware: ilo_firmware_list_updates (latest version from HPE, steps, minutes); ilo_firmware_update_start to update (the user picks and confirms on a page), then ilo_firmware_update_status for live progress.
 
 Counts in results are exact: quote them. "unknown" means the source has no data, not that the part is absent. Never guess a value; if no tool covers it, say so."""
 
@@ -550,6 +552,43 @@ async def redfish_get(
     if path.rstrip("/").lower().startswith("/redfish/v1/sessionservice/sessions/") or "/accountservice/accounts" in path.lower():
         raise ToolError("Session and account resources are not exposed")
     return await _run(server, lambda c: c.get(path))
+
+
+# ── iLO firmware updates (the only tools that change a server) ────────────────
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def ilo_firmware_list_updates(
+    servers: Annotated[list[str] | None, Field(description="Server names; omit for all.")] = None,
+) -> dict[str, Any]:
+    """Latest iLO firmware from HPE for the configured iLOs: installed, newer versions, the steps each
+    needs (some need an older one first) and minutes. Changes nothing."""
+    targets = [_resolve(s) for s in servers] if servers else list(_servers().values())
+    surveys = await ilo_firmware.survey(targets, _transport)
+    family = next((s.family for s in surveys if s.family), "ilo7")
+    return {
+        "servers": [s.public() for s in surveys],
+        "one_step": ilo_firmware.step_estimate(family),
+        "next_step": "To update, call ilo_firmware_update_start: the user picks the servers, versions and sequential or parallel "
+        "on a page and confirms there.",
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Update iLO firmware", readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+async def ilo_firmware_update_start(
+    servers: Annotated[list[str] | None, Field(description="Servers to pre-tick.")] = None,
+    version: Annotated[str | None, Field(description="Version to pre-select; default latest.")] = None,
+    mode: Literal["sequential", "parallel"] | None = None,
+) -> dict[str, Any]:
+    """Update iLO firmware on servers the user picks and confirms on a local page (show its url; never
+    pick or confirm for them). About 10 min a step; only the iLO restarts. Then poll the status tool."""
+    return await chat_firmware.start(_servers(), servers, version, mode, _transport)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def ilo_firmware_update_status() -> dict[str, Any]:
+    """Progress of ilo_firmware_update_start: per server step, phase, flash_percent, minutes left."""
+    return await chat_firmware.status()
 
 
 # ── HPE Compute Ops Management (GreenLake) ────────────────────────────────────

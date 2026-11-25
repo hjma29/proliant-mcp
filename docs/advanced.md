@@ -98,8 +98,8 @@ Copy them into your agent's skills folder (for example `~/.copilot/skills/` or
 
 1. **Read-only (now):** iLO, Compute Ops Management and OneView inventory, health,
    alerts, jobs and firmware baselines.
-2. **Actions,** opt-in and annotated destructive: power and UID (iLO, COM, OneView),
-   one-time boot, COM firmware update jobs.
+2. **Actions,** opt-in and annotated destructive. Done: iLO firmware update (the user picks and
+   confirms on a page). Next: power and UID (iLO, COM, OneView), one-time boot, COM firmware update jobs.
 3. **More reports:** OneView networks, COM sustainability / energy reports.
 4. **Skills** for deploying and managing ProLiant servers (OS deployment,
    firmware updates, BIOS baselines).

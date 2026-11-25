@@ -4,6 +4,8 @@
 
 Ask things like *"which servers in Compute Ops Management are critical and why"*, *"show a table of each server's storage controller and GPU"* or *"any active OneView alerts on the Synergy frame"*.
 
+Everything is read-only except one opt-in action: *"update my iLO firmware"*. You pick the servers, the version and sequential or parallel on a page, see how long each phase takes, confirm there, and watch the flash progress (see [Tools](https://github.com/hjma29/proliant-mcp/blob/main/docs/tools.md#ilo-firmware-update)).
+
 ## Install
 
 ### Option 1: ask your AI agent
