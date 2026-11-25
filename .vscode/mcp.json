@@ -1,9 +1,0 @@
-{
-  "servers": {
-    "proliant": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "--directory", "${workspaceFolder}", "proliant-mcp"]
-    }
-  }
-}
