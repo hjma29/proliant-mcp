@@ -570,6 +570,21 @@ async def test_com_list_servers_table_generation_filter_and_controller_firmware(
     assert "10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter fw " in cells["gpu1.example.com"]
 
 
+async def test_storage_controller_filter_keeps_matches_and_counts_unknown_separately(mcp_client):
+    async with mcp_client as c:
+        every = (await c.call_tool("com_list_servers", {})).structured_content["result"]
+        table = (await c.call_tool("com_list_servers_table", {"storage_controller": "p-408 I"})).structured_content
+        report = (await c.call_tool("com_hardware_report", {"storage_controller": "P408"})).structured_content
+        nothing = (await c.call_tool("com_list_servers_table", {"storage_controller": "NS204"})).structured_content
+    f = table["counts"]["storage_controller_filter"]
+    assert table["total"] == f["servers_with"] >= 1
+    assert "esx2.example.com" in table["table"] and "Smart Array P408i-a" in table["table"]  # default columns show the controller
+    assert "dl345.example.com" in f["unknown_servers"] and "dl345.example.com" not in table["table"]  # no inventory: unknown, not "without"
+    assert f["servers_with"] + f["servers_without"] + f["servers_unknown"] == len(every)
+    assert report["storage_controller_filter"]["servers_with"] == report["servers_checked"] == f["servers_with"]
+    assert nothing["total"] == 0 and nothing["counts"]["storage_controller_filter"]["servers_unknown"] == f["servers_unknown"]
+
+
 def test_fleet_table_cells_cannot_break_the_table():
     from proliant_mcp import fleet_table
 
@@ -837,3 +852,34 @@ def test_generic_intel_gpu_name_resolved_from_pci_id():
     ]
     hw = com.hardware_summary({"processor": {"data": [intel, intel]}, "pciDevice": {"data": pci}})
     assert [(g["name"], g["count"]) for g in hw["gpus"]] == [("Intel Data Center GPU Max 1100", 2)]
+
+
+async def test_usage_stats_are_off_by_default_and_count_names_and_timings_only(mcp_client):
+    import sqlite3
+
+    from proliant_mcp import usage_stats
+
+    async with mcp_client as c:
+        await c.call_tool("list_servers", {})
+        off = (await c.call_tool("get_usage_stats", {})).structured_content
+        assert off["enabled"] is False and off["total_calls"] == 0 and not usage_stats._db_path().exists()
+        assert (await c.call_tool("set_usage_stats", {"enabled": True})).structured_content["enabled"] is True
+        await c.call_tool("list_servers", {})
+        await c.call_tool("com_list_servers_table", {"columns": ["name"]})
+        with pytest.raises(Exception):
+            await c.call_tool("get_health", {"server": "no-such-server"})
+        on = (await c.call_tool("get_usage_stats", {})).structured_content
+    by_tool = {t["tool"]: t for t in on["by_tool"]}
+    assert on["enabled"] and on["total_calls"] == 3 and on["errors"] == 1
+    assert by_tool["list_servers"]["calls"] == 1 and by_tool["get_health"]["errors"] == 1
+    assert "get_usage_stats" not in by_tool and on["busiest_bursts"][0]["calls"] == 3
+    assert list(on["by_client"]) and "unknown" not in on["by_client"]
+    db = sqlite3.connect(usage_stats._db_path())
+    columns = [r[1] for r in db.execute("PRAGMA table_info(calls)")]
+    stored = " ".join(str(v) for row in db.execute("SELECT * FROM calls") for v in row)
+    db.close()
+    assert columns == ["ts", "tool", "client", "ms", "ok", "bytes"] and "no-such-server" not in stored and "example.com" not in stored
+    async with mcp_client as c:
+        assert (await c.call_tool("set_usage_stats", {"enabled": False, "clear": True})).structured_content["cleared"] == 3
+        await c.call_tool("list_servers", {})
+        assert (await c.call_tool("get_usage_stats", {})).structured_content["total_calls"] == 0

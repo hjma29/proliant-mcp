@@ -136,6 +136,19 @@ snapshot tools read live and say so; they never fail because of the cache.
   removes the rows but cannot guarantee erasure from filesystem backups or SQLite free pages. Clear
   it after replacing hardware.
 
+## Tool-call counters (off by default)
+
+To see which tools your assistant calls, how often, how long they take and how many fail, ask it to
+**turn the counters on** (`set_usage_stats`) and later to **show them** (`get_usage_stats`). Nothing is
+recorded until you do. The counts are kept only on your computer, in
+`~/.config/proliant-mcp/usage.sqlite3` (Windows: `%USERPROFILE%\.config\proliant-mcp\usage.sqlite3`): per
+call the tool name, the client's name, the time, the duration, ok or error and the size of the result.
+**Never** the arguments, the results, server names, addresses or credentials, and nothing is sent anywhere.
+Rows older than 90 days are removed. The summary lists calls, errors and times per tool and client, calls per
+day and the longest bursts of calls (calls less than a minute apart, roughly one question each): dozens in
+one burst usually means the assistant got lost and the tool descriptions need work. Turning it off keeps
+the data; `clear` deletes it. Counting never makes a tool call fail.
+
 ## iLO
 
 A read-only iLO account (Login privilege only) is enough for every tool. iLO uses a

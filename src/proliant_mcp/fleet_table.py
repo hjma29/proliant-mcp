@@ -153,7 +153,7 @@ def _compact(rows: list[dict[str, Any]], by_health: dict[str, int]) -> str:
     return "\n".join(lines)
 
 
-def build(rows: list[dict[str, Any]], columns: list[str] | None = None) -> dict[str, Any]:
+def build(rows: list[dict[str, Any]], columns: list[str] | None = None, extra_counts: dict[str, Any] | None = None) -> dict[str, Any]:
     """Counts and a Markdown table (or compact list) for COM server rows (as returned by ``com.server_row``)."""
     keys = pick_columns(columns)
     by_health = dict(Counter(_health(s) for s in rows).most_common())
@@ -174,6 +174,7 @@ def build(rows: list[dict[str, Any]], columns: list[str] | None = None) -> dict[
                 gpus[g["name"]] += g["count"]
         counts["gpus_by_model"] = dict(gpus.most_common())
         counts["servers_with_unknown_gpus"] = sum(1 for s in rows if not _hw(s).get("cpu_gpu_known"))
+    counts.update(extra_counts or {})
     return {
         "total": len(rows),
         "counts": counts,

@@ -16,7 +16,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_inventory, chat_login, com, compat, fleet_table, ilo, inventory_cache, inventory_cli, login, oneview, snapshots
+from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_inventory, chat_login, com, compat, fleet_table, ilo, inventory_cache, inventory_cli, login, oneview, snapshots, usage_stats
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -73,9 +73,14 @@ ApplianceName = Annotated[str | None, Field(description="OneView appliance name 
 AccountName = Annotated[str | None, Field(description="COM account name from list_servers; omit to use the first one.")]
 Limit = Annotated[int, Field(ge=1, le=1000)]
 Generation = Annotated[str | None, Field(description="Only this server generation, e.g. 11 or Gen11.")]
+StorageController = Annotated[
+    str | None,
+    Field(description="Only servers with a storage controller whose model contains this text, e.g. NS204 or MR416 (any case)."),
+]
 
 compat.install()
 mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS, version=__version__)
+mcp.add_middleware(usage_stats.UsageMiddleware())
 
 LATEST_RELEASE_API = "https://api.github.com/repos/hjma29/proliant-mcp/releases/latest"
 
@@ -300,6 +305,31 @@ async def clear_inventory_cache() -> dict[str, Any]:
         count = await asyncio.to_thread(inventory_cache.clear)
         return {"removed": count, "note": "Cache rows cleared; filesystem backups or SQLite free pages may retain old data."}
     except inventory_cache.CacheError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def get_usage_stats(
+    days: Annotated[int, Field(ge=1, le=90, description="Look back this many days.")] = 30,
+) -> dict[str, Any]:
+    """Local tool-call counters (off until set_usage_stats): calls, errors and time per tool and client,
+    calls per day, and the longest bursts of calls (dozens in a row means a lost assistant)."""
+    try:
+        return await asyncio.to_thread(usage_stats.summary, days)
+    except usage_stats.UsageError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+async def set_usage_stats(
+    enabled: Annotated[bool, Field(description="True to count calls, false to stop.")],
+    clear: Annotated[bool, Field(description="Also delete the counts so far.")] = False,
+) -> dict[str, Any]:
+    """Turn the local tool-call counters on or off, or delete them, only when the user asks. They hold
+    tool name, client, time, duration, ok or error and result size on this computer only; nothing else."""
+    try:
+        return await asyncio.to_thread(usage_stats.configure, enabled, clear)
+    except usage_stats.UsageError as exc:
         raise ToolError(str(exc)) from exc
 
 
@@ -541,6 +571,7 @@ async def com_list_servers_table(
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     generation: Generation = None,
+    storage_controller: StorageController = None,
     columns: Annotated[
         list[
             Literal[
@@ -558,16 +589,23 @@ async def com_list_servers_table(
     ] = None,
 ) -> dict[str, Any]:
     """List or show the COM servers: ready to display, exact counts, fast. Use this for "list my
-    servers", "which are critical", "Gen11 servers with their NIC and storage controller firmware".
+    servers", "which are critical", "servers with NS204" (storage_controller), "Gen11 servers with
+    their NIC and storage controller firmware".
     With no `columns`, a big fleet comes back as a short grouped list (health summary, the servers
     needing attention, the OK ones by model); pass `columns` for a real table with exactly what was
     asked. Show `table` as written and quote `counts`; do not retype the data into a script. Same
     filters as com_list_servers, which returns the full JSON for analysis."""
+    if storage_controller and not columns:
+        columns = ["name", "model", "health", "storage_controllers"]
     wanted = fleet_table.pick_columns(columns)
-    hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted))
+    hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted)) or bool(storage_controller)
     network = bool(fleet_table.NETWORK_COLUMNS & set(wanted))
     rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, network, generation))
-    return fleet_table.build(rows, columns)
+    extra = None
+    if storage_controller:
+        rows, summary = com.match_storage_controller(rows, storage_controller)
+        extra = {"storage_controller_filter": summary}
+    return fleet_table.build(rows, columns, extra)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -589,13 +627,14 @@ async def com_hardware_report(
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     storage_over_tb: Annotated[float | None, Field(description="Only servers with more than this many TB of raw drive capacity (1 TB = 1000 GB); adds storage_filter counts.")] = None,
     generation: Generation = None,
+    storage_controller: StorageController = None,
 ) -> dict[str, Any]:
     """Whole-fleet hardware table, compact: servers with identical hardware are grouped into one
     configuration with their names, model, CPU, storage controllers and drives, GPUs and network
     adapters (with mode), total_storage_gb, plus NIC mode totals and the servers COM has no data for
     (unknown, not absent). Use it for "table of each server's storage, GPU and NIC config" and for
     "how many servers have more than N TB" (storage_over_tb: storage_filter gives the counts)."""
-    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb, generation))
+    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb, generation, storage_controller))
 
 
 @mcp.tool(annotations=READ_ONLY)

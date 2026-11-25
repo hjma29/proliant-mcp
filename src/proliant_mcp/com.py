@@ -685,14 +685,45 @@ def _mode_totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return dict(sorted(modes.items(), key=lambda kv: (-kv[1]["ports_up"], -kv[1]["adapters"])))
 
 
+def match_storage_controller(rows: list[dict[str, Any]], text: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep the servers (rows with ``hardware``) that have a storage controller whose model contains *text*.
+
+    Case, spaces and dashes are ignored, so ``ns204``, ``NS 204`` and ``NS-204i`` all match "NS204i-u Gen11 Boot
+    Controller". Servers COM has no storage inventory for cannot be judged: they are counted as unknown, not as
+    non-matching."""
+    wanted = re.sub(r"[^a-z0-9]", "", text.lower())
+    matched, unknown = [], []
+    for r in rows:
+        storage = (r.get("hardware") or {}).get("storage") or {}
+        if not storage.get("known"):
+            unknown.append(r["name"])
+        elif any(wanted in re.sub(r"[^a-z0-9]", "", (c.get("model") or "").lower()) for c in storage.get("controllers") or []):
+            matched.append(r)
+    summary = {
+        "controller": text,
+        "servers_with": len(matched),
+        "servers_without": len(rows) - len(matched) - len(unknown),
+        "servers_unknown": len(unknown),
+        "unknown_servers": unknown,
+    }
+    return matched, summary
+
+
 async def hardware_report(
-    c: ComClient, name_contains: str | None, connected: bool | None, storage_over_tb: float | None = None, generation: str | None = None
+    c: ComClient, name_contains: str | None, connected: bool | None, storage_over_tb: float | None = None, generation: str | None = None,
+    storage_controller: str | None = None,
 ) -> dict[str, Any]:
     """Fleet hardware table in one compact answer: servers with identical hardware share one row.
 
     ``storage_over_tb`` keeps only servers whose raw drive capacity (RAID, boot and direct-attached
-    drives together, decimal TB) is strictly greater, and counts matching, smaller and unknown servers."""
+    drives together, decimal TB) is strictly greater, and counts matching, smaller and unknown servers.
+    ``storage_controller`` keeps only servers with a controller whose model contains the text (see
+    ``match_storage_controller``); ``servers_checked`` then counts only those."""
     rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True, generation=generation)
+    controller_filter: dict[str, Any] = {}
+    if storage_controller:
+        rows, summary = match_storage_controller(rows, storage_controller)
+        controller_filter = {"storage_controller_filter": summary}
     groups: dict[str, dict[str, Any]] = {}
     storage_unknown: list[str] = []
     gpu_unknown: list[str] = []
@@ -741,6 +772,7 @@ async def hardware_report(
     modes = _mode_totals(rows)
     return {
         "servers_checked": len(rows),
+        **controller_filter,
         **capacity,
         "configurations": [{"count": len(g["servers"]), **g} for g in configs],
         "nic_modes": modes,
