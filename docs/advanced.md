@@ -52,9 +52,9 @@ Open the printed URL, click **Connect**, then **Tools** to call each tool by han
 
 ### 4. VS Code / GitHub Copilot
 
-Open this folder in VS Code. [.vscode/mcp.json](https://github.com/hjma29/proliant-mcp/blob/main/.vscode/mcp.json) registers
-the server as `proliant`; start it from the MCP view (or the code lens in that
-file), switch Copilot Chat to **Agent** mode, and ask:
+Install the server the same way users do (see the README): the `proliant` entry in the Copilot Global
+config `~/.copilot/mcp-config.json` runs `uvx --python 3.13 proliant-mcp@latest`, the released package.
+Start it from the MCP view, switch Copilot Chat to **Agent** mode, and ask:
 
 - "Give me a COM fleet health report. Which servers need attention and why?"
 - "Which COM servers are not connected, and when do subscriptions expire?"
