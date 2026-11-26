@@ -1,4 +1,9 @@
-"""Opt-in local cache for explicitly requested hardware snapshots."""
+"""Local SQLite cache for hardware inventory (owner-only file, never passwords or tokens).
+
+Used by the snapshot tools and by ``store`` (the COM hardware tools and list_servers filters). Entries are
+served while younger than the lifetime and kept up to STALE_KEEP so an answer can still be given, marked stale,
+when a source cannot be reached.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +22,8 @@ from typing import Any
 from proliant_mcp.config import _home_config
 from proliant_mcp.inventory import write_text
 
-DEFAULT_TTL = 900
+DEFAULT_TTL = 3600
+STALE_KEEP = 7 * 86400  # how long entries stay for a stale fallback after their lifetime ends
 MAX_TTL = 86400
 MAX_ROWS = 2000
 MAX_VALUE_BYTES = 1_000_000
@@ -195,22 +201,38 @@ def _put(cache_key: str, data: Any, collected: float, ttl: int, generation: int)
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     if len(payload.encode("utf-8")) > MAX_VALUE_BYTES:
         raise CacheError("Hardware snapshot exceeds the cache size limit")
+    return _write([(cache_key, payload)], collected, ttl, generation) == 1
+
+
+def _put_many(items: list[tuple[str, Any]], collected: float, ttl: int, generation: int) -> int:
+    """Store several values in one transaction; values over the size limit are skipped. Returns how many were saved."""
+    payloads = []
+    for cache_key, data in items:
+        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        if len(payload.encode("utf-8")) <= MAX_VALUE_BYTES:
+            payloads.append((cache_key, payload))
+    return _write(payloads, collected, ttl, generation) if payloads else 0
+
+
+def _write(payloads: list[tuple[str, str]], collected: float, ttl: int, generation: int) -> int:
     db = _connect(True)
     assert db is not None
     try:
         db.execute("BEGIN IMMEDIATE")
         if db.execute("SELECT generation FROM cache_state").fetchone()[0] != generation:
             db.rollback()
-            return False
+            return 0
         with db:
             now = time.time()
-            db.execute("DELETE FROM snapshots WHERE collected_at < ? OR collected_at > ?", (now - ttl, now))
-            saved = db.execute(
-                "INSERT INTO snapshots VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET "
-                "collected_at = excluded.collected_at, payload = excluded.payload "
-                "WHERE excluded.collected_at >= snapshots.collected_at",
-                (cache_key, collected, payload),
-            ).rowcount == 1
+            db.execute("DELETE FROM snapshots WHERE collected_at < ? OR collected_at > ?", (now - max(ttl, STALE_KEEP), now))
+            saved = 0
+            for cache_key, payload in payloads:
+                saved += db.execute(
+                    "INSERT INTO snapshots VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET "
+                    "collected_at = excluded.collected_at, payload = excluded.payload "
+                    "WHERE excluded.collected_at >= snapshots.collected_at",
+                    (cache_key, collected, payload),
+                ).rowcount
             db.execute(
                 "DELETE FROM snapshots WHERE key IN "
                 "(SELECT key FROM snapshots ORDER BY collected_at DESC LIMIT -1 OFFSET ?)",
@@ -224,6 +246,32 @@ def _put(cache_key: str, data: Any, collected: float, ttl: int, generation: int)
         return saved
     except sqlite3.Error as exc:
         raise CacheError(f"Cannot write inventory cache: {type(exc).__name__}") from exc
+    finally:
+        db.close()
+
+
+def _get_many(keys: list[str], max_age: float) -> dict[str, tuple[Any, float]]:
+    """The entries younger than *max_age* seconds, read in one query: key -> (value, collected_at)."""
+    db = _connect(False)
+    if db is None or not keys:
+        if db is not None:
+            db.close()
+        return {}
+    try:
+        now = time.time()
+        found: dict[str, tuple[Any, float]] = {}
+        with db:
+            for start in range(0, len(keys), 500):
+                chunk = keys[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                for cache_key, payload, collected in db.execute(
+                    f"SELECT key, payload, collected_at FROM snapshots WHERE key IN ({marks})", chunk
+                ):
+                    if 0 <= now - collected < max_age:
+                        found[cache_key] = (json.loads(payload), collected)
+        return found
+    except (sqlite3.Error, ValueError, TypeError) as exc:
+        raise CacheError(f"Cannot read inventory cache: {type(exc).__name__}") from exc
     finally:
         db.close()
 
@@ -272,3 +320,11 @@ async def generation() -> int:
 
 async def put(cache_key: str, data: Any, collected: float, ttl: int, generation: int) -> bool:
     return await asyncio.to_thread(_put, cache_key, data, collected, ttl, generation)
+
+
+async def get_many(keys: list[str], max_age: float) -> dict[str, tuple[Any, float]]:
+    return await asyncio.to_thread(_get_many, keys, max_age)
+
+
+async def put_many(items: list[tuple[str, Any]], collected: float, ttl: int, generation: int) -> int:
+    return await asyncio.to_thread(_put_many, items, collected, ttl, generation)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -110,6 +111,94 @@ def test_lookup_text_shows_a_few_names_per_model_when_the_list_is_long():
     assert short.splitlines()[0] == "| Name | Model | Power | Source |" and len(short.splitlines()) == 5 and not kept and none == ""
 
 
+def _counting(monkeypatch, fail=None):
+    """Swap the fake transport for one that records each request (and can fail some), for cache tests."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.host}{request.url.path}")
+        if fail and fail(request):
+            return httpx.Response(503, json={"message": "unavailable"})
+        return _fake(request)
+
+    monkeypatch.setattr(srv, "_transport", httpx.MockTransport(handler))
+    return seen
+
+
+def _com_requests(seen):
+    return [r for r in seen if "greenlake" in r or "sso.common" in r]
+
+
+async def test_com_hardware_tools_answer_from_the_local_cache_and_say_how_old(mcp_client, monkeypatch):
+    seen = _counting(monkeypatch)
+    com._tokens.clear()
+    async with mcp_client as c:
+        first = (await c.call_tool("com_list_gpus", {})).structured_content
+        live_requests = len(_com_requests(seen))
+        seen.clear()
+        again = (await c.call_tool("com_list_gpus", {})).structured_content
+        nics = (await c.call_tool("com_list_nics", {"ports": 2})).structured_content  # shares the cached hardware
+        cached_requests = len(_com_requests(seen))
+        seen.clear()
+        fresh = (await c.call_tool("com_list_gpus", {"refresh": True})).structured_content
+        plain = (await c.call_tool("com_list_servers_table", {})).structured_content  # no hardware columns: live, no age
+    assert live_requests > 4 and first["data_age"]["source"] == "live"
+    assert cached_requests == 0  # no token, no server list, no inventory: everything came from SQLite
+    assert again["data_age"]["source"] == "local cache" and again["data_age"]["minutes_old"] == 0
+    assert "refresh=true" in again["data_age"]["note"] and {k: again[k] for k in ("total_gpus", "gpus_by_model")} == {k: first[k] for k in ("total_gpus", "gpus_by_model")}
+    assert nics["counts"]["adapters_matching"] == 3 and nics["data_age"]["source"] == "local cache"
+    assert fresh["data_age"]["source"] == "live" and any("/inventory" in r for r in seen)
+    assert "data_age" not in plain
+
+
+async def test_com_outage_serves_the_last_inventory_marked_stale(mcp_client, monkeypatch):
+    async with mcp_client as c:
+        await c.call_tool("com_list_gpus", {})
+        await c.call_tool("set_inventory_cache", {"enabled": True, "ttl_seconds": 1})
+        await asyncio.sleep(1.1)
+        _counting(monkeypatch, fail=lambda r: "greenlake" in r.url.host)
+        data = (await c.call_tool("com_list_gpus", {})).structured_content
+    age = data["data_age"]
+    assert data["total_gpus"] == 4 and age["source"] == "local cache" and age["stale_entries"] >= 1
+    assert "could not be read live" in age["warning"] and "Live read failed" in age["note"] and "503" in age["note"]
+
+
+async def test_com_hardware_with_the_cache_off_is_always_live(mcp_client, monkeypatch):
+    seen = _counting(monkeypatch)
+    async with mcp_client as c:
+        await c.call_tool("set_inventory_cache", {"enabled": False})
+        await c.call_tool("com_list_gpus", {})
+        seen.clear()
+        data = (await c.call_tool("com_list_gpus", {})).structured_content
+    assert any("/inventory" in r for r in seen) and data["data_age"]["source"] == "live"
+
+
+async def test_list_servers_filter_logs_in_to_each_ilo_only_until_it_is_cached(mcp_client, monkeypatch):
+    seen = _counting(monkeypatch)
+    async with mcp_client as c:
+        first = (await c.call_tool("list_servers", {"generation": "12"})).structured_content
+        logins = sum("SessionService/Sessions" in r and r.startswith("POST") for r in seen)
+        seen.clear()
+        again = (await c.call_tool("list_servers", {"generation": "12"})).structured_content
+    # gen12 (192.0.2.10) is answered from the cache with no login; badpass keeps failing, so it is tried live again
+    assert logins >= 1 and not any(r.startswith("POST 192.0.2.10/") for r in seen) and any(r.startswith("POST 192.0.2.11/") for r in seen)
+    assert again["total"] == first["total"] and again["data_age"]["source"] == "local cache" and set(again["source_errors"]) == set(first["source_errors"])
+
+
+async def test_poll_once_fills_the_cache_so_answers_need_no_request(mcp_client, monkeypatch):
+    seen = _counting(monkeypatch)
+    from proliant_mcp import store
+
+    async with mcp_client:
+        result = await store.poll_once(srv._transport)
+    assert result["stored"] > 5 and set(result["errors"]) >= {"ilo:badpass", "oneview:ov-badpass"}
+    seen.clear()
+    async with mcp_client as c:
+        gpus = (await c.call_tool("com_list_gpus", {})).structured_content
+        report = (await c.call_tool("com_hardware_report", {})).structured_content
+    assert not _com_requests(seen) and gpus["data_age"]["source"] == report["data_age"]["source"] == "local cache"
+
+
 async def test_server_summary(mcp_client):
     async with mcp_client as c:
         data = (await c.call_tool("get_server_summary", {"server": "gen12"})).structured_content
@@ -130,7 +219,7 @@ async def test_inventory_cache_is_on_by_default_and_respects_refresh_and_live_st
     args = {"servers": ["gen12"], "categories": ["processors"]}
     async with mcp_client as client:
         status = (await client.call_tool("get_inventory_cache_status", {})).structured_content
-        assert status["enabled"] and status["ttl_seconds"] == 900 and not inventory_cache._db_path().exists()
+        assert status["enabled"] and status["ttl_seconds"] == 3600 and not inventory_cache._db_path().exists()
         first = (await client.call_tool("get_inventory_snapshot", args)).structured_content
         assert inventory_cache._db_path().is_file()  # created privately on first use, no setup step
         first_requests = len(requests)
@@ -681,7 +770,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 43_800, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model
+    assert sum(sizes.values()) <= 44_300, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +500 for refresh on the 5 cached inventory tools
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"

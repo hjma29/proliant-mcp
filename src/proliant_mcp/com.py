@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 
-from proliant_mcp import fleet_table
+from proliant_mcp import fleet_table, store
 from proliant_mcp.config import COM_REGIONS, ComAccount
 from proliant_mcp.util import matches
 
@@ -34,7 +34,11 @@ _regions: dict[str, str] = {}
 
 
 class ComError(RuntimeError):
-    pass
+    status: int | None = None  # the HTTP status when COM answered with an error
+
+
+class ComAuthError(ComError):
+    """GreenLake refused the API client: a sign-in problem, not a problem with one server."""
 
 
 def _routing_404(resp: httpx.Response) -> bool:
@@ -49,15 +53,18 @@ def _routing_404(resp: httpx.Response) -> bool:
 
 def _http_error(resp: httpx.Response, what: str) -> ComError:
     if resp.status_code == 403:
-        return ComError(
+        error = ComError(
             f"COM {what}: HTTP 403. The API client has no Compute Ops Management role in this "
             "workspace; ask the GreenLake administrator to assign one."
         )
-    try:
-        detail = resp.json().get("message") or resp.text[:200]
-    except ValueError:
-        detail = resp.text[:200]
-    return ComError(f"COM {what}: HTTP {resp.status_code} {detail}")
+    else:
+        try:
+            detail = resp.json().get("message") or resp.text[:200]
+        except ValueError:
+            detail = resp.text[:200]
+        error = ComError(f"COM {what}: HTTP {resp.status_code} {detail}")
+    error.status = resp.status_code
+    return error
 
 
 class ComClient:
@@ -75,13 +82,14 @@ class ComClient:
             base = COM_REGIONS[self.region]
         except (ValueError, KeyError) as exc:
             raise ComError(str(exc)) from exc
+        # The token is fetched on the first request, so an answer served from the local cache never contacts GreenLake.
         self._http = httpx.AsyncClient(base_url=base, timeout=_TIMEOUT, transport=self._transport)
-        try:
-            self._http.headers["Authorization"] = f"Bearer {await self._token()}"
-        except BaseException:
-            await self._http.aclose()
-            raise
         return self
+
+    async def _authorize(self) -> None:
+        assert self._http is not None
+        if "Authorization" not in self._http.headers:
+            self._http.headers["Authorization"] = f"Bearer {await self._token()}"
 
     async def __aexit__(self, *_exc: object) -> None:
         if self._http is not None:
@@ -103,7 +111,7 @@ class ComClient:
         except httpx.TransportError as exc:
             raise ComError(f"COM: cannot reach GreenLake SSO ({exc.__class__.__name__})") from exc
         if resp.status_code >= 400:
-            raise ComError(
+            raise ComAuthError(
                 f"COM login failed for account '{self.account.name}' (HTTP {resp.status_code}): the GreenLake API client "
                 f"from {self.account.source or 'the configuration'} was deleted or its secret is wrong. Sign the user in "
                 "again now with com_login (pop-ups) or com_login_start (no pop-ups)."
@@ -113,6 +121,7 @@ class ComClient:
         return data["access_token"]
 
     async def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        await self._authorize()
         assert self._http is not None
         url = path if path.startswith("/compute-ops-mgmt/") else API + path
         for attempt in range(2):
@@ -132,6 +141,7 @@ class ComClient:
 
     async def get_global(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """GET on GreenLake's workspace-wide API (service catalog, workspace), same token as COM."""
+        await self._authorize()
         assert self._http is not None
         try:
             resp = await self._http.get(GLOBAL_API + path, params=params)
@@ -159,6 +169,7 @@ class ComClient:
 
     async def region_totals(self) -> dict[str, int | None]:
         """Server count per region for this login's workspace; None where COM is not set up."""
+        await self._authorize()
         assert self._http is not None
         auth = {"Authorization": self._http.headers["Authorization"]}
 
@@ -531,18 +542,51 @@ def hardware_summary(inv: dict[str, Any], detail: bool = False, network: bool = 
     return summary
 
 
+def _scope(c: ComClient) -> tuple[str, str]:
+    """Cache partition for one GreenLake login (API client and workspace)."""
+    return (c.account.client_id, c.account.workspace or "")
+
+
+async def server_rows(c: ComClient, cached: bool = False) -> list[dict[str, Any]]:
+    """COM's server list as ``server_row`` dicts; ``cached`` reads it through the local store (inventory questions)."""
+
+    async def fetch() -> list[dict[str, Any]]:
+        return [server_row(s) for s in await c.get_all("/servers")]
+
+    if not cached:
+        return await fetch()
+    return await store.fetch_one("com_servers", _scope(c), fetch, (ComError,))
+
+
 async def _hardware_for(c: ComClient, ids: list[str], workers: int = 8, network: bool = False) -> dict[str, dict[str, Any]]:
-    """Hardware summary per server id; a server whose inventory cannot be read gets an error entry."""
+    """Hardware summary per server id; a server whose inventory cannot be read gets an error entry.
+
+    Inside a ``store.session`` fresh summaries come from the local cache and only the rest are read from COM."""
     gate = asyncio.Semaphore(workers)
 
-    async def one(sid: str) -> tuple[str, dict[str, Any]]:
+    async def fetch(sid: str) -> dict[str, Any]:
         async with gate:
             try:
-                return sid, hardware_summary(await c.get(f"/servers/{sid}/inventory"), network=network)
+                return hardware_summary(await c.get(f"/servers/{sid}/inventory"), network=True)
             except ComError as exc:
-                return sid, {"inventory_available": False, "inventory_error": str(exc)}
+                # COM's definite answer for this server (no inventory, or not readable with this login): worth caching,
+                # unlike a timeout or a 5xx, which are tried live again next time.
+                if exc.status in (403, 404):
+                    return {"inventory_available": False, "inventory_error": str(exc)}
+                raise
 
-    return dict(await asyncio.gather(*(one(i) for i in ids)))
+    got = await store.fetch_many("com_hw", _scope(c), ids, fetch, (ComError,))
+    auth = next((v for v in got.values() if isinstance(v, ComAuthError)), None)
+    if auth is not None:
+        raise auth  # a sign-in problem applies to every server: report it once
+    out: dict[str, dict[str, Any]] = {}
+    for sid in ids:
+        value = got[sid]
+        if isinstance(value, BaseException):
+            out[sid] = {"inventory_available": False, "inventory_error": str(value)}
+        else:
+            out[sid] = value if network else {k: v for k, v in value.items() if k != "network"}
+    return out
 
 
 # ── views used by the MCP tools ───────────────────────────────────────────────
@@ -604,7 +648,7 @@ async def list_servers(
     network: bool = False,
     generation: str | None = None,
 ) -> list[dict[str, Any]]:
-    rows = [server_row(s) for s in await c.get_all("/servers")]
+    rows = await server_rows(c, cached=include_hardware)
     if health:
         rows = [r for r in rows if (r["health"] or "").upper() == health.upper()]
     if connected is not None:

@@ -17,7 +17,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_firmware, chat_inventory, chat_login, com, compat, fleet_table, ilo, ilo_firmware, inventory_cache, inventory_cli, login, lookup, oneview, snapshots, usage_stats
+from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_firmware, chat_inventory, chat_login, com, compat, fleet_table, ilo, ilo_firmware, inventory_cache, inventory_cli, login, lookup, oneview, snapshots, store, usage_stats
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -43,10 +43,9 @@ nics, cpu_model), nothing more. For analysis across servers use
 com_list_servers (include_hardware adds CPU, GPU and storage) or com_list_gpus; for a table of storage
 controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link speeds or network mode
 com_list_nics. Never loop com_get_server or com_api_get over many servers.
-For hardware inventory (an iLO's processors, memory, firmware, or COM's hardware inventory) prefer
-get_inventory_snapshot and get_com_inventory_snapshot: a local cache (on, 15 minutes) answers repeats in
-milliseconds and each result says cache or live and when. Pass refresh=true when the
-user wants current data. Never use snapshots for health, power, alerts or links: use the live tools.
+COM hardware tools and list_servers filters answer from a local cache (on, 1 hour) and say how old in
+data_age; for an iLO's processors, memory or firmware use get_inventory_snapshot. Pass refresh=true when
+the user wants current data. For health, power, alerts or links use the live tools.
 Change the cache with set_inventory_cache, or clear it with clear_inventory_cache, only when asked.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not set up,
 sign the user in right away in this chat; do not send them to a browser, terminal or the GreenLake site.
@@ -85,6 +84,7 @@ ApplianceName = Annotated[str | None, Field(description="OneView appliance name 
 AccountName = Annotated[str | None, Field(description="COM account name from list_servers; omit to use the first one.")]
 Limit = Annotated[int, Field(ge=1, le=1000)]
 Generation = Annotated[str | None, Field(description="Only this server generation, e.g. 11 or Gen11.")]
+Refresh = Annotated[bool, Field(description="Skip the local cache.")]
 StorageController = Annotated[
     str | None,
     Field(description="Only servers with a storage controller whose model contains this text, e.g. NS204 or MR416 (any case)."),
@@ -179,12 +179,14 @@ async def _com(name: str | None, fn: Callable[[ComClient], Awaitable[Any]]) -> A
 async def list_servers(
     generation: Generation = None,
     model: Annotated[str | None, Field(description="Model contains this text, e.g. DL380.")] = None,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """What this server can reach: iLO servers, OneView appliances, COM accounts, the running
     version and whether a newer release exists. Call first, and for "which version". With
     generation or model: counts and lists the matching servers across iLO, COM and OneView."""
     if generation or model:
-        return await lookup.lookup(generation, model, _transport)
+        with store.session(refresh) as current:
+            return store.with_age(await lookup.lookup(generation, model, _transport), current)
     return {
         "proliant_mcp_version": __version__,
         "release_check": await _cached_release_status(),
@@ -362,7 +364,7 @@ async def get_inventory_snapshot(
     refresh: Annotated[bool, Field(description="Fetch new data even when a cached snapshot is available.")] = False,
 ) -> dict[str, Any]:
     """Hardware snapshots (processors, memory, firmware) for one or more iLOs, from the local cache
-    (on by default, 15 minutes) or live; each says which and when it was collected. refresh=true
+    (on by default, 1 hour) or live; each says which and when it was collected. refresh=true
     forces a live read. The iLO login is checked even on a hit. Not for current health or power:
     use the live tools."""
     targets = list(_servers().values()) if servers is None else list(dict.fromkeys(_resolve(name) for name in servers))
@@ -646,6 +648,7 @@ async def com_list_servers_table(
             "nics (ports, mode), nic_firmware (model + firmware), cpu_model (read per server from COM's cached inventory, slower)."
         ),
     ] = None,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """List or show the COM servers: ready to display, exact counts, fast. Use this for "list my
     servers", "which are critical", "servers with NS204" (storage_controller), "Gen11 servers with
@@ -654,6 +657,11 @@ async def com_list_servers_table(
     needing attention, the OK ones by model); pass `columns` for a real table with exactly what was
     asked. Show `table` as written and quote `counts`; do not retype the data into a script. Same
     filters as com_list_servers, which returns the full JSON for analysis."""
+    with store.session(refresh) as current:
+        return store.with_age(await _servers_table(account, health, connected, name_contains, generation, storage_controller, columns), current)
+
+
+async def _servers_table(account, health, connected, name_contains, generation, storage_controller, columns) -> dict[str, Any]:
     if storage_controller and not columns:
         columns = ["name", "model", "health", "storage_controllers"]
     wanted = fleet_table.pick_columns(columns)
@@ -691,13 +699,15 @@ async def com_hardware_report(
     storage_over_tb: Annotated[float | None, Field(description="Only servers with more than this many TB of raw drive capacity (1 TB = 1000 GB); adds storage_filter counts.")] = None,
     generation: Generation = None,
     storage_controller: StorageController = None,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """Whole-fleet hardware table, compact: servers with identical hardware are grouped into one
     configuration with their names, model, CPU, storage controllers and drives, GPUs and network
     adapters (with mode), total_storage_gb, plus NIC mode totals and the servers COM has no data for
     (unknown, not absent). Use it for "table of each server's storage, GPU and NIC config" and for
     "how many servers have more than N TB" (storage_over_tb: storage_filter gives the counts)."""
-    return await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb, generation, storage_controller))
+    with store.session(refresh) as current:
+        return store.with_age(await _com(account, lambda c: com.hardware_report(c, name_contains, connected, storage_over_tb, generation, storage_controller)), current)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -708,11 +718,13 @@ async def com_list_nics(
     linked_only: Annotated[bool, Field(description="Only adapters with a port up.")] = False,
     generation: Generation = None,
     ports: Annotated[int | None, Field(description="Only adapters with exactly this many ports, e.g. 4.")] = None,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """Network adapter report for the whole COM fleet: per server each NIC/HBA (mode, ports, ports up,
     speeds, firmware, health), plus totals by mode, adapter model and link speed, and the servers COM
     has no network data for. Start here for any NIC, HBA, link speed or network mode question."""
-    return await _com(account, lambda c: com.list_nics(c, name_contains, connected, linked_only, generation, ports))
+    with store.session(refresh) as current:
+        return store.with_age(await _com(account, lambda c: com.list_nics(c, name_contains, connected, linked_only, generation, ports)), current)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -722,12 +734,14 @@ async def com_list_gpus(
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
     include_servers_without_gpus: Annotated[bool, Field(description="Also list servers with no GPU.")] = False,
     gpu_model: Annotated[str | None, Field(description="Only GPUs whose name contains this text, e.g. H100 or L40S.")] = None,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """GPU report for the whole COM fleet: per server the model, iLO firmware, health, CPU and GPUs
     (name, vendor, part number, count, health), plus totals by GPU model and the servers COM has
     no inventory for (GPUs unknown, not absent). Start here for any GPU question; set gpu_model
     (e.g. H100) to list only servers with that GPU."""
-    return await _com(account, lambda c: com.list_gpus(c, name_contains, connected, include_servers_without_gpus, gpu_model))
+    with store.session(refresh) as current:
+        return store.with_age(await _com(account, lambda c: com.list_gpus(c, name_contains, connected, include_servers_without_gpus, gpu_model)), current)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -1157,13 +1171,15 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(prog="proliant-mcp", description=__doc__)
-    parser.add_argument("command", nargs="?", choices=["login", "logout", "import"], help="login: sign in to HPE GreenLake with your email and an Okta Verify push (creates the API client for you); logout: forget that login; import FILE: add the iLO / OneView entries of a .ini or .csv file to your inventory")
+    parser.add_argument("command", nargs="?", choices=["login", "logout", "import", "poll"], help="login: sign in to HPE GreenLake with your email and an Okta Verify push (creates the API client for you); logout: forget that login; import FILE: add the iLO / OneView entries of a .ini or .csv file to your inventory; poll: keep the local inventory cache warm (COM servers and hardware, iLO identity, OneView hardware) so answers come from it")
     parser.add_argument("file", nargs="?", help="with import: the .ini or .csv file")
     parser.add_argument("--replace", action="store_true", help="with import: overwrite entries that are already in your inventory")
     parser.add_argument("--no-check", action="store_true", help="with import: do not log in to each imported server")
     parser.add_argument("--email", help="with login: your GreenLake email (asked if omitted)")
     parser.add_argument("--workspace", help="with login: workspace name (asked if you have several)")
     parser.add_argument("--region", choices=["us-west", "eu-central", "ap-northeast"], help="with login: Compute Ops Management region (detected if omitted)")
+    parser.add_argument("--interval", type=float, default=30, help="with poll: minutes between refreshes (default 30)")
+    parser.add_argument("--once", action="store_true", help="with poll: refresh once and exit (for cron or a systemd timer)")
     parser.add_argument("--check", action="store_true", help="print version, tool count and configured iLOs, OneView appliances and COM accounts, then exit")
     parser.add_argument("--connect", action="store_true", help="with --check: also log in to each iLO, OneView appliance and COM account")
     parser.add_argument("--http", action="store_true", help="serve streamable HTTP instead of stdio")
@@ -1174,6 +1190,10 @@ def main() -> None:
         raise SystemExit(login.run_login(args.email, args.workspace, args.region))
     if args.command == "logout":
         raise SystemExit(login.run_logout())
+    if args.command == "poll":
+        if args.interval <= 0:
+            parser.error("--interval must be more than 0 minutes")
+        raise SystemExit(store.run_poll(args.interval, args.once))
     if args.command == "import":
         if not args.file:
             parser.error("import needs a file: proliant-mcp import servers.csv")

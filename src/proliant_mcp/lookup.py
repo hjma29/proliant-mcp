@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from proliant_mcp import com, fleet_table, ilo, oneview
+from proliant_mcp import com, fleet_table, ilo, oneview, store
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -35,11 +35,15 @@ def generation_of(value: str | None, model: str | None) -> str | None:
 
 async def _ilo_rows(transport: httpx.AsyncBaseTransport | None) -> tuple[list[dict[str, Any]], dict[str, str]]:
     async def one(server: Any) -> tuple[dict[str, Any] | None, str | None]:
-        try:
+        async def fetch() -> dict[str, Any]:
             async with RedfishClient(server, transport=transport) as client:
-                return {"source": "ilo", "label": f"ilo:{server.name}", "name": server.name, **await ilo.identity(client)}, None
+                return await ilo.identity(client)
+
+        try:
+            identity = await store.fetch_one("ilo_identity", (server.name, server.host, server.username), fetch, (RedfishError,))
         except RedfishError as exc:
             return None, f"ilo:{server.name}: {exc}"
+        return {"source": "ilo", "label": f"ilo:{server.name}", "name": server.name, **identity}, None
 
     done = await asyncio.gather(*(one(s) for s in load_servers().values()))
     return [r for r, _ in done if r], {e.split(": ", 1)[0]: e.split(": ", 1)[1] for _, e in done if e}
@@ -49,10 +53,9 @@ async def _com_rows(transport: httpx.AsyncBaseTransport | None) -> tuple[list[di
     async def one(account: Any) -> tuple[list[dict[str, Any]], dict[str, str]]:
         try:
             async with ComClient(account, transport=transport) as c:
-                servers = await c.get_all("/servers")
+                rows = await com.server_rows(c, cached=True)
         except ComError as exc:
             return [], {f"com:{account.name}": str(exc)}
-        rows = [com.server_row(s) for s in servers]
         return [
             {"source": "com", "label": f"com:{account.name}", "name": r["name"], "model": r["model"], "serial_number": r["serial_number"],
              "generation": r["generation"], "power_state": r["power_state"]}
@@ -65,12 +68,15 @@ async def _com_rows(transport: httpx.AsyncBaseTransport | None) -> tuple[list[di
 
 async def _oneview_rows(transport: httpx.AsyncBaseTransport | None) -> tuple[list[dict[str, Any]], dict[str, str]]:
     async def one(appliance: Any) -> tuple[list[dict[str, Any]], dict[str, str]]:
-        try:
+        async def fetch() -> list[dict[str, Any]]:
             async with OneViewClient(appliance, transport=transport) as c:
                 hardware = await c.get_all("/rest/server-hardware")
+            return [oneview.hardware_row(h, {}, {}) for h in hardware]
+
+        try:
+            rows = await store.fetch_one("ov_hardware", (appliance.name, appliance.host, appliance.username), fetch, (OneViewError,))
         except OneViewError as exc:
             return [], {f"oneview:{appliance.name}": str(exc)}
-        rows = [oneview.hardware_row(h, {}, {}) for h in hardware]
         return [
             {"source": "oneview", "label": f"oneview:{appliance.name}", "name": r["server_name"] or r["name"], "model": r["model"],
              "serial_number": r["serial_number"], "generation": r["generation"], "power_state": r["power_state"]}
@@ -170,5 +176,5 @@ async def lookup(generation: str | None, model: str | None, transport: httpx.Asy
 
 async def com_available(c: ComClient) -> dict[str, Any]:
     """What a COM account has, for a filter that matched nothing: server count, generations and models."""
-    rows = [com.server_row(s) for s in await c.get_all("/servers")]
+    rows = await com.server_rows(c, cached=True)
     return _available([{"generation": generation_of(r["generation"], r["model"]), "model": r["model"]} for r in rows])

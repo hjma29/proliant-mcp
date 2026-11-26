@@ -11,6 +11,11 @@ for a follow-up. A filter that matches nothing returns `available`: the generati
 exist (and `unknown_generation`: servers with no model or generation in any source). A source that fails
 is named in `source_errors`, not silently counted as empty. `com_list_servers_table` also returns
 `available` when its filters match nothing.
+
+**Local cache.** `list_servers` with a filter and the COM hardware tools (`com_list_gpus`, `com_list_nics`,
+`com_hardware_report`, `com_list_servers_table` with hardware columns) answer from a local SQLite cache
+(on, 1 hour) in milliseconds, with `data_age` (source, `as_of`, `minutes_old`); `refresh=true` reads live.
+`proliant-mcp poll` keeps the cache warm. See [configuration](configuration.md#local-inventory-cache).
 `find_server` tells you which server a name, iLO IP or hostname, serial or OS hostname belongs to,
 searching the iLO inventory, every COM account and every OneView appliance at once; for an address
 none of them knows, it reads that iLO's login-free identity pages (iLO model, server model, serial).
@@ -26,7 +31,7 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `get_firmware_inventory` | Every firmware component and version |
 | `get_processors` | CPUs and GPUs |
 | `get_memory` | Total, populated/empty slots, each DIMM |
-| `get_inventory_snapshot` | Processors, memory and firmware for one or more iLOs, served from the local cache when fresh (on by default, 15 minutes); each category says `cache` or `live` and when it was collected; `refresh=true` forces a live read. Not for health or power |
+| `get_inventory_snapshot` | Processors, memory and firmware for one or more iLOs, served from the local cache when fresh (on by default, 1 hour); each category says `cache` or `live` and when it was collected; `refresh=true` forces a live read. Not for health or power |
 | `get_storage` | Controllers, drives, RAID volumes |
 | `get_network_adapters` | NICs, ports, MACs, link, LLDP neighbor (switch and port) |
 | `get_event_log` | Newest IML (hardware), IEL (iLO) or Security Log entries, filter by severity (exact or `min_severity`), time window (`since`/`until`: `7d`, `24h`, a date) and message text; entries with a wrong iLO clock are flagged and listed last; `summary` groups identical messages with counts and first/last time |
