@@ -1,13 +1,16 @@
-"""Inventory answers from the local SQLite cache, with their age.
+"""Answers from the local SQLite cache, with their age.
 
-Inventory that rarely changes (COM's server list and per-server hardware, each iLO's model and serial, OneView's
-server hardware) is kept in ``inventory_cache`` (owner-only file, no passwords or tokens). A tool that reads
-inventory runs inside ``session(refresh)``. ``fetch_many`` then serves the entries younger than the cache lifetime
-from SQLite, reads only the missing or older ones live, and stores them. When a live read fails, an entry up to
-``inventory_cache.STALE_KEEP`` old is served instead and marked stale. Outside a session everything is read live,
-as before. ``data_age`` says where the answer came from and how old it is, so the assistant can tell the user and
-offer a refresh. A cache hit does not log in to the iLO, OneView or COM: the data is what that source said at the
-time shown. ``poll`` refreshes everything on a timer, so answers stay served from SQLite.
+Two kinds of data, with their own lifetime (``inventory_cache.settings`` and ``state_ttl``):
+
+- inventory, which rarely changes (hardware, firmware, catalogs, server lists for lookups): 1 hour by default;
+- state, which can change any time (health, power, alerts, jobs, event logs, logins, links): 5 minutes by default.
+
+A tool runs inside ``session(refresh)``. ``fetch_many`` serves the entries younger than their lifetime from SQLite,
+reads only the missing or older ones live and stores them. When a live inventory read fails, an entry up to
+``inventory_cache.STALE_KEEP`` old is served instead and marked stale; state never is (an unreachable server is the
+answer), and neither is a sign-in error (``no_stale``). Outside a session everything is read live. ``data_age``
+says where the answer came from and how old it is, so the assistant can tell the user and offer a refresh. A cache
+hit does not log in to the iLO, OneView or COM. ``run_poll`` refreshes everything on a timer.
 """
 
 from __future__ import annotations
@@ -29,10 +32,12 @@ STALE_AFTER_MINUTES = 5  # from this age the assistant should say how old the da
 class Session:
     refresh: bool
     ready: tuple[bool, int, int | None, str | None] | None = None
+    state_ttl: int = inventory_cache.DEFAULT_STATE_TTL
     oldest: float | None = None
     cached: int = 0
     live: int = 0
     stale: int = 0
+    state_cached: bool = False
     notes: list[str] = field(default_factory=list)
 
     def used(self) -> bool:
@@ -54,11 +59,19 @@ class Session:
                 f"{self.stale} entries could not be read live and are older than the cache lifetime; they show what the "
                 "source said at as_of."
             )
-        out["note"] = " ".join([
-            *self.notes,
-            f"If minutes_old is {STALE_AFTER_MINUTES} or more, tell the user in one short line how old the inventory is and "
-            "that they can ask for a refresh (call again with refresh=true). Health and power here are as of that time too.",
-        ])
+        if self.state_cached:
+            advice = (
+                "Health, power, alerts, logs or links here come from the local cache (kept "
+                f"{max(1, self.state_ttl // 60)} min): tell the user in one short line how old they are and that they can "
+                "ask for a refresh (call again with refresh=true)."
+            )
+        else:
+            advice = (
+                f"If minutes_old is {STALE_AFTER_MINUTES} or more, tell the user in one short line how old the inventory is "
+                "and that they can ask for a refresh (call again with refresh=true). Health and power here are as of that "
+                "time too."
+            )
+        out["note"] = " ".join([*self.notes, advice])
         return out
 
 
@@ -87,6 +100,10 @@ async def _ready(current: Session) -> tuple[bool, int, int | None, str | None]:
         current.ready = await inventory_cache.prepare()
         if current.ready[3]:
             current.notes.append(current.ready[3])
+        try:
+            current.state_ttl = await asyncio.to_thread(inventory_cache.state_ttl)
+        except inventory_cache.CacheError as exc:
+            _note(current, exc)
     return current.ready
 
 
@@ -102,11 +119,14 @@ async def fetch_many(
     ids: list[str],
     fetch: Callable[[str], Awaitable[Any]],
     errors: tuple[type[BaseException], ...] = (),
+    state: bool = False,
 ) -> dict[str, Any]:
     """id -> value. Fresh cached values first; the rest from ``fetch(id)`` (live, in parallel) and stored.
 
-    A fetch that raises one of *errors* falls back to a stale cached value if there is one; otherwise the exception
-    itself is the value, for the caller to report. Outside a session every id is fetched live."""
+    ``state`` values (health, power, alerts, logs, links) use the shorter state lifetime and never fall back to a
+    stale value. Otherwise a fetch that raises one of *errors* falls back to a stale cached value if there is one
+    (except errors marked ``no_stale``); without one the exception itself is the value, for the caller to report.
+    Outside a session every id is fetched live."""
     current = _session.get()
 
     async def live(i: str) -> Any:
@@ -122,7 +142,7 @@ async def fetch_many(
     found: dict[str, tuple[Any, float]] = {}
     if enabled and not current.refresh:
         try:
-            found = await inventory_cache.get_many(list(keys.values()), ttl)
+            found = await inventory_cache.get_many(list(keys.values()), min(current.state_ttl, ttl) if state else ttl)
         except inventory_cache.CacheError as exc:
             _note(current, exc)
     out: dict[str, Any] = {}
@@ -131,6 +151,7 @@ async def fetch_many(
             value, collected = found[keys[i]]
             out[i] = value
             current.cached += 1
+            current.state_cached |= state
             current.oldest = collected if current.oldest is None else min(current.oldest, collected)
     missing = [i for i in ids if i not in out]
     if not missing:
@@ -138,7 +159,7 @@ async def fetch_many(
     fetched = dict(zip(missing, await asyncio.gather(*(live(i) for i in missing))))
     collected = time.time()
     good = {i: v for i, v in fetched.items() if not isinstance(v, BaseException)}
-    failed = [i for i, v in fetched.items() if isinstance(v, BaseException)]
+    failed = [] if state else [i for i, v in fetched.items() if isinstance(v, BaseException) and not getattr(v, "no_stale", False)]
     current.live += len(good)
     if enabled and good:
         assert generation is not None
@@ -173,43 +194,38 @@ async def fetch_one(
     scope: tuple[Any, ...],
     fetch: Callable[[], Awaitable[Any]],
     errors: tuple[type[BaseException], ...] = (),
+    state: bool = False,
 ) -> Any:
     """One value through ``fetch_many``; raises the fetch error when there is no stale value to serve."""
-    value = (await fetch_many(kind, scope, [""], lambda _: fetch(), errors))[""]
+    value = (await fetch_many(kind, scope, [""], lambda _: fetch(), errors, state))[""]
     if isinstance(value, BaseException):
         raise value
     return value
 
 
-async def poll_once(transport: Any = None) -> dict[str, Any]:
-    """Read every source's inventory live and store it: COM server lists and hardware, iLO identity, OneView hardware."""
-    from proliant_mcp import com, lookup
-    from proliant_mcp.config import load_com
+ILO_KINDS = ("identity", "info", "firmware", "processors", "memory", "storage", "summary", "health", "network")
 
-    started = time.time()
+
+def ilo_scope(server: Any) -> tuple[str, str, str]:
+    """Cache partition for one iLO: a renamed, readdressed or re-credentialed server starts afresh."""
+    return (server.name, server.host, server.username)
+
+
+async def forget_ilo(server: Any) -> None:
+    """Drop one iLO's cached reads (after its firmware changed), so the next answer is read live."""
+    keys = [inventory_cache.key("store", 1, f"ilo_{kind}", *ilo_scope(server), "") for kind in ILO_KINDS]
+    with contextlib.suppress(inventory_cache.CacheError):
+        await inventory_cache.delete(keys)
+
+
+async def poll_ready() -> str | None:
+    """None when the cache can be filled, otherwise why not."""
     with session(refresh=True) as current:
         enabled, _, _, note = await _ready(current)
-        if not enabled:
-            return {"stored": 0, "error": note or "The local cache is turned off (set_inventory_cache)."}
-
-        async def com_account(account: Any) -> tuple[str, str | None]:
-            try:
-                async with com.ComClient(account, transport=transport) as c:
-                    rows = await com.server_rows(c, cached=True)
-                    ids = [r["id"] for r in rows]
-                    await com._hardware_for(c, ids, network=True)
-                return f"com:{account.name}", None
-            except com.ComError as exc:
-                return f"com:{account.name}", str(exc)
-
-        results = await asyncio.gather(
-            lookup._ilo_rows(transport), lookup._oneview_rows(transport), *(com_account(a) for a in load_com().values())
-        )
-        errors = {**results[0][1], **results[1][1], **{name: err for name, err in results[2:] if err}}
-        return {"stored": current.live, "seconds": round(time.time() - started, 1), **({"errors": errors} if errors else {})}
+    return None if enabled else note or "The local cache is turned off (set_inventory_cache)."
 
 
-def run_poll(interval_minutes: float, once: bool) -> int:
+def run_poll(interval_minutes: float, once: bool, poll: Callable[[], Awaitable[dict[str, Any]]]) -> int:
     """``proliant-mcp poll``: keep the local cache warm so answers come from SQLite (Ctrl+C to stop)."""
     enabled, ttl = inventory_cache.settings()
     if not enabled:
@@ -219,10 +235,11 @@ def run_poll(interval_minutes: float, once: bool) -> int:
         print(f"Note: the cache lifetime ({ttl // 60} min) is not longer than the poll interval ({interval_minutes:g} min), "
               "so some answers will be read live. Raise it with set_inventory_cache (ttl_seconds) or poll more often.")
     while True:
-        result = asyncio.run(poll_once())
+        result = asyncio.run(poll())
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{stamp} stored {result['stored']} entries in {result.get('seconds', 0)} s"
-              + (f"; errors: {result['errors']}" if result.get("errors") else ""), flush=True)
+        print(f"{stamp} stored {result.get('stored', 0)} entries in {result.get('seconds', 0)} s"
+              + (f"; errors: {result['errors']}" if result.get("errors") else "")
+              + (f"; {result['error']}" if result.get("error") else ""), flush=True)
         if once:
             return 1 if result.get("error") else 0
         time.sleep(interval_minutes * 60)

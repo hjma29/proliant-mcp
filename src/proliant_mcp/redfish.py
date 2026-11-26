@@ -17,7 +17,7 @@ class RedfishError(RuntimeError):
 
 
 class RedfishLoginError(RedfishError):
-    """The iLO answered but refused the user name or password."""
+    """The iLO answered the login with an error (401/403: the user name or password was refused)."""
 
 
 def _error_detail(resp: httpx.Response) -> str:
@@ -60,7 +60,9 @@ class RedfishClient:
             raise RedfishError(f"{self.server.name}: cannot reach iLO at {self.server.host} ({exc.__class__.__name__})") from exc
         if resp.status_code >= 400:
             await self._http.aclose()
-            raise RedfishLoginError(f"{self.server.name}: login failed (HTTP {resp.status_code} {_error_detail(resp)})")
+            error = RedfishLoginError(f"{self.server.name}: login failed (HTTP {resp.status_code} {_error_detail(resp)})")
+            error.no_stale = resp.status_code in (401, 403)  # refused credentials are reported, not hidden behind cached data
+            raise error
         token = resp.headers.get("X-Auth-Token")
         if not token:
             await self._http.aclose()

@@ -40,6 +40,8 @@ class ComError(RuntimeError):
 class ComAuthError(ComError):
     """GreenLake refused the API client: a sign-in problem, not a problem with one server."""
 
+    no_stale = True  # the assistant must sign the user in again, not answer from old data
+
 
 def _routing_404(resp: httpx.Response) -> bool:
     """GreenLake's answer when COM is not set up in this region for the token's workspace."""
@@ -110,6 +112,8 @@ class ComClient:
             )
         except httpx.TransportError as exc:
             raise ComError(f"COM: cannot reach GreenLake SSO ({exc.__class__.__name__})") from exc
+        if resp.status_code >= 500:
+            raise ComError(f"COM: the GreenLake sign-in service answered HTTP {resp.status_code}; try again in a moment.")
         if resp.status_code >= 400:
             raise ComAuthError(
                 f"COM login failed for account '{self.account.name}' (HTTP {resp.status_code}): the GreenLake API client "
@@ -547,15 +551,19 @@ def _scope(c: ComClient) -> tuple[str, str]:
     return (c.account.client_id, c.account.workspace or "")
 
 
-async def server_rows(c: ComClient, cached: bool = False) -> list[dict[str, Any]]:
-    """COM's server list as ``server_row`` dicts; ``cached`` reads it through the local store (inventory questions)."""
+async def server_rows(c: ComClient, cached: bool = False, state: bool = False) -> list[dict[str, Any]]:
+    """COM's server list as ``server_row`` dicts; ``cached`` reads it through the local store.
+
+    The rows hold both inventory (name, model, serial) and state (health, power). ``state`` asks for the state
+    lifetime, for health and power questions; inventory questions accept the longer inventory lifetime of the
+    same entry."""
 
     async def fetch() -> list[dict[str, Any]]:
         return [server_row(s) for s in await c.get_all("/servers")]
 
     if not cached:
         return await fetch()
-    return await store.fetch_one("com_servers", _scope(c), fetch, (ComError,))
+    return await store.fetch_one("com_servers", _scope(c), fetch, (ComError,), state=state)
 
 
 async def _hardware_for(c: ComClient, ids: list[str], workers: int = 8, network: bool = False) -> dict[str, dict[str, Any]]:
@@ -648,7 +656,7 @@ async def list_servers(
     network: bool = False,
     generation: str | None = None,
 ) -> list[dict[str, Any]]:
-    rows = await server_rows(c, cached=include_hardware)
+    rows = await server_rows(c, cached=True, state=not include_hardware)
     if health:
         rows = [r for r in rows if (r["health"] or "").upper() == health.upper()]
     if connected is not None:

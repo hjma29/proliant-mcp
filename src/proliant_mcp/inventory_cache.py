@@ -23,6 +23,7 @@ from proliant_mcp.config import _home_config
 from proliant_mcp.inventory import write_text
 
 DEFAULT_TTL = 3600
+DEFAULT_STATE_TTL = 300  # health, power, alerts, logs and links: kept only a few minutes
 STALE_KEEP = 7 * 86400  # how long entries stay for a stale fallback after their lifetime ends
 MAX_TTL = 86400
 MAX_ROWS = 2000
@@ -88,11 +89,29 @@ def settings() -> tuple[bool, int]:
     return value["enabled"], ttl
 
 
-def configure(enabled: bool, ttl_seconds: int | None = None) -> dict[str, Any]:
+def state_ttl() -> int:
+    """Lifetime for state (health, power, alerts, logs, links); inventory uses ``settings()``."""
+    path = _settings_path()
+    if not path.exists():
+        return DEFAULT_STATE_TTL
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CacheError(f"Cannot read cache settings: {type(exc).__name__}") from exc
+    ttl = value.get("state_ttl_seconds", DEFAULT_STATE_TTL) if isinstance(value, dict) else None
+    if type(ttl) is not int or not 1 <= ttl <= MAX_TTL:
+        raise CacheError("Invalid state cache lifetime in the cache settings")
+    return ttl
+
+
+def configure(enabled: bool, ttl_seconds: int | None = None, state_ttl_seconds: int | None = None) -> dict[str, Any]:
     if ttl_seconds is None:
         _, ttl_seconds = settings()
-    if not 1 <= ttl_seconds <= MAX_TTL:
-        raise CacheError(f"Cache lifetime must be between 1 and {MAX_TTL} seconds")
+    if state_ttl_seconds is None:
+        state_ttl_seconds = state_ttl()
+    for name, value in (("Cache lifetime", ttl_seconds), ("State cache lifetime", state_ttl_seconds)):
+        if not 1 <= value <= MAX_TTL:
+            raise CacheError(f"{name} must be between 1 and {MAX_TTL} seconds")
     if enabled:
         _secure_directory()
         db = _connect(True)
@@ -101,10 +120,10 @@ def configure(enabled: bool, ttl_seconds: int | None = None) -> dict[str, Any]:
     else:
         _bump_generation()
     try:
-        write_text(_settings_path(), json.dumps({"enabled": enabled, "ttl_seconds": ttl_seconds}) + "\n")
+        write_text(_settings_path(), json.dumps({"enabled": enabled, "ttl_seconds": ttl_seconds, "state_ttl_seconds": state_ttl_seconds}) + "\n")
     except OSError as exc:
         raise CacheError(f"Cannot save cache settings: {type(exc).__name__}") from exc
-    return {"enabled": enabled, "ttl_seconds": ttl_seconds, "path": str(_db_path()),
+    return {"enabled": enabled, "ttl_seconds": ttl_seconds, "state_ttl_seconds": state_ttl_seconds, "path": str(_db_path()),
             "note": "The local cache contains hardware inventory, not passwords. Disabling does not erase existing data."}
 
 
@@ -292,6 +311,25 @@ def _bump_generation(delete: bool = False) -> int:
 
 def clear() -> int:
     return _bump_generation(delete=True)
+
+
+def _delete(keys: list[str]) -> int:
+    db = _connect(False)
+    if db is None or not keys:
+        if db is not None:
+            db.close()
+        return 0
+    try:
+        with db:
+            return sum(db.execute("DELETE FROM snapshots WHERE key = ?", (k,)).rowcount for k in keys)
+    except sqlite3.Error as exc:
+        raise CacheError(f"Cannot delete from inventory cache: {type(exc).__name__}") from exc
+    finally:
+        db.close()
+
+
+async def delete(keys: list[str]) -> int:
+    return await asyncio.to_thread(_delete, keys)
 
 
 def timestamp(value: float) -> str:

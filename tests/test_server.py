@@ -111,14 +111,14 @@ def test_lookup_text_shows_a_few_names_per_model_when_the_list_is_long():
     assert short.splitlines()[0] == "| Name | Model | Power | Source |" and len(short.splitlines()) == 5 and not kept and none == ""
 
 
-def _counting(monkeypatch, fail=None):
+def _counting(monkeypatch, fail=None, status=503):
     """Swap the fake transport for one that records each request (and can fail some), for cache tests."""
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(f"{request.method} {request.url.host}{request.url.path}")
         if fail and fail(request):
-            return httpx.Response(503, json={"message": "unavailable"})
+            return httpx.Response(status, json={"message": "unavailable"})
         return _fake(request)
 
     monkeypatch.setattr(srv, "_transport", httpx.MockTransport(handler))
@@ -141,14 +141,14 @@ async def test_com_hardware_tools_answer_from_the_local_cache_and_say_how_old(mc
         cached_requests = len(_com_requests(seen))
         seen.clear()
         fresh = (await c.call_tool("com_list_gpus", {"refresh": True})).structured_content
-        plain = (await c.call_tool("com_list_servers_table", {})).structured_content  # no hardware columns: live, no age
+        plain = (await c.call_tool("com_list_servers_table", {})).structured_content  # health table: state lifetime
     assert live_requests > 4 and first["data_age"]["source"] == "live"
     assert cached_requests == 0  # no token, no server list, no inventory: everything came from SQLite
     assert again["data_age"]["source"] == "local cache" and again["data_age"]["minutes_old"] == 0
     assert "refresh=true" in again["data_age"]["note"] and {k: again[k] for k in ("total_gpus", "gpus_by_model")} == {k: first[k] for k in ("total_gpus", "gpus_by_model")}
     assert nics["counts"]["adapters_matching"] == 3 and nics["data_age"]["source"] == "local cache"
     assert fresh["data_age"]["source"] == "live" and any("/inventory" in r for r in seen)
-    assert "data_age" not in plain
+    assert plain["data_age"]["source"] == "local cache" and "how old they are" in plain["data_age"]["note"]  # server list just read
 
 
 async def test_com_outage_serves_the_last_inventory_marked_stale(mcp_client, monkeypatch):
@@ -190,13 +190,102 @@ async def test_poll_once_fills_the_cache_so_answers_need_no_request(mcp_client, 
     from proliant_mcp import store
 
     async with mcp_client:
-        result = await store.poll_once(srv._transport)
+        result = await srv._poll_once()
     assert result["stored"] > 5 and set(result["errors"]) >= {"ilo:badpass", "oneview:ov-badpass"}
     seen.clear()
     async with mcp_client as c:
         gpus = (await c.call_tool("com_list_gpus", {})).structured_content
         report = (await c.call_tool("com_hardware_report", {})).structured_content
     assert not _com_requests(seen) and gpus["data_age"]["source"] == report["data_age"]["source"] == "local cache"
+    seen.clear()
+    async with mcp_client as c:
+        for tool, args in (("get_processors", {"server": "gen12"}), ("get_health", {"server": "gen12"}), ("get_fleet_summary", {}),
+                           ("com_get_overview", {}),
+                           ("oneview_list_uplink_sets", {}), ("find_server", {"query": "SN0001", "probe": False})):
+            data = (await c.call_tool(tool, args)).structured_content
+            assert data["data_age"]["source"] == "local cache", tool
+    # only the wrong-password OneView entry (same address) is tried again: failures are not cached
+    data_reads = [r for r in seen if r.startswith(("GET 192.0.2.10/", "POST 192.0.2.10/", "GET 192.0.2.100/rest/server", "GET 192.0.2.100/rest/up"))]
+    assert not data_reads, data_reads
+
+
+async def test_ilo_inventory_tools_answer_from_the_cache_without_logging_in(mcp_client, monkeypatch):
+    seen = _counting(monkeypatch)
+    async with mcp_client as c:
+        first = (await c.call_tool("get_processors", {"server": "gen12"})).structured_content
+        nics = (await c.call_tool("get_network_adapters", {"server": "gen12"})).structured_content
+        seen.clear()
+        again = (await c.call_tool("get_processors", {"server": "gen12"})).structured_content
+        nics_again = (await c.call_tool("get_network_adapters", {"server": "gen12"})).structured_content
+        procs = (await c.call_tool("get_memory", {"server": "gen12"})).structured_content  # its own entry: read live once
+        cached_requests = list(seen)
+        seen.clear()
+        fresh = (await c.call_tool("get_processors", {"server": "gen12", "refresh": True})).structured_content
+    assert {k: v for k, v in first.items() if k != "data_age"} == {k: v for k, v in again.items() if k != "data_age"}
+    assert first["data_age"]["source"] == "live" and nics["result"] == nics_again["result"]  # a list keeps its "result" key
+    assert again["data_age"]["source"] == "local cache" and "how old the inventory is" in again["data_age"]["note"]
+    assert procs["data_age"]["source"] == "live" and sum(r.startswith("POST") for r in cached_requests) == 1  # only processors logged in
+    assert fresh["data_age"]["source"] == "live" and any(r.startswith("POST") for r in seen)
+
+
+async def test_state_has_a_short_lifetime_and_inventory_a_long_one(mcp_client, monkeypatch):
+    async with mcp_client as c:
+        await c.call_tool("set_inventory_cache", {"enabled": True, "state_ttl_seconds": 1})
+        await c.call_tool("get_health", {"server": "gen12"})
+        await c.call_tool("get_memory", {"server": "gen12"})
+        await asyncio.sleep(1.1)
+        health = (await c.call_tool("get_health", {"server": "gen12"})).structured_content
+        memory = (await c.call_tool("get_memory", {"server": "gen12"})).structured_content
+        status = (await c.call_tool("get_inventory_cache_status", {})).structured_content
+    assert health["data_age"]["source"] == "live" and memory["data_age"]["source"] == "local cache"
+    assert (status["ttl_seconds"], status["state_ttl_seconds"]) == (3600, 1)
+
+
+async def test_an_unreachable_ilo_is_reported_for_state_but_old_inventory_is_still_served(mcp_client, monkeypatch):
+    async with mcp_client as c:
+        await c.call_tool("get_health", {"server": "gen12"})
+        await c.call_tool("get_memory", {"server": "gen12"})
+        await c.call_tool("set_inventory_cache", {"enabled": True, "ttl_seconds": 1, "state_ttl_seconds": 1})
+        await asyncio.sleep(1.1)
+        _counting(monkeypatch, fail=lambda r: r.url.host == "192.0.2.10")
+        health = await c.call_tool("get_health", {"server": "gen12"}, raise_on_error=False)
+        memory = (await c.call_tool("get_memory", {"server": "gen12"})).structured_content
+    assert health.is_error  # state is never served stale: an iLO that cannot be read is the answer
+    assert memory["data_age"]["stale_entries"] == 1 and "could not be read live" in memory["data_age"]["warning"]
+
+
+async def test_a_com_sign_in_failure_is_reported_not_hidden_behind_old_data(mcp_client, monkeypatch):
+    async with mcp_client as c:
+        await c.call_tool("com_list_gpus", {})
+        await c.call_tool("set_inventory_cache", {"enabled": True, "ttl_seconds": 1})
+        await asyncio.sleep(1.1)
+        com._tokens.clear()
+        _counting(monkeypatch, fail=lambda r: r.url.host == fake_mgmt_module.COM_SSO, status=401)
+        result = await c.call_tool("com_list_gpus", {}, raise_on_error=False)
+    assert result.is_error and "COM login failed" in result.content[0].text and "com_login" in result.content[0].text
+
+
+async def test_find_server_looks_again_live_when_the_cached_lists_do_not_have_it(mcp_client, monkeypatch):
+    async with mcp_client as c:
+        known = (await c.call_tool("find_server", {"query": "SN0003", "probe": False})).structured_content
+        servers = fake_mgmt_module.FAKE_COM["/compute-ops-mgmt/v1/servers"]
+        monkeypatch.setitem(fake_mgmt_module.FAKE_COM, "/compute-ops-mgmt/v1/servers", [*servers, _fake_com_server("P9+SN0009", "new.example.com")])
+        cached = (await c.call_tool("find_server", {"query": "SN0003", "probe": False})).structured_content
+        new = (await c.call_tool("find_server", {"query": "new.example.com", "probe": False})).structured_content
+    assert known["found"] and cached["found"] and cached["data_age"]["source"] == "local cache"
+    assert new["found"] and new["data_age"]["source"] == "live"  # added since the list was cached: found by the live retry
+
+
+async def test_a_firmware_update_drops_the_servers_cached_reads(mcp_client, monkeypatch):
+    from proliant_mcp import store
+
+    seen = _counting(monkeypatch)
+    async with mcp_client as c:
+        await c.call_tool("get_ilo_info", {"server": "gen12"})
+        await store.forget_ilo(srv._resolve("gen12"))
+        seen.clear()
+        after = (await c.call_tool("get_ilo_info", {"server": "gen12"})).structured_content
+    assert after["data_age"]["source"] == "live" and any(r.startswith("POST 192.0.2.10/") for r in seen)
 
 
 async def test_server_summary(mcp_client):
@@ -233,10 +322,10 @@ async def test_inventory_cache_is_on_by_default_and_respects_refresh_and_live_st
         assert not any(method == "GET" and "Processors" in path for method, path in second_requests)
         fresh = (await client.call_tool("get_inventory_snapshot", {**args, "refresh": True})).structured_content
         assert fresh["servers"][0]["inventory"]["processors"]["source"] == "live"
-        await client.call_tool("get_health", {"server": "gen12"})
+        await client.call_tool("get_health", {"server": "gen12"})  # first call: live, then kept as state (5 minutes)
         assert any(method == "GET" and path.endswith("/Systems/1/") for method, path in requests[first_requests:])
         cleared = (await client.call_tool("clear_inventory_cache", {})).structured_content
-        assert cleared["removed"] == 1
+        assert cleared["removed"] == 2  # the processors snapshot and get_health's state entry
         after_clear = (await client.call_tool("get_inventory_snapshot", args)).structured_content
         assert after_clear["servers"][0]["inventory"]["processors"]["source"] == "live"
         await client.call_tool("set_inventory_cache", {"enabled": False})
@@ -479,7 +568,10 @@ async def test_server_summary_says_whether_an_os_runs(mcp_client, monkeypatch):
                   "Oem": {"Hpe": {"PostState": "FinishedPost", "HostOS": {"OsName": "VMware ESXi", "OsVersion": "8.0.3"},
                                   "AggregateHealthStatus": {"AgentlessManagementService": "Ready"}}}}
         monkeypatch.setitem(fake_ilo.FAKE_ILO, "/redfish/v1/Systems/1/", system)
-        running = (await c.call_tool("get_server_summary", {"server": "gen12"})).structured_content["os"]
+        cached = (await c.call_tool("get_server_summary", {"server": "gen12"})).structured_content
+        running = (await c.call_tool("get_server_summary", {"server": "gen12", "refresh": True})).structured_content["os"]
+    assert cached["os"] == stuck and cached["data_age"]["source"] == "local cache"  # state is kept 5 minutes...
+    assert "how old they are" in cached["data_age"]["note"]  # ...and the assistant is told to say so
     assert stuck["state"] == "stopped in BIOS setup (RBSU); no OS booted"
     assert stuck["boot_order"] == ["Generic USB Boot", "UEFI HTTPv4 (Embedded LOM 1)"] and stuck["name"] is None
     assert stuck["os_boot_entries"] == []  # devices and network boot are not OS loaders
@@ -770,7 +862,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 44_300, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +500 for refresh on the 5 cached inventory tools
+    assert sum(sizes.values()) <= 45_700, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"

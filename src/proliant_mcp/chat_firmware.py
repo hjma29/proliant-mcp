@@ -25,6 +25,7 @@ import httpx
 from fastmcp.exceptions import ToolError
 
 from proliant_mcp import ilo_firmware as fw
+from proliant_mcp import store
 from proliant_mcp.chat import FlowError, FlowPage, Relay, _page
 from proliant_mcp.config import Server, _home_config
 
@@ -262,6 +263,7 @@ async def _execute(run: Run, servers: dict[str, Server], transport: httpx.AsyncB
     async def one(p: fw.Progress) -> None:
         p.status, p.started = "running", time.monotonic()
         run.touch()
+        await store.forget_ilo(servers[p.server])  # its firmware is about to change: nothing cached for it may be served
         try:
             for i, pkg in enumerate(p.steps, 1):
                 p.step, p.phase, p.flash_percent, p.phase_times = i, "", None, {}
@@ -273,6 +275,7 @@ async def _execute(run: Run, servers: dict[str, Server], transport: httpx.AsyncB
             p.status, p.error = "failed", str(exc) or exc.__class__.__name__
         finally:
             p.finished = time.monotonic()
+            await store.forget_ilo(servers[p.server])  # drop anything read during the update
             run.touch()
 
     async def heartbeat() -> None:

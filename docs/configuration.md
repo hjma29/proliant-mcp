@@ -109,55 +109,57 @@ your browser cannot open the page. Pick one:
   encrypted network (Tailscale, a VPN), never on the open internet. It must be an address of that computer
   (not `0.0.0.0`). It is off by default.
 
-## Local inventory cache
+## Local cache
 
-A local SQLite cache is **on by default** (lifetime 1 hour). Inventory that rarely changes is answered
-from it in milliseconds instead of being read from COM, the iLOs or OneView again:
+A local SQLite cache is **on by default**. Almost every read tool answers from it while the data is
+fresh and reads live only what is missing or too old. Two kinds of data have their own lifetime:
 
-- `com_list_gpus`, `com_list_nics`, `com_hardware_report` and `com_list_servers_table` with hardware
-  columns (GPUs, storage, NICs, CPU model): COM's server list and each server's hardware inventory.
-- `list_servers` with `generation` or `model`: each iLO's model and serial, COM's server list and
-  OneView's server hardware.
-- `get_inventory_snapshot` (an iLO's processors, memory and firmware) and `get_com_inventory_snapshot`.
+| Kind | Default lifetime | Tools |
+|---|---|---|
+| Inventory (rarely changes) | 1 hour | `get_ilo_info`, `get_firmware_inventory`, `get_processors`, `get_memory`, `get_storage`; `com_list_gpus`, `com_list_nics`, `com_hardware_report`, `com_list_groups`, `com_list_firmware_bundles`, `greenlake_list_services`; `oneview_list_firmware_baselines`; `list_servers` with `generation` or `model`; `find_server` |
+| State (can change any time) | 5 minutes | `get_server_summary`, `get_fleet_summary`, `get_health`, `get_network_adapters` (links), `get_event_log`, `get_fleet_event_summary`, `get_ilo_logins`; `com_get_overview`, `com_list_servers`, `com_list_servers_table`, `com_get_server`, `com_list_alerts`, `com_list_jobs`; `oneview_get_appliance`, `oneview_list_server_hardware`, `oneview_get_server_hardware`, `oneview_list_server_profiles`, `oneview_list_alerts`, `oneview_list_enclosures`, `oneview_list_interconnects`, `oneview_list_uplink_sets` |
+| Always live | | anything that changes a server or signs in (firmware update, `com_login`, `add_server`, ...), `ilo_firmware_update_status`, `ilo_firmware_list_updates`, and the raw `redfish_get`, `com_api_get`, `oneview_rest_get` |
 
-Measured on a lab of 42 COM servers, 3 iLOs and one OneView appliance: `com_list_gpus` takes about
-1.5 s live (3 to 4 s on the first call, which also signs in to GreenLake) and about 15 ms from the cache;
-a cached answer makes no request to COM at all. Each answer has `data_age`: `source` (`live`, `local
-cache` or both), `as_of` and `minutes_old`. From 5 minutes old the assistant says how old the inventory
-is and that you can ask for a refresh; ask for "fresh" or "current" data and it passes `refresh=true`,
-which reads live and updates the cache. Health and power shown next to cached hardware are as of the
-same time; for current health, power, alerts or links the assistant uses the live tools, which never
-use the cache.
+Measured on a lab of 42 COM servers, 3 iLOs and one OneView appliance: those 35 tools took 31.9 s
+live together and 0.7 s from the cache (12 to 66 ms each), with no request to any iLO, OneView or COM.
 
-If a live read fails (COM unreachable, an iLO down), the last stored answer, up to 7 days old, is
-returned instead with a warning and the error, rather than no answer. COM's own inventory may have been
-collected long before; check `inventory_collected_at`.
+Each answer has `data_age`: `source` (`live`, `local cache` or both), `as_of` and `minutes_old`. When state
+comes from the cache, the assistant says how old it is; inventory it mentions from 5 minutes old. Ask for
+"fresh" or "current" data and it passes `refresh=true`, which reads live and updates the cache.
 
-**Keep it warm.** `proliant-mcp poll` refreshes everything every 30 minutes (`--interval MINUTES`), so
-answers come from the cache; `proliant-mcp poll --once` refreshes once and exits, for cron or a timer:
+- **A source that is down:** inventory falls back to the last stored answer (up to 7 days old), marked
+  stale with the error. State never does: an iLO that cannot be read is reported, not hidden behind
+  an old "OK". A refused login (iLO 401/403, GreenLake sign-in) is always reported, so you can fix it.
+- **Firmware updates:** when `ilo_firmware_update_start` updates a server, its cached reads are dropped
+  before and after the update, so the next answer shows the new versions.
+- **New servers:** `find_server` looks in the cached lists first and again live if nothing matches.
+- COM's own inventory may have been collected long before; check `inventory_collected_at`.
+
+**Keep it warm.** `proliant-mcp poll` reads everything the tools read (each iLO with one login, each COM
+account, each OneView appliance) every 30 minutes (`--interval MINUTES`), so answers come from the
+cache; `proliant-mcp poll --once` refreshes once and exits, for cron or a timer. On the lab one refresh
+stores 83 entries in about 11 s. To keep state answers warm too, poll at least as often as the state
+lifetime (`--interval 5`), at the cost of one login per iLO each time:
 
 ```
 # every 30 minutes, with uv installed (Linux / WSL crontab -e)
 */30 * * * * uvx --python 3.13 proliant-mcp@latest poll --once >> ~/.config/proliant-mcp/poll.log 2>&1
 ```
 
-Keep the poll interval shorter than the cache lifetime, or answers fall back to live reads.
-
 The cache is created on first use in an owner-only folder,
 `~/.config/proliant-mcp/cache/inventory.sqlite3` (Windows:
-`%USERPROFILE%\.config\proliant-mcp\cache\inventory.sqlite3`). It holds hardware details
-such as server names, serial numbers, processors, DIMMs, NICs and firmware versions, and **never**
-passwords or access tokens. If the folder cannot be secured or the database cannot be used, the
-tools read live and say so; they never fail because of the cache.
+`%USERPROFILE%\.config\proliant-mcp\cache\inventory.sqlite3`). It holds what the tools return (server
+names, serial numbers, hardware, firmware, health, alerts, event log and login entries with user names
+and source addresses) and **never** passwords or access tokens. If the folder cannot be secured or the
+database cannot be used, the tools read live and say so; they never fail because of the cache.
 
-- A cached answer does not log in to the iLO, OneView or COM: it is what that source said at
-  `as_of`, for servers still in your inventory. `get_inventory_snapshot` still logs in to the iLO on
-  every call. Sources that fail are tried live again on the next call.
-- Ask your assistant to **turn the cache off** (`set_inventory_cache`), change its lifetime
-  (1 second to 24 hours), check it (`get_inventory_cache_status`), or **clear** it
-  (`clear_inventory_cache`). Turning it off stops reads and writes but keeps existing data; clearing
-  removes the rows but cannot guarantee erasure from filesystem backups or SQLite free pages. Clear
-  it after replacing hardware.
+- A cached answer does not log in to the iLO, OneView or COM: it is what that source said at `as_of`.
+  `get_inventory_snapshot` still logs in to the iLO on every call.
+- Ask your assistant to **turn the cache off** (`set_inventory_cache`), change its lifetimes
+  (`ttl_seconds` for inventory, `state_ttl_seconds` for state, 1 second to 24 hours), check it
+  (`get_inventory_cache_status`), or **clear** it (`clear_inventory_cache`). Turning it off stops reads
+  and writes but keeps existing data; clearing removes the rows but cannot guarantee erasure from
+  filesystem backups or SQLite free pages. Clear it after replacing hardware.
 
 ## Tool-call counters
 

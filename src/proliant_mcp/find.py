@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from proliant_mcp import com, oneview
+from proliant_mcp import com, oneview, store
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -28,8 +28,7 @@ def _ilo_matches(query: str) -> list[dict[str, Any]]:
     return [{"name": s.name, "ilo_host": s.host} for s in load_servers().values() if matches(query, s.name, s.host)]
 
 
-def _com_row(s: dict[str, Any]) -> dict[str, Any]:
-    r = com.server_row(s)
+def _com_row(r: dict[str, Any]) -> dict[str, Any]:
     return {k: r[k] for k in ("name", "serial_number", "model", "generation", "health", "power_state", "connected", "ilo", "os", "os_hostname", "oneview")}
 
 
@@ -37,38 +36,47 @@ async def _com_matches(query: str, transport: httpx.AsyncBaseTransport | None) -
     async def one(account: Any) -> dict[str, Any]:
         try:
             async with ComClient(account, transport=transport) as c:
-                servers = await c.get_all("/servers")
+                rows = await com.server_rows(c, cached=True)
         except ComError as exc:
             return {"account": account.name, "error": str(exc)}
-        found = []
-        for s in servers:
-            hw = s.get("hardware") or {}
-            bmc = hw.get("bmc") or {}
-            if matches(query, s.get("id"), s.get("name"), hw.get("serialNumber"), bmc.get("hostname"), bmc.get("ip"), (s.get("host") or {}).get("hostname")):
-                found.append(_com_row(s))
-        return {"account": account.name, "servers_searched": len(servers), "matches": found}
+        found = [
+            _com_row(r) for r in rows
+            if matches(query, r["id"], r["name"], r["serial_number"], r["ilo"]["hostname"], r["ilo"]["ip"], r["os_hostname"])
+        ]
+        return {"account": account.name, "servers_searched": len(rows), "matches": found}
 
     return list(await asyncio.gather(*(one(a) for a in load_com().values())))
 
 
+async def _oneview_index(c: OneViewClient) -> dict[str, Any]:
+    """What a lookup needs from one appliance: server hardware rows with every iLO address, and interconnect rows."""
+    hardware, interconnects = await asyncio.gather(c.get_all("/rest/server-hardware"), c.get_all("/rest/interconnects"))
+    return {
+        "hardware": [{**oneview.hardware_row(h, {}, {}), "ips": oneview._ips(h.get("mpHostInfo") or {})} for h in hardware],
+        "interconnects": [oneview.interconnect_row(i) for i in interconnects],
+    }
+
+
 async def _oneview_matches(query: str, transport: httpx.AsyncBaseTransport | None) -> list[dict[str, Any]]:
     async def one(appliance: Any) -> dict[str, Any]:
-        try:
+        async def fetch() -> dict[str, Any]:
             async with OneViewClient(appliance, transport=transport) as c:
-                hardware, interconnects = await asyncio.gather(c.get_all("/rest/server-hardware"), c.get_all("/rest/interconnects"))
+                return await _oneview_index(c)
+
+        try:
+            index = await store.fetch_one("ov_find", (appliance.name, appliance.host, appliance.username), fetch, (OneViewError,))
         except OneViewError as exc:
             return {"appliance": appliance.name, "error": str(exc)}
-        servers = []
-        for h in hardware:
-            mp = h.get("mpHostInfo") or {}
-            if matches(query, h.get("name"), h.get("serverName"), h.get("serialNumber"), h.get("uuid"), mp.get("mpHostName"), *oneview._ips(mp)):
-                row = oneview.hardware_row(h, {}, {})
-                servers.append({k: row[k] for k in ("name", "server_name", "model", "serial_number", "status", "power_state", "bay", "os", "ilo")})
-        modules = []
-        for i in interconnects:
-            row = oneview.interconnect_row(i)
-            if matches(query, row["name"], row["hostname"], row["ip"], row["serial_number"]):
-                modules.append({k: row[k] for k in ("name", "model", "status", "hostname", "ip", "serial_number")})
+        servers = [
+            {k: row[k] for k in ("name", "server_name", "model", "serial_number", "status", "power_state", "bay", "os", "ilo")}
+            for row in index["hardware"]
+            if matches(query, row["name"], row["server_name"], row["serial_number"], row["uuid"], row["ilo"]["hostname"], *row["ips"])
+        ]
+        modules = [
+            {k: row[k] for k in ("name", "model", "status", "hostname", "ip", "serial_number")}
+            for row in index["interconnects"]
+            if matches(query, row["name"], row["hostname"], row["ip"], row["serial_number"])
+        ]
         return {"appliance": appliance.name, "server_hardware": servers, "interconnects": modules}
 
     return list(await asyncio.gather(*(one(a) for a in load_oneview().values())))
@@ -113,7 +121,17 @@ async def probe_ilo(host: str, transport: httpx.AsyncBaseTransport | None = None
 _ADDRESS = re.compile(r"^[A-Za-z0-9.:-]+$")
 
 
-async def find_server(query: str, probe: bool, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
+async def find_server(query: str, probe: bool, transport: httpx.AsyncBaseTransport | None = None, refresh: bool = False) -> dict[str, Any]:
+    """Looks in the cached server lists first; if that finds nothing it looks again live (a server added since)."""
+    with store.session(refresh) as current:
+        result = await _find(query, probe, transport)
+    if not result["found"] and current.cached and not refresh:
+        with store.session(True) as current:
+            result = await _find(query, probe, transport)
+    return store.with_age(result, current)
+
+
+async def _find(query: str, probe: bool, transport: httpx.AsyncBaseTransport | None) -> dict[str, Any]:
     q = query.strip()
     com_results, ov_results = await asyncio.gather(_com_matches(q, transport), _oneview_matches(q, transport))
     ilo = _ilo_matches(q)

@@ -12,10 +12,12 @@ exist (and `unknown_generation`: servers with no model or generation in any sour
 is named in `source_errors`, not silently counted as empty. `com_list_servers_table` also returns
 `available` when its filters match nothing.
 
-**Local cache.** `list_servers` with a filter and the COM hardware tools (`com_list_gpus`, `com_list_nics`,
-`com_hardware_report`, `com_list_servers_table` with hardware columns) answer from a local SQLite cache
-(on, 1 hour) in milliseconds, with `data_age` (source, `as_of`, `minutes_old`); `refresh=true` reads live.
-`proliant-mcp poll` keeps the cache warm. See [configuration](configuration.md#local-inventory-cache).
+**Local cache.** Almost every read tool answers from a local SQLite cache in milliseconds: inventory
+(hardware, firmware, catalogs) for 1 hour, state (health, power, alerts, logs, links) for 5 minutes. Each
+answer has `data_age` (source, `as_of`, `minutes_old`); `refresh=true` reads live. Tools that change a
+server or sign in, and the raw `*_get` tools, are always live. Tools that returned a list now return
+`{"result": [...], "data_age": {...}}`. `proliant-mcp poll` keeps the cache warm.
+See [configuration](configuration.md#local-cache).
 `find_server` tells you which server a name, iLO IP or hostname, serial or OS hostname belongs to,
 searching the iLO inventory, every COM account and every OneView appliance at once; for an address
 none of them knows, it reads that iLO's login-free identity pages (iLO model, server model, serial).

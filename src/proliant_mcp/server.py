@@ -43,9 +43,8 @@ nics, cpu_model), nothing more. For analysis across servers use
 com_list_servers (include_hardware adds CPU, GPU and storage) or com_list_gpus; for a table of storage
 controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link speeds or network mode
 com_list_nics. Never loop com_get_server or com_api_get over many servers.
-COM hardware tools and list_servers filters answer from a local cache (on, 1 hour) and say how old in
-data_age; for an iLO's processors, memory or firmware use get_inventory_snapshot. Pass refresh=true when
-the user wants current data. For health, power, alerts or links use the live tools.
+Read tools answer from a local cache (inventory 1 hour, health/power/alerts/logs 5 minutes) and say how
+old in data_age; pass refresh=true when the user wants current data.
 Change the cache with set_inventory_cache, or clear it with clear_inventory_cache, only when asked.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not set up,
 sign the user in right away in this chat; do not send them to a browser, terminal or the GreenLake site.
@@ -84,7 +83,7 @@ ApplianceName = Annotated[str | None, Field(description="OneView appliance name 
 AccountName = Annotated[str | None, Field(description="COM account name from list_servers; omit to use the first one.")]
 Limit = Annotated[int, Field(ge=1, le=1000)]
 Generation = Annotated[str | None, Field(description="Only this server generation, e.g. 11 or Gen11.")]
-Refresh = Annotated[bool, Field(description="Skip the local cache.")]
+Refresh = bool  # "refresh=true reads live" is in the server instructions, not repeated in every schema
 StorageController = Annotated[
     str | None,
     Field(description="Only servers with a storage controller whose model contains this text, e.g. NS204 or MR416 (any case)."),
@@ -169,6 +168,77 @@ async def _com(name: str | None, fn: Callable[[ComClient], Awaitable[Any]]) -> A
         raise ToolError(str(exc)) from exc
 
 
+# ── local cache: every read below is answered from SQLite while fresh (see store) ───────────────
+
+
+def _aged(value: Any, current: store.Session) -> Any:
+    """``data_age`` on the result; a list result becomes ``{"result": [...]}``, the same key MCP uses for lists."""
+    return store.with_age({"result": value} if isinstance(value, list) else value, current)
+
+
+def _ilo_key(s: Server, kind: str, args: tuple[Any, ...] = ()) -> tuple[str, tuple[Any, ...]]:
+    return f"ilo_{kind}", (*store.ilo_scope(s), *args)
+
+
+def _com_key(a: ComAccount, kind: str, args: tuple[Any, ...] = ()) -> tuple[str, tuple[Any, ...]]:
+    return f"com_{kind}", (a.client_id, a.workspace or "", *args)
+
+
+def _ov_key(a: OneViewAppliance, kind: str, args: tuple[Any, ...] = ()) -> tuple[str, tuple[Any, ...]]:
+    return f"ov_{kind}", (a.name, a.host, a.username, *args)
+
+
+async def _ilo_read(s: Server, kind: str, fn: Callable[[RedfishClient], Awaitable[Any]], state: bool, args: tuple[Any, ...] = ()) -> Any:
+    async def fetch() -> Any:
+        async with RedfishClient(s, transport=_transport) as client:
+            return await fn(client)
+
+    return await store.fetch_one(*_ilo_key(s, kind, args), fetch, (RedfishError,), state=state)
+
+
+async def _ilo_cached(name: str, kind: str, fn: Callable[[RedfishClient], Awaitable[Any]], refresh: bool, state: bool,
+                      args: tuple[Any, ...] = ()) -> Any:
+    server = _resolve(name)
+    with store.session(refresh) as current:
+        try:
+            value = await _ilo_read(server, kind, fn, state, args)
+        except RedfishError as exc:
+            raise ToolError(str(exc)) from exc
+        return _aged(value, current)
+
+
+async def _com_cached(name: str | None, kind: str, fn: Callable[[ComClient], Awaitable[Any]], refresh: bool, state: bool,
+                      args: tuple[Any, ...] = ()) -> Any:
+    account: ComAccount = _pick("COM account", load_com(), name)
+
+    async def fetch() -> Any:
+        async with ComClient(account, transport=_transport) as client:
+            return await fn(client)
+
+    with store.session(refresh) as current:
+        try:
+            value = await store.fetch_one(*_com_key(account, kind, args), fetch, (ComError,), state=state)
+        except ComError as exc:
+            raise ToolError(str(exc)) from exc
+        return _aged(value, current)
+
+
+async def _ov_cached(name: str | None, kind: str, fn: Callable[[OneViewClient], Awaitable[Any]], refresh: bool, state: bool,
+                     args: tuple[Any, ...] = ()) -> Any:
+    appliance: OneViewAppliance = _pick("OneView appliance", load_oneview(), name)
+
+    async def fetch() -> Any:
+        async with OneViewClient(appliance, transport=_transport) as client:
+            return await fn(client)
+
+    with store.session(refresh) as current:
+        try:
+            value = await store.fetch_one(*_ov_key(appliance, kind, args), fetch, (OneViewError,), state=state)
+        except OneViewError as exc:
+            raise ToolError(str(exc)) from exc
+        return _aged(value, current)
+
+
 # The version leads this description so it shows in tool lists such as Copilot's /mcp show.
 @mcp.tool(
     annotations=READ_ONLY,
@@ -212,6 +282,7 @@ async def find_server(
     probe: Annotated[
         bool, Field(description="If nothing matches and the query is an address, read the iLO's login-free identity pages.")
     ] = True,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """Which server is this? Looks up a name, iLO IP/hostname, serial or OS hostname in the iLO
     inventory, every COM account and every OneView appliance in one call. If nothing matches and the
@@ -219,89 +290,89 @@ async def find_server(
     model, serial). Use it instead of searching the list tools by hand."""
     from proliant_mcp import find
 
-    return await find.find_server(query, probe, _transport)
+    return await find.find_server(query, probe, _transport, refresh)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_ilo_info(server: ServerName) -> dict[str, Any]:
+async def get_ilo_info(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """iLO details: model (iLO 5/6/7), firmware version and date, license, Compute Ops
     Management connection status, and the iLO's own network (hostname, IP, MAC, DHCP)."""
-    return await _run(server, ilo.ilo_info)
+    return await _ilo_cached(server, "info", ilo.ilo_info, refresh, state=False)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_server_summary(server: ServerName) -> dict[str, Any]:
+async def get_server_summary(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """Server identity and state: model, product ID, serial, power and POST state, health,
     UID light, BIOS and iLO versions, CPU count/model, total memory, and `os`: whether an OS is
     running and which (name and version when the HPE agent reports it), boot progress (e.g. stuck
     in POST or BIOS setup) and the UEFI boot order."""
-    return await _run(server, ilo.server_summary)
+    return await _ilo_cached(server, "summary", ilo.server_summary, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_fleet_summary() -> list[dict[str, Any]]:
+async def get_fleet_summary(refresh: Refresh = False) -> dict[str, Any]:
     """get_server_summary (including the OS and boot state) for every configured server at once.
     Unreachable servers are returned with an `error` field instead of failing the whole call."""
 
     async def one(s: Server) -> dict[str, Any]:
         try:
-            async with RedfishClient(s, transport=_transport) as client:
-                return {"server": s.name, **await ilo.server_summary(client)}
+            return {"server": s.name, **await _ilo_read(s, "summary", ilo.server_summary, True)}
         except RedfishError as exc:
             return {"server": s.name, "error": str(exc)}
 
-    return list(await asyncio.gather(*(one(s) for s in _servers().values())))
+    with store.session(refresh) as current:
+        return _aged(list(await asyncio.gather(*(one(s) for s in _servers().values()))), current)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_health(server: ServerName) -> dict[str, Any]:
+async def get_health(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """Overall and per-subsystem health (processors, memory, storage, network, fans,
     power supplies, temperatures) plus fan / power-supply redundancy."""
-    return await _run(server, ilo.health)
+    return await _ilo_cached(server, "health", ilo.health, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_firmware_inventory(server: ServerName) -> list[dict[str, Any]]:
+async def get_firmware_inventory(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """All firmware components and versions (iLO, BIOS/System ROM, NICs, storage
     controllers, drives, CPLD, ...)."""
-    return await _run(server, ilo.firmware_inventory)
+    return await _ilo_cached(server, "firmware", ilo.firmware_inventory, refresh, state=False)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_processors(server: ServerName) -> dict[str, Any]:
+async def get_processors(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """CPUs (socket, model, cores, threads, speed) and GPUs that iLO reports."""
-    return await _run(server, ilo.processors)
+    return await _ilo_cached(server, "processors", ilo.processors, refresh, state=False)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_memory(server: ServerName) -> dict[str, Any]:
+async def get_memory(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """Memory: total GiB, populated/empty slot counts, and each DIMM (slot, size, type,
     speed, vendor, HPE part number, health)."""
-    return await _run(server, ilo.memory)
+    return await _ilo_cached(server, "memory", ilo.memory, refresh, state=False)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_storage(server: ServerName) -> list[dict[str, Any]]:
+async def get_storage(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """Storage subsystems: controllers (model, firmware), physical drives (model, media,
     capacity, serial, firmware, bay) and logical volumes / RAID."""
-    return await _run(server, ilo.storage)
+    return await _ilo_cached(server, "storage", ilo.storage, refresh, state=False)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_network_adapters(server: ServerName) -> list[dict[str, Any]]:
+async def get_network_adapters(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
     """Host network adapters: model, part number, slot, firmware, and ports (MAC, link,
     speed, LLDP neighbor switch/port when available)."""
-    return await _run(server, ilo.network_adapters)
+    return await _ilo_cached(server, "network", ilo.network_adapters, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
 async def get_inventory_cache_status() -> dict[str, Any]:
-    """Whether local hardware snapshot caching is enabled (it is on by default) and its lifetime.
-    It does not inspect credentials or create a cache."""
+    """Whether the local cache is on (the default) and its lifetimes: inventory and state (health,
+    power, alerts, logs, links). It does not inspect credentials or create a cache."""
     try:
         enabled, ttl = inventory_cache.settings()
-        return {"enabled": enabled, "ttl_seconds": ttl, "path": str(inventory_cache._db_path()),
-                "note": "The cache contains local hardware inventory. Live status tools do not use it."}
+        return {"enabled": enabled, "ttl_seconds": ttl, "state_ttl_seconds": inventory_cache.state_ttl(), "path": str(inventory_cache._db_path()),
+                "note": "Inventory is kept ttl_seconds and state state_ttl_seconds; refresh=true on a tool reads live."}
     except inventory_cache.CacheError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -309,14 +380,14 @@ async def get_inventory_cache_status() -> dict[str, Any]:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def set_inventory_cache(
     enabled: Annotated[bool, Field(description="True to use the local hardware snapshot cache (the default), false to turn it off.")],
-    ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="Maximum snapshot age in seconds; omit to preserve the existing setting.")] = None,
+    ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="Inventory lifetime in seconds; omit to keep it.")] = None,
+    state_ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="State (health, power, alerts) lifetime; omit to keep it.")] = None,
 ) -> dict[str, Any]:
-    """Turn the local hardware snapshot cache on or off, or change its lifetime, when the user asks.
-    It is on by default and stored on this computer in an owner-only folder (server names and
-    serial numbers, never passwords). Turning it off keeps the existing data; clear_inventory_cache
-    removes it. Live tools are unaffected."""
+    """Turn the local cache on or off, or change its lifetimes, when the user asks. It is on by
+    default and stored on this computer in an owner-only folder (server names and serial numbers,
+    never passwords). Turning it off keeps the existing data; clear_inventory_cache removes it."""
     try:
-        return await asyncio.to_thread(inventory_cache.configure, enabled, ttl_seconds)
+        return await asyncio.to_thread(inventory_cache.configure, enabled, ttl_seconds, state_ttl_seconds)
     except inventory_cache.CacheError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -429,14 +500,17 @@ async def get_event_log(
     summary: Annotated[
         bool, Field(description="Group identical messages with count and first/last time, most severe first.")
     ] = False,
-) -> list[dict[str, Any]]:
+    refresh: Refresh = False,
+) -> dict[str, Any]:
     """Newest entries from the IML, iLO event log or Security Log, filtered by severity, time and
     text; with summary, identical messages are grouped (compact; use it for "what happened").
     Entries with a wrong iLO clock are marked `time_invalid`, listed last, and left out when
     since/until is set. For several servers use get_fleet_event_summary; for logins use get_ilo_logins."""
     now = dt.datetime.now(dt.UTC)
     start, end = _window(since, until, now)
-    return await _run(server, lambda c: ilo.event_log(c, log, limit, severity, start, end, contains, now, min_severity, summary))
+    args = (log, limit, severity, since, until, contains, min_severity, summary)
+    return await _ilo_cached(server, "event_log", lambda c: ilo.event_log(c, log, limit, severity, start, end, contains, now, min_severity, summary),
+                             refresh, state=True, args=args)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -448,6 +522,7 @@ async def get_fleet_event_summary(
     until: When = None,
     contains: Annotated[str | None, Field(description="Only entries whose message contains this text (any case).")] = None,
     limit: Annotated[int, Field(ge=1, le=200, description="Most groups per server.")] = 30,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """Significant events for many servers in one call: per server, the IML, iLO event log or Security
     Log grouped by message (count, first/last time, repaired), Warning and Critical by default, most
@@ -458,8 +533,8 @@ async def get_fleet_event_summary(
 
     async def one(s: Server) -> dict[str, Any]:
         try:
-            async with RedfishClient(s, transport=_transport) as client:
-                groups = await ilo.event_log(client, log, limit, None, start, end, contains, now, min_severity, True)
+            groups = await _ilo_read(s, "fleet_events", lambda c: ilo.event_log(c, log, limit, None, start, end, contains, now, min_severity, True),
+                                     True, (log, min_severity, since, until, contains, limit))
         except RedfishError as exc:
             return {"server": s.name, "error": str(exc)}
         by_severity: Counter[str] = Counter()
@@ -467,7 +542,8 @@ async def get_fleet_event_summary(
             by_severity[g["severity"] or "Unknown"] += g["count"]
         return {"server": s.name, "entries_by_severity": dict(by_severity), "groups": groups}
 
-    return {"log": log, "min_severity": min_severity, "servers": list(await asyncio.gather(*(one(s) for s in targets)))}
+    with store.session(refresh) as current:
+        return _aged({"log": log, "min_severity": min_severity, "servers": list(await asyncio.gather(*(one(s) for s in targets)))}, current)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -480,6 +556,7 @@ async def get_ilo_logins(
     include_this_computer: Annotated[
         bool, Field(description="Also count logins from the computer running proliant-mcp.")
     ] = False,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """Who logged in to the iLOs, from each iLO Event Log, for many servers in one call: logins per
     day, by type, user and source IP/host, failed logins and lockout alerts. Says when a log does
@@ -496,12 +573,13 @@ async def get_ilo_logins(
 
     async def one(s: Server) -> dict[str, Any]:
         try:
-            async with RedfishClient(s, transport=_transport) as client:
-                return {"server": s.name, **await ilo.logins(client, since, now, tz, now, include_this_computer)}
+            return {"server": s.name, **await _ilo_read(s, "logins", lambda c: ilo.logins(c, since, now, tz, now, include_this_computer),
+                                                         True, (days, utc_offset_hours, include_this_computer))}
         except RedfishError as exc:
             return {"server": s.name, "error": str(exc)}
 
-    rows = list(await asyncio.gather(*(one(s) for s in targets)))
+    with store.session(refresh) as current:
+        rows = list(await asyncio.gather(*(one(s) for s in targets)))
     ok = [r for r in rows if "error" not in r]
     dates = [(first_day + dt.timedelta(days=i)).isoformat() for i in range(days)]
     by_day = [
@@ -510,7 +588,7 @@ async def get_ilo_logins(
     for r in ok:
         del r["by_day"]
     offset = tz.utcoffset(now) or dt.timedelta()
-    notes = []
+    notes: list[str] = []
     short = [r["server"] for r in ok if not r["log_covers_window"]]
     if short:
         notes.append(
@@ -526,7 +604,7 @@ async def get_ilo_logins(
             f"{sum(r['this_computer_logins'] for r in ok)} logins from this computer (proliant-mcp's own Redfish sessions) "
             "are not counted; set include_this_computer to count them."
         )
-    return {
+    return _aged({
         "window": {
             "from": since.isoformat().replace("+00:00", "Z"),
             "to": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
@@ -545,7 +623,7 @@ async def get_ilo_logins(
         "by_day": by_day,
         "servers": rows,
         "notes": notes,
-    }
+    }, current)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -602,11 +680,11 @@ async def ilo_firmware_update_status() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def com_get_overview(account: AccountName = None) -> dict[str, Any]:
+async def com_get_overview(account: AccountName = None, refresh: Refresh = False) -> dict[str, Any]:
     """Compute Ops Management fleet report: server count by health, power, connection,
     generation and model; servers needing attention; disconnected servers; soonest
     subscription expirations; active (uncleared) alerts by severity with the newest ten."""
-    return await _com(account, com.overview)
+    return await _com_cached(account, "overview", com.overview, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -617,12 +695,14 @@ async def com_list_servers(
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     include_hardware: Annotated[bool, Field(description="Add a `hardware` object per server (CPU, GPUs, storage controllers and drives) from COM's cached inventory. Slower: one read per server.")] = False,
     generation: Generation = None,
-) -> list[dict[str, Any]]:
+    refresh: Refresh = False,
+) -> dict[str, Any]:
     """Raw COM JSON for analysis; to list servers use com_list_servers_table.
     Per server: name, serial, model, generation, health, power, COM connection, subscription,
     iLO host/IP/version, OS, CPU vendor, firmware bundle. About 700 characters per server, so a
     big fleet fills the model's context. One call returns the whole fleet."""
-    return await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware, generation=generation))
+    with store.session(refresh) as current:
+        return _aged(await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, include_hardware, generation=generation)), current)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -683,12 +763,13 @@ async def _servers_table(account, health, connected, name_contains, generation, 
 async def greenlake_list_services(
     account: AccountName = None,
     provisioned_only: Annotated[bool, Field(description="Only services that are set up (provisioned) in this workspace.")] = False,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """Every HPE GreenLake service in the catalog and where each is provisioned in the user's
     workspace (Compute Ops Management, Data Services, Aruba Central, ...): name, provisioned or
     not, regions with status, description, plus the counts. Use it for "what services do I have in
     GreenLake" and "is X available / set up". Uses the same sign-in as the com_ tools."""
-    return await _com(account, lambda c: com.list_services(c, provisioned_only))
+    return await _com_cached(account, "services", lambda c: com.list_services(c, provisioned_only), refresh, state=False, args=(provisioned_only,))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -748,11 +829,12 @@ async def com_list_gpus(
 async def com_get_server(
     server: Annotated[str, Field(description="COM server name, serial number, iLO IP/hostname or id.")],
     account: AccountName = None,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """One COM server in detail: per-subsystem health, iLO, subscription, last firmware update,
     firmware inventory, CPU, GPUs, storage controllers and drives, network ports (mode, link, speed,
     MAC) and active alerts. For several servers use com_list_servers, com_list_gpus or com_list_nics."""
-    return await _com(account, lambda c: com.get_server(c, server))
+    return await _com_cached(account, "server", lambda c: com.get_server(c, server), refresh, state=True, args=(server.strip().lower(),))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -762,9 +844,11 @@ async def com_list_alerts(
     severity: Annotated[Literal["CRITICAL", "WARNING", "OK"] | None, Field(description="Only this severity.")] = None,
     include_cleared: Annotated[bool, Field(description="Also return alerts that have cleared.")] = False,
     limit: Limit = 50,
-) -> list[dict[str, Any]]:
+    refresh: Refresh = False,
+) -> dict[str, Any]:
     """Newest COM alerts (uncleared, 50 by default; each names its server). For "which servers have critical alerts" pass severity=CRITICAL; com_get_overview has the counts."""
-    return await _com(account, lambda c: com.list_alerts(c, server, severity, include_cleared, limit))
+    return await _com_cached(account, "alerts", lambda c: com.list_alerts(c, server, severity, include_cleared, limit), refresh, state=True,
+                             args=(server, severity, include_cleared, limit))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -772,26 +856,28 @@ async def com_list_jobs(
     account: AccountName = None,
     state: Annotated[Literal["RUNNING", "PENDING", "COMPLETE", "ERROR", "STALLED"] | None, Field(description="Only jobs in this state.")] = None,
     limit: Limit = 25,
-) -> list[dict[str, Any]]:
+    refresh: Refresh = False,
+) -> dict[str, Any]:
     """Newest COM jobs (firmware updates, inventory collection, power, OneView sync, ...)
     with state and result."""
-    return await _com(account, lambda c: com.list_jobs(c, limit, state))
+    return await _com_cached(account, "jobs", lambda c: com.list_jobs(c, limit, state), refresh, state=True, args=(limit, state))
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def com_list_groups(account: AccountName = None) -> list[dict[str, Any]]:
+async def com_list_groups(account: AccountName = None, refresh: Refresh = False) -> dict[str, Any]:
     """COM server groups: members (serials), compliance (firmware, iLO settings) and
     whether firmware is updated automatically when a server is added."""
-    return await _com(account, com.list_groups)
+    return await _com_cached(account, "groups", com.list_groups, refresh, state=False)
 
 
 @mcp.tool(annotations=READ_ONLY)
 async def com_list_firmware_bundles(
     account: AccountName = None,
     include_inactive: Annotated[bool, Field(description="Also list superseded bundles.")] = False,
-) -> list[dict[str, Any]]:
+    refresh: Refresh = False,
+) -> dict[str, Any]:
     """Firmware bundles (SPPs and patches) available in COM, newest first."""
-    return await _com(account, lambda c: com.list_bundles(c, include_inactive))
+    return await _com_cached(account, "bundles", lambda c: com.list_bundles(c, include_inactive), refresh, state=False, args=(include_inactive,))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -976,35 +1062,36 @@ async def import_inventory(ctx: Context) -> dict[str, Any] | mcp_types.InputRequ
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def oneview_get_appliance(appliance: ApplianceName = None) -> dict[str, Any]:
+async def oneview_get_appliance(appliance: ApplianceName = None, refresh: Refresh = False) -> dict[str, Any]:
     """OneView appliance report: model and software version, appliance CPU/memory/disk
     health, counts of server hardware, profiles, enclosures and interconnects, server
     hardware by status and power, and active alerts by severity."""
-    return await _ov(appliance, oneview.appliance_info)
+    return await _ov_cached(appliance, "appliance", oneview.appliance_info, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def oneview_list_server_hardware(appliance: ApplianceName = None) -> list[dict[str, Any]]:
+async def oneview_list_server_hardware(appliance: ApplianceName = None, refresh: Refresh = False) -> dict[str, Any]:
     """Servers managed by OneView: name, OS hostname, model, serial, status, power,
     assigned profile, enclosure/bay, CPU, memory, ROM, OS and iLO (model, firmware, IP)."""
-    return await _ov(appliance, oneview.list_hardware)
+    return await _ov_cached(appliance, "server_hardware", oneview.list_hardware, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
 async def oneview_get_server_hardware(
     server: Annotated[str, Field(description="Server hardware name (e.g. 'Enclosure-01, bay 2'), OS hostname, serial, UUID or iLO IP.")],
     appliance: ApplianceName = None,
+    refresh: Refresh = False,
 ) -> dict[str, Any]:
     """One OneView server in detail: the list fields plus UID light, every firmware
     component with location and version, and its active alerts."""
-    return await _ov(appliance, lambda c: oneview.get_hardware(c, server))
+    return await _ov_cached(appliance, "server", lambda c: oneview.get_hardware(c, server), refresh, state=True, args=(server.strip().lower(),))
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def oneview_list_server_profiles(appliance: ApplianceName = None) -> list[dict[str, Any]]:
+async def oneview_list_server_profiles(appliance: ApplianceName = None, refresh: Refresh = False) -> dict[str, Any]:
     """Server profiles: status, assigned server hardware, template and compliance,
     firmware baseline, boot mode and connection count."""
-    return await _ov(appliance, oneview.list_profiles)
+    return await _ov_cached(appliance, "profiles", oneview.list_profiles, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -1013,38 +1100,40 @@ async def oneview_list_alerts(
     active_only: Annotated[bool, Field(description="Only alerts that are still Active.")] = True,
     severity: Annotated[Literal["Critical", "Warning", "OK", "Unknown"] | None, Field(description="Only this severity.")] = None,
     limit: Limit = 50,
-) -> list[dict[str, Any]]:
+    refresh: Refresh = False,
+) -> dict[str, Any]:
     """Newest OneView alerts with the affected resource, description and corrective action."""
-    return await _ov(appliance, lambda c: oneview.list_alerts(c, active_only, severity, limit))
+    return await _ov_cached(appliance, "alerts", lambda c: oneview.list_alerts(c, active_only, severity, limit), refresh, state=True,
+                            args=(active_only, severity, limit))
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def oneview_list_enclosures(appliance: ApplianceName = None) -> list[dict[str, Any]]:
+async def oneview_list_enclosures(appliance: ApplianceName = None, refresh: Refresh = False) -> dict[str, Any]:
     """Synergy frames / enclosures: model, serial, status, firmware baseline, populated
     bays, Composer modules, power capacity and allocation, PSU status and failed fans."""
-    return await _ov(appliance, oneview.list_enclosures)
+    return await _ov_cached(appliance, "enclosures", oneview.list_enclosures, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def oneview_list_interconnects(appliance: ApplianceName = None) -> list[dict[str, Any]]:
+async def oneview_list_interconnects(appliance: ApplianceName = None, refresh: Refresh = False) -> dict[str, Any]:
     """Interconnect modules (Virtual Connect, switches): model, firmware, status, power,
     enclosure, hostname and IP. For uplink and port status use oneview_list_uplink_sets."""
-    return await _ov(appliance, oneview.list_interconnects)
+    return await _ov_cached(appliance, "interconnects", oneview.list_interconnects, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def oneview_list_uplink_sets(appliance: ApplianceName = None) -> dict[str, Any]:
+async def oneview_list_uplink_sets(appliance: ApplianceName = None, refresh: Refresh = False) -> dict[str, Any]:
     """Synergy / Virtual Connect uplink status in one call: each uplink set (status, type, networks
     with VLAN) and uplink port (module, port, linked or not, Active/StandBy, speed, LLDP neighbor),
     plus issues (no networks, unlinked ports, no module redundancy) and related alerts. Use it for
     "uplink status"."""
-    return await _ov(appliance, oneview.list_uplink_sets)
+    return await _ov_cached(appliance, "uplink_sets", oneview.list_uplink_sets, refresh, state=True)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def oneview_list_firmware_baselines(appliance: ApplianceName = None) -> list[dict[str, Any]]:
+async def oneview_list_firmware_baselines(appliance: ApplianceName = None, refresh: Refresh = False) -> dict[str, Any]:
     """Firmware baselines (SPP / Synergy Service Packs) uploaded to OneView, newest first."""
-    return await _ov(appliance, oneview.list_baselines)
+    return await _ov_cached(appliance, "baselines", oneview.list_baselines, refresh, state=False)
 
 
 _OV_BLOCKED_PREFIXES = ("/rest/login-sessions", "/rest/sessions", "/rest/users", "/rest/certificates/ca/")
@@ -1167,6 +1256,79 @@ async def _check(connect: bool) -> int:
     return 1 if failed else 0
 
 
+_ILO_INVENTORY: dict[str, Callable[[RedfishClient], Awaitable[Any]]] = {
+    "identity": ilo.identity, "info": ilo.ilo_info, "firmware": ilo.firmware_inventory, "processors": ilo.processors,
+    "memory": ilo.memory, "storage": ilo.storage,
+}
+_ILO_STATE: dict[str, Callable[[RedfishClient], Awaitable[Any]]] = {"summary": ilo.server_summary, "health": ilo.health, "network": ilo.network_adapters}
+_OV_STATE = {"appliance": oneview.appliance_info, "server_hardware": oneview.list_hardware, "profiles": oneview.list_profiles,
+             "enclosures": oneview.list_enclosures, "interconnects": oneview.list_interconnects, "uplink_sets": oneview.list_uplink_sets}
+
+
+async def _poll_once() -> dict[str, Any]:
+    """Read everything the tools would read with their default options, live, and store it (``proliant-mcp poll``):
+    each iLO with one login, each COM account with one sign-in, each OneView appliance."""
+    from proliant_mcp import find
+
+    started = time.time()
+    problem = await store.poll_ready()
+    if problem:
+        return {"stored": 0, "error": problem}
+    with store.session(refresh=True) as current:
+
+        async def each(name: str, reads: list[tuple[Any, ...]], errors: tuple[type[BaseException], ...]) -> str | None:
+            """Run the reads one after another; one that fails is noted and the rest still run."""
+            failed = None
+            for kind, scope, fn, state in reads:
+                try:
+                    await store.fetch_one(kind, scope, fn, errors, state=state)
+                except errors as exc:
+                    failed = failed or str(exc)
+            return failed
+
+        async def one_ilo(s: Server) -> tuple[str, str] | None:
+            try:
+                async with RedfishClient(s, transport=_transport) as client:  # one login; an iLO answers one request at a time
+                    reads = [(*_ilo_key(s, kind), lambda fn=fn: fn(client), kind in _ILO_STATE) for kind, fn in {**_ILO_INVENTORY, **_ILO_STATE}.items()]
+                    failed = await each(s.name, reads, (RedfishError,))
+            except RedfishError as exc:
+                failed = str(exc)
+            return (f"ilo:{s.name}", failed) if failed else None
+
+        async def one_com(a: ComAccount) -> tuple[str, str] | None:
+            try:
+                async with ComClient(a, transport=_transport) as c:
+                    rows = await com.server_rows(c, cached=True)
+                    await com._hardware_for(c, [r["id"] for r in rows], network=True)
+                    reads = [(*_com_key(a, kind, args), lambda fn=fn: fn(c), state) for kind, fn, state, args in (
+                        ("overview", com.overview, True, ()),
+                        ("groups", com.list_groups, False, ()),
+                        ("bundles", lambda c: com.list_bundles(c, False), False, (False,)),
+                        ("services", lambda c: com.list_services(c, False), False, (False,)),
+                    )]
+                    failed = await each(a.name, reads, (ComError,))
+            except ComError as exc:
+                failed = str(exc)
+            return (f"com:{a.name}", failed) if failed else None
+
+        async def one_ov(a: OneViewAppliance) -> tuple[str, str] | None:
+            try:
+                async with OneViewClient(a, transport=_transport) as c:
+                    reads = [(*_ov_key(a, kind), lambda fn=fn: fn(c), kind != "baselines") for kind, fn in {**_OV_STATE, "baselines": oneview.list_baselines}.items()]
+                    reads.append(("ov_find", (a.name, a.host, a.username), lambda: find._oneview_index(c), False))
+                    failed = await each(a.name, reads, (OneViewError,))
+            except OneViewError as exc:
+                failed = str(exc)
+            return (f"oneview:{a.name}", failed) if failed else None
+
+        done = await asyncio.gather(
+            *(one_ilo(s) for s in _servers().values()), *(one_com(a) for a in load_com().values()),
+            *(one_ov(a) for a in load_oneview().values()), lookup._oneview_rows(_transport),
+        )
+    errors = dict(d for d in done[:-1] if d)
+    return {"stored": current.live, "seconds": round(time.time() - started, 1), **({"errors": errors} if errors else {})}
+
+
 def main() -> None:
     import argparse
 
@@ -1193,7 +1355,7 @@ def main() -> None:
     if args.command == "poll":
         if args.interval <= 0:
             parser.error("--interval must be more than 0 minutes")
-        raise SystemExit(store.run_poll(args.interval, args.once))
+        raise SystemExit(store.run_poll(args.interval, args.once, _poll_once))
     if args.command == "import":
         if not args.file:
             parser.error("import needs a file: proliant-mcp import servers.csv")
