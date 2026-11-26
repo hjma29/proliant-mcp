@@ -127,6 +127,19 @@ def _cell(value: Any) -> str:
 COMPACT_ABOVE = 15
 
 
+def grouped_lines(groups: list[tuple[str, list[str]]], per_group: int | None) -> tuple[list[str], dict[str, str], int]:
+    """One line per group, ``label (count): name, name``. With *per_group* each group shows that many names and the rest
+    go to the returned ``remaining`` (label -> names) for a follow-up; the third value is how many names are held back."""
+    lines, remaining, hidden_total = [], {}, 0
+    for label, names in groups:
+        hidden = len(names) - (per_group or len(names))
+        lines.append(f"{label} ({len(names)}): {', '.join(names[:per_group])}" + (f", +{hidden} more" if hidden > 0 else ""))
+        if hidden > 0:
+            remaining[label] = ", ".join(names[per_group:])
+            hidden_total += hidden
+    return lines, remaining, hidden_total
+
+
 def _table(rows: list[dict[str, Any]], keys: list[str]) -> str:
     head = "| " + " | ".join(COLUMNS[k][0] for k in keys) + " |\n|" + "---|" * len(keys)
     body = ["| " + " | ".join(_cell(COLUMNS[k][1](s)) for k in keys) + " |" for s in rows]

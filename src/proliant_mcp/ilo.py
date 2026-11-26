@@ -154,6 +154,17 @@ def _os_state(system: dict[str, Any], hpe: dict[str, Any], boot_order: list[str]
     return f"unknown (POST state {post or '?'}, boot progress {progress or '?'}){hint}"
 
 
+async def identity(c: RedfishClient) -> dict[str, Any]:
+    """Model, serial, power and iLO version only (two requests), for fleet-wide lookups."""
+    system = await c.system()
+    return {
+        "model": system.get("Model"),
+        "serial_number": system.get("SerialNumber"),
+        "power_state": system.get("PowerState"),
+        "ilo_version": _ilo_version(await c.manager()),
+    }
+
+
 async def server_summary(c: RedfishClient) -> dict[str, Any]:
     system = await c.system()
     manager = await c.manager()

@@ -17,7 +17,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_firmware, chat_inventory, chat_login, com, compat, fleet_table, ilo, ilo_firmware, inventory_cache, inventory_cli, login, oneview, snapshots, usage_stats
+from proliant_mcp import __version__, chat_api_clients, chat_bulk, chat_firmware, chat_inventory, chat_login, com, compat, fleet_table, ilo, ilo_firmware, inventory_cache, inventory_cli, login, lookup, oneview, snapshots, usage_stats
 from proliant_mcp.com import ComClient, ComError
 from proliant_mcp.config import ComAccount, OneViewAppliance, Server, config_path, load_com, load_oneview, load_servers
 from proliant_mcp.oneview import OneViewClient, OneViewError
@@ -29,8 +29,8 @@ Read-only tools for HPE compute management, across three sources:
 - iLO (Redfish), one server at a time: tools without a prefix (get_server_summary, ...).
 - HPE Compute Ops Management (COM, GreenLake cloud), whole fleet: tools prefixed com_.
 - HPE OneView / Synergy Composer, on-prem appliance: tools prefixed oneview_.
-Start with list_servers (the configured iLOs, OneView appliances and COM accounts). For a fleet-wide
-question start with com_get_overview or oneview_get_appliance. The same physical server can appear in
+Start with list_servers; for "how many Gen13 servers" pass generation or model: it counts across
+all three sources. For other fleet questions start with com_get_overview or oneview_get_appliance. The same physical server can appear in
 all three; match by serial number. If a tool returns an error, report it; never invent values.
 To find which server an IP, hostname or serial belongs to, call find_server. For the OS a server runs
 or why it isn't booting, see `os` in get_server_summary / get_fleet_summary. For significant events on
@@ -45,7 +45,7 @@ controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link spe
 com_list_nics. Never loop com_get_server or com_api_get over many servers.
 For hardware inventory (an iLO's processors, memory, firmware, or COM's hardware inventory) prefer
 get_inventory_snapshot and get_com_inventory_snapshot: a local cache (on, 15 minutes) answers repeats in
-milliseconds and each result says cache or live and when it was collected. Pass refresh=true when the
+milliseconds and each result says cache or live and when. Pass refresh=true when the
 user wants current data. Never use snapshots for health, power, alerts or links: use the live tools.
 Change the cache with set_inventory_cache, or clear it with clear_inventory_cache, only when asked.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not set up,
@@ -70,7 +70,7 @@ GUIDE = """proliant-mcp answers questions about HPE ProLiant servers from three 
 
 COM fleet (how many, which, health, power, connected, generation, model, iLO firmware, subscriptions): com_get_overview for counts; com_list_servers_table for a list, with filters health, connected, generation, name_contains and storage_controller (e.g. NS204) and columns such as gpu, storage_controllers, nics, nic_firmware, ilo_version.
 COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, drives and capacity com_hardware_report (storage_controller, storage_over_tb); NICs and ports com_list_nics. One server: com_get_server. Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services.
-Find a server by name, serial number or IP: find_server.
+Find a server by name, serial number or IP: find_server. Count or list servers of all sources by generation or model: list_servers(generation, model).
 One iLO server (name or IP from list_servers): get_server_summary (model, serial, BIOS, iLO version, power, health, OS), get_health, get_processors (CPUs and GPUs), get_memory, get_storage, get_network_adapters (MACs, links, firmware), get_firmware_inventory, get_event_log, get_ilo_info. All iLOs at once: get_fleet_summary, get_fleet_event_summary.
 OneView: oneview_get_appliance, oneview_list_enclosures, oneview_list_server_hardware, oneview_list_server_profiles (template compliance), oneview_list_alerts, oneview_list_interconnects, oneview_list_uplink_sets, oneview_list_firmware_baselines.
 iLO firmware: ilo_firmware_list_updates (latest version from HPE, steps, minutes); ilo_firmware_update_start to update (the user picks and confirms on a page), then ilo_firmware_update_status for live progress.
@@ -172,14 +172,19 @@ async def _com(name: str | None, fn: Callable[[ComClient], Awaitable[Any]]) -> A
 # The version leads this description so it shows in tool lists such as Copilot's /mcp show.
 @mcp.tool(
     annotations=READ_ONLY,
-    description=f"[proliant-mcp {__version__}] List what this server can reach: iLO servers (name, iLO host), OneView "
-    "appliances and COM accounts (name, region), plus the running proliant-mcp version and whether a newer release "
-    'exists. Credentials are never returned. Call this first, and for "which version".',
+    description=f"[proliant-mcp {__version__}] What this server can reach: iLO servers, OneView appliances, COM accounts, the "
+    'running version and whether a newer release exists. Call first, and for "which version". With generation or model: '
+    "counts and lists the matching servers across iLO, COM and OneView.",
 )
-async def list_servers() -> dict[str, Any]:
-    """List what this server can reach: iLO servers (name, iLO host), OneView appliances
-    and COM accounts (name, region), plus the running proliant-mcp version and whether a newer
-    release exists. Credentials are never returned. Call this first, and for "which version"."""
+async def list_servers(
+    generation: Generation = None,
+    model: Annotated[str | None, Field(description="Model contains this text, e.g. DL380.")] = None,
+) -> dict[str, Any]:
+    """What this server can reach: iLO servers, OneView appliances, COM accounts, the running
+    version and whether a newer release exists. Call first, and for "which version". With
+    generation or model: counts and lists the matching servers across iLO, COM and OneView."""
+    if generation or model:
+        return await lookup.lookup(generation, model, _transport)
     return {
         "proliant_mcp_version": __version__,
         "release_check": await _cached_release_status(),
@@ -659,7 +664,11 @@ async def com_list_servers_table(
     if storage_controller:
         rows, summary = com.match_storage_controller(rows, storage_controller)
         extra = {"storage_controller_filter": summary}
-    return fleet_table.build(rows, columns, extra)
+    result = fleet_table.build(rows, columns, extra)
+    if not rows and (health or connected is not None or name_contains or generation or storage_controller):
+        result["available"] = await _com(account, lookup.com_available)
+        result["table"] = "No servers match. `available` shows what the fleet has."
+    return result
 
 
 @mcp.tool(annotations=READ_ONLY)

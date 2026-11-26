@@ -1,6 +1,16 @@
 # Tools
 
 **Start here:** `list_servers` returns every configured iLO, OneView appliance and COM account.
+With `generation` (for example `13` or `Gen13`) or `model` (for example `DL380`) it counts and lists the
+matching servers across the iLO inventory, every COM account and every OneView appliance instead, in one
+call. Servers are merged by serial number, so one that is in the iLO inventory and in COM is counted once
+and shows both sources (`ilo+com`); `counts.by_source` counts each source on its own. It reads each iLO's
+identity (two requests), COM's server list and OneView's server hardware, about 1 to 3 s. Up to 15
+matches it is a short table; above that each model shows 3 names and the rest come back in `remaining`
+for a follow-up. A filter that matches nothing returns `available`: the generations and models that do
+exist (and `unknown_generation`: servers with no model or generation in any source). A source that fails
+is named in `source_errors`, not silently counted as empty. `com_list_servers_table` also returns
+`available` when its filters match nothing.
 `find_server` tells you which server a name, iLO IP or hostname, serial or OS hostname belongs to,
 searching the iLO inventory, every COM account and every OneView appliance at once; for an address
 none of them knows, it reads that iLO's login-free identity pages (iLO model, server model, serial).

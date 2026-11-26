@@ -15,7 +15,7 @@ from fastmcp.exceptions import ToolError
 import fake_mgmt as fake_mgmt_module
 from fake_ilo import FAKE_ILO, fake_ilo
 from fake_mgmt import fake_mgmt
-from proliant_mcp import chat_firmware, com, ilo_firmware, inventory_cache
+from proliant_mcp import chat_firmware, com, ilo_firmware, inventory_cache, lookup
 from proliant_mcp import server as srv
 
 
@@ -51,6 +51,63 @@ async def test_list_servers_groups_targets_and_hides_credentials(mcp_client):
     assert [a["name"] for a in data["oneview_appliances"]] == ["oneview", "ov-badpass"]
     assert data["com_accounts"][0]["name"] == "greenlake"
     assert "good" not in str(data) and "csecret" not in str(data)
+
+
+async def test_list_servers_by_generation_counts_every_source_once(mcp_client, monkeypatch):
+    # the iLO and COM report the same physical server: the serial number is the same, whatever its case
+    monkeypatch.setitem(FAKE_ILO["/redfish/v1/Systems/1/"], "SerialNumber", "sn0002")
+    async with mcp_client as c:
+        gen12 = (await c.call_tool("list_servers", {"generation": "Gen12"})).structured_content
+        gen10 = (await c.call_tool("list_servers", {"generation": "10"})).structured_content
+        dl380 = (await c.call_tool("list_servers", {"model": "dl380"})).structured_content
+    assert gen12["total"] == 1 and gen12["counts"]["by_source"] == {"ilo": 1, "com": 1, "oneview": 0}  # one server, two sources
+    assert gen12["counts"]["in_more_than_one_source"] == 1 and "| gen12 | DL345 Gen12 | On | ilo+com |" in gen12["table"]
+    assert gen10["total"] == 2 and gen10["counts"]["by_source"] == {"ilo": 0, "com": 2, "oneview": 1}  # COM and OneView share SN0001
+    assert gen10["counts"]["in_more_than_one_source"] == 1 and "esx2.example.com | Synergy 480 Gen10 | ON | com+oneview" in gen10["table"]
+    assert set(gen10["source_errors"]) == {"ilo:badpass", "oneview:ov-badpass"}  # failed sources are named, not silently counted as empty
+    assert dl380["total"] == 1 and "gpu1.example.com" in dl380["table"] and dl380["filter"] == {"generation": None, "model": "dl380"}
+    assert gen12["counts"]["servers_checked"] == 4 and gen12["counts"]["unknown_generation"] == 0
+
+
+async def test_list_servers_filter_that_matches_nothing_says_what_exists(mcp_client):
+    async with mcp_client as c:
+        data = (await c.call_tool("list_servers", {"generation": "13"})).structured_content
+        plain = (await c.call_tool("list_servers", {})).structured_content
+    assert data["total"] == 0 and data["table"] == "No server matches."
+    assert data["available"]["servers"] == 5 and data["available"]["generations"] == {"Gen10": 2, "Gen11": 1, "Gen12": 2}
+    assert "servers" in plain and "available" not in plain  # without a filter nothing changes
+
+
+def test_generation_comes_from_the_source_value_or_the_model_name():
+    assert lookup.generation_of("GEN_11", None) == "11" and lookup.generation_of("Gen10", "x") == "10"
+    assert lookup.generation_of(None, "HPE ProLiant Compute DL325 Gen12") == "12" and lookup.generation_of("UNKNOWN", "ProLiant DL380 Gen11") == "11"
+    assert lookup.generation_of(None, "Synergy Composer2") is None
+
+
+def test_merge_joins_rows_by_serial_and_never_joins_servers_without_one():
+    rows = [
+        {"source": "ilo", "label": "ilo:a", "name": "a", "model": "ProLiant DL380 Gen11", "serial_number": "ABC1", "power_state": "On"},
+        {"source": "com", "label": "com:c", "name": "A-in-com", "model": None, "serial_number": "abc1", "generation": "GEN_11"},
+        {"source": "com", "label": "com:c", "name": "no-serial-1", "model": None, "serial_number": None},
+        {"source": "com", "label": "com:c", "name": "no-serial-2", "model": None, "serial_number": ""},
+    ]
+    merged = lookup.merge(rows)
+    assert [m["name"] for m in merged] == ["a", "no-serial-1", "no-serial-2"]  # the iLO name wins; no serial, no merge
+    assert merged[0]["sources"] == ["ilo:a", "com:c"] and merged[0]["generation"] == "11" and merged[1]["generation"] is None
+
+
+def test_lookup_text_shows_a_few_names_per_model_when_the_list_is_long():
+    def server(i: int, model: str) -> dict:
+        return {"name": f"srv{i:02d}", "model": model, "power_state": "On", "source_types": ["com"]}
+
+    matches = [server(i, "ProLiant DL380a Gen11") for i in range(12)] + [server(20 + i, "ProLiant DL360 Gen11") for i in range(5)]
+    table, remaining, more = lookup._text(matches)
+    lines = table.splitlines()
+    assert lines[0] == "DL380a Gen11 (12): srv00 (com), srv01 (com), srv02 (com), +9 more"
+    assert lines[1] == "DL360 Gen11 (5): srv20 (com), srv21 (com), srv22 (com), +2 more"
+    assert sum(len(v.split(", ")) for v in remaining.values()) == 11 and "11 more servers match" in more
+    short, kept, none = lookup._text(matches[:3])
+    assert short.splitlines()[0] == "| Name | Model | Power | Source |" and len(short.splitlines()) == 5 and not kept and none == ""
 
 
 async def test_server_summary(mcp_client):
@@ -531,7 +588,9 @@ async def test_com_list_servers_table_has_exact_counts_and_a_short_default_table
     assert all(r["name"] in out["table"] for r in rows) and "firmware" not in out["table"].lower()
     assert wide["columns"] == ["Name", "Serial", "iLO host", "OS"] and wide["table"].splitlines()[0] == "| Name | Serial | iLO host | OS |"
     assert one["total"] == 1 and "gpu1.example.com" in one["table"]
-    assert none["total"] == 0 and none["table"] == "No servers match."
+    assert none["total"] == 0 and none["table"].startswith("No servers match.")
+    assert none["available"]["servers"] == 4 and none["available"]["generations"] == {"Gen10": 2, "Gen11": 1, "Gen12": 1}  # what does exist
+    assert "available" not in one  # only an empty answer carries it
 
 
 async def test_com_list_servers_table_hardware_columns(mcp_client):
@@ -622,7 +681,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 43_500, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools
+    assert sum(sizes.values()) <= 43_800, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"
