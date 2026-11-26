@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from proliant_mcp import fleet_table
 from proliant_mcp.config import COM_REGIONS, ComAccount
 from proliant_mcp.util import matches
 
@@ -788,11 +789,87 @@ async def hardware_report(
     }
 
 
+def _matching_adapters(rows: list[dict[str, Any]], ports: int, linked_only: bool) -> tuple[list[tuple[dict[str, Any], list[dict[str, Any]]]], int]:
+    """Servers with an adapter of exactly *ports* ports (and a link up when *linked_only*), plus how many servers have NIC data."""
+    known = [r for r in rows if (r["hardware"].get("network") or {}).get("known")]
+    hits = []
+    for r in known:
+        found = [a for a in r["hardware"]["network"]["adapters"] if a["ports"] == ports and (a["ports_up"] or not linked_only)]
+        if found:
+            hits.append((r, found))
+    return hits, len(known)
+
+
+SAMPLE_PER_MODEL = 3  # names shown per adapter model when the list is long
+
+
+def _ports_summary(rows: list[dict[str, Any]], ports: int, linked_only: bool) -> dict[str, Any]:
+    """Short answer for "which servers have N-port NICs": counts and servers grouped by adapter model.
+
+    A model writes what it shows at roughly 200 tokens a second, so repeating the adapter name on every row
+    of a table is the slow part. Up to COMPACT_ABOVE adapters every server is named; above that each model
+    shows a few names and the rest sit in ``remaining`` for when the user asks for the full list."""
+    hits, with_data = _matching_adapters(rows, ports, linked_only)
+    groups: dict[str, list[str]] = {}
+    for r, found in hits:
+        for a in found:
+            groups.setdefault(a["name"], []).append(f"{r['name']} ({a['ports_up']}/{a['ports']})")
+    ordered = sorted(groups.items(), key=lambda kv: -len(kv[1]))
+    adapters = sum(len(names) for _, names in ordered)
+    without = len(rows) - with_data
+    what = f"a {ports}-port adapter" + (" with a link up" if linked_only else "")
+    tail = f" ({without} more servers have no NIC data)" if without else ""
+    sample = adapters > fleet_table.COMPACT_ABOVE
+    shown = SAMPLE_PER_MODEL if sample else None
+    lines = [f"{len(hits)} of {with_data} servers with NIC data have {what}{tail}:" if hits
+             else f"No server with NIC data has {what}{tail}."]
+    remaining: dict[str, str] = {}
+    for name, names in ordered:
+        hidden = len(names) - (shown or len(names))
+        lines.append(f"{name} ({len(names)}): {', '.join(names[:shown])}" + (f", +{hidden} more" if hidden > 0 else ""))
+        if hidden > 0:
+            remaining[name] = ", ".join(names[shown:])
+    hidden_total = sum(len(names) - shown for _, names in ordered if shown and len(names) > shown)
+    note = (
+        "Show `table` to the user exactly as written. The counts are exact (computed by the server): quote them, do not recount. "
+        "Servers without network data are unknown, not absent. Ports up is linked/total ports."
+    )
+    if sample:
+        note += (
+            f" Then tell the user {hidden_total} more servers match and offer the full list. Do NOT show `remaining` unless the user "
+            "asks for the full list; then show every server per adapter model (`table` names plus `remaining`) with no new tool call."
+        )
+    else:
+        note += " For each adapter's firmware, link speeds and health call again without ports."
+    return {
+        "filter": {"ports_per_adapter": ports, "linked_only": linked_only},
+        "total": len(hits),
+        "counts": {
+            "servers_checked": len(rows),
+            "servers_with_nic_data": with_data,
+            "servers_without_nic_data": without,
+            "servers_with_match": len(hits),
+            "adapters_matching": adapters,
+            "by_adapter": {name: len(names) for name, names in ordered},
+        },
+        "layout": "sample" if sample else "all",
+        "table": "\n".join(lines),
+        **({"remaining": remaining} if remaining else {}),
+        "note": note,
+    }
+
+
 async def list_nics(
-    c: ComClient, name_contains: str | None, connected: bool | None, linked_only: bool, generation: str | None = None
+    c: ComClient, name_contains: str | None, connected: bool | None, linked_only: bool, generation: str | None = None,
+    ports: int | None = None,
 ) -> dict[str, Any]:
-    """Fleet network adapter report: per server its adapters with mode, ports and link speeds, plus totals."""
+    """Fleet network adapter report: per server its adapters with mode, ports and link speeds, plus totals.
+
+    ``ports`` keeps only adapters with exactly that many ports and answers with the short grouped summary of
+    ``_ports_summary`` instead of the full report."""
     rows = await list_servers(c, None, connected, name_contains, include_hardware=True, network=True, generation=generation)
+    if ports is not None:
+        return _ports_summary(rows, ports, linked_only)
     by_model: dict[str, dict[str, Any]] = {}
     speeds: Counter[str] = Counter()
     report, unknown = [], []

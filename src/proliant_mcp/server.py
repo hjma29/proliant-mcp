@@ -696,14 +696,14 @@ async def com_list_nics(
     account: AccountName = None,
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
-    linked_only: Annotated[bool, Field(description="List only adapters with at least one port up.")] = False,
+    linked_only: Annotated[bool, Field(description="Only adapters with a port up.")] = False,
     generation: Generation = None,
+    ports: Annotated[int | None, Field(description="Only adapters with exactly this many ports, e.g. 4.")] = None,
 ) -> dict[str, Any]:
-    """Network adapter report for the whole COM fleet: per server each NIC/HBA (mode Ethernet /
-    InfiniBand / FibreChannel, ports, ports up, link speeds, firmware, health), plus totals by mode,
-    adapter model and link speed, and the servers COM has no network data for. Start here for any
-    NIC, HBA, link speed or network mode question."""
-    return await _com(account, lambda c: com.list_nics(c, name_contains, connected, linked_only, generation))
+    """Network adapter report for the whole COM fleet: per server each NIC/HBA (mode, ports, ports up,
+    speeds, firmware, health), plus totals by mode, adapter model and link speed, and the servers COM
+    has no network data for. Start here for any NIC, HBA, link speed or network mode question."""
+    return await _com(account, lambda c: com.list_nics(c, name_contains, connected, linked_only, generation, ports))
 
 
 @mcp.tool(annotations=READ_ONLY)

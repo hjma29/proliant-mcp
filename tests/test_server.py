@@ -747,6 +747,52 @@ async def test_com_list_nics_reports_modes_ports_and_speeds_for_the_fleet(mcp_cl
     assert [(p["mode"], p["link"], p["mac"]) for p in ports] == [("Ethernet", "LinkUp", "02:00:00:00:00:01"), ("InfiniBand", "LinkDown", "02:00:00:00:00:02")]
 
 
+async def test_com_list_nics_ports_filter_answers_with_a_short_grouped_list(mcp_client):
+    async with mcp_client as c:
+        full = (await c.call_tool("com_list_nics", {})).structured_content
+        short = (await c.call_tool("com_list_nics", {"ports": 2})).structured_content
+        none = (await c.call_tool("com_list_nics", {"ports": 4})).structured_content
+        linked = (await c.call_tool("com_list_nics", {"ports": 2, "linked_only": True})).structured_content
+    counts = short["counts"]
+    assert counts["servers_checked"] == full["servers_checked"] and counts["servers_with_nic_data"] == full["servers_with_nic_data"]
+    assert counts["servers_without_nic_data"] == len(full["nic_unknown"]) == 2  # unknown, not none
+    assert counts["adapters_matching"] == 3 and short["layout"] == "all" and "remaining" not in short
+    assert counts["by_adapter"] == {
+        "10/25Gb 2-port SFP28 BCM57414 OCP3 Adapter": 1,
+        "HPE InfiniBand HDR/Ethernet 200Gb 2-port QSFP56 MCX653436A-HDAI Adapter": 1,
+        "HPE SN1620E 32Gb 2p FC HBA": 1,
+    }
+    assert short["total"] == counts["servers_with_match"]
+    # every matching server is named once per matching adapter, with ports up out of ports
+    assert "gpu1.example.com (1/2)" in short["table"].split("MCX653436A-HDAI Adapter (1):")[1]
+    first = short["table"].splitlines()[0]
+    assert first == f"{short['total']} of {counts['servers_with_nic_data']} servers with NIC data have a 2-port adapter (2 more servers have no NIC data):"
+    assert none["total"] == 0 and none["counts"]["adapters_matching"] == 0 and none["table"].startswith("No server with NIC data has a 4-port adapter")
+    assert linked["counts"]["adapters_matching"] == 3 and "with a link up" in linked["table"]  # each 2-port adapter has a port up
+
+
+def test_ports_summary_of_a_long_list_shows_samples_and_keeps_the_rest_for_a_follow_up():
+    def adapter(name: str, up: int) -> dict:
+        return {"name": name, "ports": 4, "ports_up": up, "mode": "Ethernet", "speeds_up": []}
+
+    rows = [
+        {"id": f"s{i}", "name": f"srv{i:02d}", "hardware": {"network": {"known": True, "adapters": [adapter("Card A 4p" if i < 15 else "Card B 4p", i % 2)]}}}
+        for i in range(20)
+    ] + [{"id": "u1", "name": "unknown1", "hardware": {}}]
+    data = com._ports_summary(rows, 4, False)
+    assert data["layout"] == "sample" and data["total"] == 20
+    assert data["counts"]["by_adapter"] == {"Card A 4p": 15, "Card B 4p": 5}
+    assert data["counts"]["servers_without_nic_data"] == 1 and data["counts"]["servers_checked"] == 21
+    lines = data["table"].splitlines()
+    assert lines[0] == "20 of 20 servers with NIC data have a 4-port adapter (1 more servers have no NIC data):"
+    assert lines[1] == "Card A 4p (15): srv00 (0/4), srv01 (1/4), srv02 (0/4), +12 more"
+    assert lines[2] == "Card B 4p (5): srv15 (1/4), srv16 (0/4), srv17 (1/4), +2 more"
+    shown = sum(name in data["table"] for name in (f"srv{i:02d}" for i in range(20)))
+    kept = sum(name in data["remaining"]["Card A 4p"] + data["remaining"]["Card B 4p"] for name in (f"srv{i:02d}" for i in range(20)))
+    assert shown == 6 and kept == 14 and shown + kept == 20  # every server is in exactly one of the two
+    assert "14 more servers match" in data["note"] and "Do NOT show `remaining`" in data["note"]
+
+
 def _fake_com_server(server_id: str, name: str) -> dict:
     base = fake_mgmt_module.FAKE_COM["/compute-ops-mgmt/v1/servers"][0]
     return {**base, "id": server_id, "name": name}
