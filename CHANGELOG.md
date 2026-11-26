@@ -6,6 +6,23 @@ directly (see the README).
 
 ---
 
+## v0.24.0 — 2026-11-26
+
+### New Features
+- Local inventory cache behind the tools people use. `com_list_gpus`, `com_list_nics`, `com_hardware_report`, `com_list_servers_table` with hardware columns and `list_servers` with a filter now answer from the local SQLite cache when it is fresh (on, 1 hour), reading only what is missing or expired. A cached answer makes no request at all (the GreenLake token is fetched on the first real request). Measured on a lab of 42 COM servers: `com_list_gpus` 1.5 s live (up to 3.7 s on a session's first call) against 16 ms cached. Each answer has `data_age` (`source`, `as_of`, `minutes_old`); from 5 minutes old the assistant says how old the inventory is and offers a refresh in the same reply, and `refresh=true` reads live. When a live read fails, the last answer (kept up to 7 days) comes back marked stale with the error, instead of no answer. Health, power and alerts stay live.
+- `proliant-mcp poll` keeps the cache warm: it refreshes COM's server list and hardware, each iLO's model and serial and OneView's server hardware every 30 minutes (`--interval`), or once with `--once` for cron or a timer. On the lab one refresh stores 47 entries in 2.6 s.
+- `list_servers` takes `generation` (for example `13` or `Gen13`) and `model` (for example `DL380`): it counts and lists the matching servers across the iLO inventory, every COM account and every OneView appliance in one call, merged by serial number, so a server in both the iLO inventory and COM is counted once and shows both sources. "How many Gen13 servers do I have" took 7 calls before.
+- `com_list_nics` takes `ports` (for example `4` for "servers with 4-port NICs"): exact counts and the servers grouped by adapter model with ports up, instead of the full report. In a 3-run test the model wrote the answer in 3.1 s instead of 6.8 s, with the same facts. Long lists show 3 names per model and return the rest in `remaining`, so the full list needs no second call.
+
+### Enhancements
+- A filter that matches nothing says what does exist: `list_servers` and `com_list_servers_table` return `available` (server count, generations and models) instead of only "No servers match".
+- The inventory cache lifetime is 1 hour by default (was 15 minutes). A cached answer does not log in to the source; `get_inventory_snapshot` still logs in to the iLO every time.
+
+### Bug Fixes
+- A COM 403 error did not carry its HTTP status. COM's 403 or 404 for one server's inventory is now kept in the cache as that server's answer, instead of being read again on every call.
+
+---
+
 ## v0.23.0 — 2026-11-25
 
 ### New Features
