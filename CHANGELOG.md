@@ -6,6 +6,25 @@ directly (see the README).
 
 ---
 
+## v0.25.0 — 2026-11-26
+
+### New Features
+- Almost every read tool now answers from the local SQLite cache: 37 tools across iLO, COM and OneView, plus `list_servers` filters and `find_server`. Measured on a lab of 42 COM servers, 3 iLOs and one OneView appliance, 35 of them took 31.9 s live together and 0.7 s from the cache (12 to 66 ms each), with no request to any source. Examples: `get_ilo_logins` 6.9 s to 42 ms, `get_fleet_event_summary` 2.3 s to 28 ms, `com_get_overview` 1.7 s to 15 ms.
+- Two lifetimes: inventory (hardware, firmware, catalogs, lookups) 1 hour, state (health, power, summaries, alerts, jobs, event logs, logins, links) 5 minutes. `set_inventory_cache` takes `state_ttl_seconds`; `get_inventory_cache_status` shows both. Every cached tool takes `refresh=true` to read live, and every answer has `data_age`; the assistant says how old cached state is.
+- `proliant-mcp poll` now reads every source the tools read (each iLO with one login, each COM account, each OneView appliance): on the lab one refresh stores 83 entries in 11.4 s. `--interval 5` keeps state answers warm too.
+
+### Enhancements
+- State is never served stale: an iLO that cannot be read is reported, not hidden behind an old "OK". Inventory still falls back to the last answer, marked stale. A refused login (iLO 401/403, GreenLake sign-in) is always reported.
+- A firmware update (`ilo_firmware_update_start`) drops that server's cached reads before and after the update, so new versions show at once.
+- `find_server` looks in the cached lists first and again live when nothing matches, so a server added since is still found.
+- Tools that returned a list (`get_firmware_inventory`, `get_storage`, `get_network_adapters`, `get_fleet_summary`, `com_list_groups`, `com_list_firmware_bundles`, `com_list_alerts`, `com_list_jobs`, and the OneView lists) now return `{"result": [...], "data_age": {...}}`; readers of `result` are unaffected.
+
+### Bug Fixes
+- The poller stopped reading a server after one of its reads failed; it now carries on with the rest.
+- A busy iLO (HTTP 503 at login) or a GreenLake sign-in outage (5xx) was reported as a wrong password or a deleted API client.
+
+---
+
 ## v0.24.0 — 2026-11-26
 
 ### New Features
