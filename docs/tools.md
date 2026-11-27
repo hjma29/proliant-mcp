@@ -14,7 +14,8 @@ is named in `source_errors`, not silently counted as empty. `com_list_servers_ta
 
 **Local cache.** Almost every read tool answers from a local SQLite cache in milliseconds: inventory
 (hardware, firmware, catalogs) and state (health, power, alerts, logs, links), cache first: it is served at
-any age (kept up to 7 days) and the assistant says when it was collected and offers a live refresh. Each
+any age (kept up to 7 days) and the assistant ends the reply with one line, `Note: data collected 46 min ago, say
+'refresh' for the latest.` Each
 answer has `data_age` (source, `as_of`, `minutes_old`); `refresh=true` reads live. Tools that change a
 server or sign in, and the raw `*_get` tools, are always live. Tools that returned a list now return
 `{"result": [...], "data_age": {...}}`. The server refreshes the cache about every hour on its own (`set_inventory_cache` `poll_minutes`); `proliant-mcp poll` does it from cron.

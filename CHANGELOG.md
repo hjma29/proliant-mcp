@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.28.1 — 2026-11-27
+
+### Enhancements
+- The age line on cached answers is one fixed short line the assistant copies: `Note: data collected 46 min ago, say 'refresh' for the latest.` (the age reads as minutes, hours or days). Before, it was a free-form sentence of two or three lines that varied between answers and clients. Saying "refresh" makes the assistant call again with `refresh=true`.
+
+---
+
 ## v0.28.0 — 2026-11-27
 
 ### New Features

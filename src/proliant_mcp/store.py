@@ -63,13 +63,10 @@ class Session:
                 f"{self.stale} entries could not be read live and are older than the cache lifetime; they show what the "
                 "source said at as_of."
             )
-        if self.state_cached:
-            what = "Health, power, alerts, logs or links here come"
-        else:
-            what = "This inventory comes"
         advice = (
-            f"{what} from the local cache, collected at as_of ({minutes} min ago). End the reply with one short line "
-            "saying when the data was collected and that they can ask for a live refresh (call again with refresh=true)."
+            "Cached answer, collected at as_of. End the reply with exactly this one line and nothing else about the data's age: "
+            f"\"Note: data collected {_age_text(minutes)} ago, say 'refresh' for the latest.\" "
+            "When the user says refresh (or asks for current data), call again with refresh=true."
         )
         out["note"] = " ".join([*self.notes, advice])
         return out
@@ -87,6 +84,15 @@ def session(refresh: bool = False) -> Iterator[Session]:
         yield current
     finally:
         _session.reset(token)
+
+
+def _age_text(minutes: int) -> str:
+    """'46 min', '3 h', '2 days': short enough to read at a glance."""
+    if minutes < 60:
+        return f"{max(minutes, 0)} min"
+    if minutes < 48 * 60:
+        return f"{round(minutes / 60)} h"
+    return f"{round(minutes / 1440)} days"
 
 
 def with_age(result: Any, current: Session) -> Any:

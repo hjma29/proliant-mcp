@@ -48,7 +48,7 @@ com_list_servers (include_hardware adds CPU, GPU and storage) or com_list_gpus; 
 controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link speeds or network mode
 com_list_nics. Never loop com_get_server or com_api_get over many servers.
 Read tools answer from a local cache first (any age, up to 7 days) and say when it was collected in
-data_age: end the reply with one short line on that and offer a live refresh; pass refresh=true when asked.
+data_age: end the reply with the one-line Note that data_age.note gives (age, say 'refresh'); refresh=true when the user says refresh.
 Change the cache with set_inventory_cache, or clear it with clear_inventory_cache, only when asked.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not set up,
 sign the user in right away in this chat; do not send them to a browser, terminal or the GreenLake site.

@@ -112,8 +112,9 @@ your browser cannot open the page. Pick one:
 ## Local cache
 
 A local SQLite cache is **on by default**, and it is **cache first**: almost every read tool answers from it
-whatever the age of the data (kept up to 7 days) and reads live only what is missing. Every cached answer says
-when it was collected, and the assistant offers a live refresh ("ask me to refresh"). Two kinds of data have
+whatever the age of the data (kept up to 7 days) and reads live only what is missing. Every cached answer ends
+with one short line, `Note: data collected 46 min ago, say 'refresh' for the latest.`, and saying "refresh" reads
+live. Two kinds of data have
 their own lifetime, both 7 days by default (shorten them with `set_inventory_cache`):
 
 | Kind | Default lifetime | Tools |
@@ -126,8 +127,8 @@ Measured on a lab of 42 COM servers, 3 iLOs and one OneView appliance: those 35 
 live together and 0.7 s from the cache (12 to 66 ms each), with no request to any iLO, OneView or COM.
 
 Each answer has `data_age`: `source` (`live`, `local cache` or both), `as_of` and `minutes_old`. When data
-comes from the cache, the assistant ends the reply with when it was collected and that you can ask for a live
-refresh. Ask for "fresh" or "current" data and it passes `refresh=true`, which reads live and updates the cache.
+comes from the cache, the assistant ends the reply with that one line (the age is in minutes, hours or days) and
+"refresh" makes it call again with `refresh=true`, which reads live and updates the cache.
 Health and power from the cache can be days old, so the age line matters; the automatic refresh
 keeps everything about an hour old.
 

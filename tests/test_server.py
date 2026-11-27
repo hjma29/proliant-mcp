@@ -187,6 +187,14 @@ def test_single_com_list_mode_exposes_one_list_tool_and_points_to_it():
     assert "dimm_maker" in out["instructions"] and "dimm_maker" in out["guide"] and len(out["instructions"]) <= 3_800
 
 
+def test_data_age_note_is_one_short_line_with_a_readable_age():
+    from proliant_mcp import store
+
+    assert [store._age_text(m) for m in (0, 46, 59, 60, 200, 47 * 60, 2 * 1440, 6 * 1440)] == [
+        "0 min", "46 min", "59 min", "1 h", "3 h", "47 h", "2 days", "6 days",
+    ]
+
+
 async def test_cache_is_first_even_for_two_day_old_data(mcp_client, monkeypatch):
     seen = _counting(monkeypatch)
     com._tokens.clear()
@@ -200,7 +208,7 @@ async def test_cache_is_first_even_for_two_day_old_data(mcp_client, monkeypatch)
         old = (await c.call_tool("com_list_servers_table", {})).structured_content
         live = (await c.call_tool("com_list_servers_table", {"refresh": True})).structured_content
     assert old["data_age"]["source"] == "local cache" and old["data_age"]["minutes_old"] >= 2 * 24 * 60 - 1
-    assert "live refresh" in old["data_age"]["note"]
+    assert "Note: data collected 2 days ago, say 'refresh' for the latest." in old["data_age"]["note"]
     assert live["data_age"]["source"] == "live"
 
 
@@ -223,7 +231,7 @@ async def test_com_hardware_tools_answer_from_the_local_cache_and_say_how_old(mc
     assert "refresh=true" in again["data_age"]["note"] and {k: again[k] for k in ("total_gpus", "gpus_by_model")} == {k: first[k] for k in ("total_gpus", "gpus_by_model")}
     assert nics["counts"]["adapters_matching"] == 3 and nics["data_age"]["source"] == "local cache"
     assert fresh["data_age"]["source"] == "live" and any("/inventory" in r for r in seen)
-    assert plain["data_age"]["source"] == "local cache" and "when the data was collected" in plain["data_age"]["note"]  # server list just read
+    assert plain["data_age"]["source"] == "local cache" and "Note: data collected 0 min ago" in plain["data_age"]["note"]  # server list just read
 
 
 async def test_com_outage_serves_the_last_inventory_marked_stale(mcp_client, monkeypatch):
@@ -351,7 +359,7 @@ async def test_ilo_inventory_tools_answer_from_the_cache_without_logging_in(mcp_
         fresh = (await c.call_tool("get_processors", {"server": "gen12", "refresh": True})).structured_content
     assert {k: v for k, v in first.items() if k != "data_age"} == {k: v for k, v in again.items() if k != "data_age"}
     assert first["data_age"]["source"] == "live" and nics["result"] == nics_again["result"]  # a list keeps its "result" key
-    assert again["data_age"]["source"] == "local cache" and "when the data was collected" in again["data_age"]["note"]
+    assert again["data_age"]["source"] == "local cache" and "Note: data collected 0 min ago" in again["data_age"]["note"]
     assert procs["data_age"]["source"] == "live" and sum(r.startswith("POST") for r in cached_requests) == 1  # only processors logged in
     assert fresh["data_age"]["source"] == "live" and any(r.startswith("POST") for r in seen)
 
@@ -699,7 +707,7 @@ async def test_server_summary_says_whether_an_os_runs(mcp_client, monkeypatch):
         cached = (await c.call_tool("get_server_summary", {"server": "gen12"})).structured_content
         running = (await c.call_tool("get_server_summary", {"server": "gen12", "refresh": True})).structured_content["os"]
     assert cached["os"] == stuck and cached["data_age"]["source"] == "local cache"  # state is cache first...
-    assert "when the data was collected" in cached["data_age"]["note"]  # ...and the assistant is told to say so
+    assert "Note: data collected 0 min ago" in cached["data_age"]["note"]  # ...and the assistant is told to say so
     assert stuck["state"] == "stopped in BIOS setup (RBSU); no OS booted"
     assert stuck["boot_order"] == ["Generic USB Boot", "UEFI HTTPv4 (Embedded LOM 1)"] and stuck["name"] is None
     assert stuck["os_boot_entries"] == []  # devices and network boot are not OS loaders
