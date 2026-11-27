@@ -6,6 +6,18 @@ directly (see the README).
 
 ---
 
+## v0.29.0 — 2026-11-27
+
+### New Features
+- `com_list_servers_table` can group: `group_by` (`nic`, `gpu`, `memory`, `cpu`, `storage_controller`, `ilo_version`, `model`) returns one row per adapter, GPU, DIMM kind, CPU, controller, iLO firmware version or model with the server count and names. Exact fleet totals come with it in `counts`: servers with GPUs and GPUs by model, adapters and linked ports per mode (so "how many Fibre Channel ports are linked" is `18 of 22` without counting rows).
+- New filters `nic_mode` (`InfiniBand`, `FibreChannel`, `Ethernet`) and `linked_only` (a link up) on `com_list_servers_table`: "which servers have InfiniBand adapters" and "how many Fibre Channel ports are linked" are one call.
+
+### Enhancements
+- The same question gives the same answer whichever way the assistant asks: a single `nic_ports`, `nic_mode`, `gpu_model` or `cpu_contains` filter with no `columns` (or only name, model, health and its own column, which is what assistants usually send) answers grouped by adapter, GPU or CPU. Before, `com_list_servers_table nic_ports=2` listed every server while `com_list_nics ports=2` grouped by adapter, so two chats answered the same question in two shapes. Pass other columns for one row per server.
+- `get_fleet_summary`, `get_network_adapters` and `get_inventory_snapshot` say they cover only directly configured iLO servers and point to the COM tools, because in a test assistants that searched for "InfiniBand" or "server models" landed on them and answered from the 3 iLO servers.
+
+---
+
 ## v0.28.1 — 2026-11-27
 
 ### Enhancements

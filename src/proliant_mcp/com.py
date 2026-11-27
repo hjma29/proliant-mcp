@@ -866,19 +866,35 @@ def _memory_known(hw: dict[str, Any]) -> bool:
     return bool((hw.get("memory") or {}).get("known"))
 
 
+def _adapter_modes(a: dict[str, Any]) -> dict[str, dict[str, int]]:
+    return a.get("port_modes") or {a["mode"] or "unknown": {"ports": a["ports"], "ports_up": a["ports_up"]}}
+
+
+def _adapter_matches(a: dict[str, Any], ports: int | None, mode: str | None, linked: bool) -> bool:
+    """An adapter with exactly *ports* ports and/or a port in *mode* (substring, any case); with *linked* it needs a link up
+    (in that mode, when one is given)."""
+    if ports is not None and a["ports"] != ports:
+        return False
+    modes = {m: c for m, c in _adapter_modes(a).items() if not mode or mode.lower() in m.lower()}
+    return bool(modes) and (not linked or any(c["ports_up"] for c in modes.values()))
+
+
 # filter -> (is the inventory known for a server, does the server match). Servers whose inventory is unknown are
-# counted as unknown, never as non-matching.
+# counted as unknown, never as non-matching. The third argument is linked_only (only the NIC filters use it).
 HARDWARE_FILTERS: dict[str, tuple[Any, Any]] = {
-    "gpu_model": (_cpu_gpu_known, lambda hw, text: any(text in f"{g.get('manufacturer') or ''} {g['name']}".lower() for g in hw.get("gpus") or [])),
-    "cpu_contains": (_cpu_gpu_known, lambda hw, text: any(text in (c["model"] or "").lower() for c in hw.get("cpu") or [])),
-    "nic_ports": (_network_known, lambda hw, ports: any(a["ports"] == ports for a in hw["network"].get("adapters") or [])),
-    "dimm_maker": (_memory_known, lambda hw, text: any(_norm(text) in _norm(m["manufacturer"]) for m in hw["memory"].get("modules") or [])),
-    "direct_attached": (_storage_known, lambda hw, want: bool(hw["storage"].get("direct_drives")) == want),
-    "storage_over_tb": (_storage_known, lambda hw, tb: (hw["storage"].get("total_gb") or 0) > tb * 1000),
+    "gpu_model": (_cpu_gpu_known, lambda hw, text, linked: any(text in f"{g.get('manufacturer') or ''} {g['name']}".lower() for g in hw.get("gpus") or [])),
+    "cpu_contains": (_cpu_gpu_known, lambda hw, text, linked: any(text in (c["model"] or "").lower() for c in hw.get("cpu") or [])),
+    "nic_ports": (_network_known, lambda hw, ports, linked: any(_adapter_matches(a, ports, None, linked) for a in hw["network"].get("adapters") or [])),
+    "nic_mode": (_network_known, lambda hw, mode, linked: any(_adapter_matches(a, None, mode, linked) for a in hw["network"].get("adapters") or [])),
+    "dimm_maker": (_memory_known, lambda hw, text, linked: any(_norm(text) in _norm(m["manufacturer"]) for m in hw["memory"].get("modules") or [])),
+    "direct_attached": (_storage_known, lambda hw, want, linked: bool(hw["storage"].get("direct_drives")) == want),
+    "storage_over_tb": (_storage_known, lambda hw, tb, linked: (hw["storage"].get("total_gb") or 0) > tb * 1000),
 }
 
 
-def filter_hardware(rows: list[dict[str, Any]], filters: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+def filter_hardware(
+    rows: list[dict[str, Any]], filters: dict[str, Any], linked_only: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Keep the servers (rows with ``hardware``) that satisfy every given filter; one summary per filter with exact counts."""
     summaries: dict[str, dict[str, Any]] = {}
     for name, value in filters.items():
@@ -892,7 +908,7 @@ def filter_hardware(rows: list[dict[str, Any]], filters: dict[str, Any]) -> tupl
             hw = r.get("hardware") or {}
             if not known(hw):
                 unknown.append(r["name"])
-            elif matches_filter(hw, needle):
+            elif matches_filter(hw, needle, linked_only):
                 kept.append(r)
         summaries[name] = {
             "value": value, "servers_with": len(kept), "servers_without": len(rows) - len(kept) - len(unknown),
@@ -900,6 +916,74 @@ def filter_hardware(rows: list[dict[str, Any]], filters: dict[str, Any]) -> tupl
         }
         rows = kept
     return rows, summaries
+
+
+GROUP_BY = ("nic", "gpu", "memory", "cpu", "storage_controller", "ilo_version", "model")
+
+
+def _group_labels(r: dict[str, Any], key: str, filters: dict[str, Any], linked_only: bool) -> list[str] | None:
+    """The groups one server belongs to for *key* (a server can be in several), or None when COM has no data for it."""
+    hw = r.get("hardware") or {}
+    if key == "model":
+        return [fleet_table.COLUMNS["model"][1](r) or "unknown model"]
+    if key == "ilo_version":
+        return [(r.get("ilo") or {}).get("version") or "unknown"]
+    if key == "nic":
+        if not _network_known(hw):
+            return None
+        adapters = [a for a in hw["network"]["adapters"] if _adapter_matches(a, filters.get("nic_ports"), filters.get("nic_mode"), linked_only)]
+        return [f"{a['name']} ({a['ports']}p {a['mode'] or 'unknown mode'})" for a in adapters]
+    if key == "gpu":
+        if not _cpu_gpu_known(hw):
+            return None
+        text = (filters.get("gpu_model") or "").lower()
+        return [f"{g['count']} x {g['name']}" for g in hw.get("gpus") or [] if text in f"{g.get('manufacturer') or ''} {g['name']}".lower()]
+    if key == "cpu":
+        if not _cpu_gpu_known(hw):
+            return None
+        return [f"{c['model']}" for c in hw.get("cpu") or []]
+    if key == "memory":
+        if not _memory_known(hw):
+            return None
+        wanted = _norm(filters.get("dimm_maker") or "")
+        return list(dict.fromkeys(f"{m['manufacturer']} {m['size_gib']}GB {m['type'] or ''}".strip() for m in hw["memory"].get("modules") or [] if wanted in _norm(m["manufacturer"])))
+    if key == "storage_controller":
+        if not _storage_known(hw):
+            return None
+        found = [c["model"] for c in hw["storage"].get("controllers") or []]
+        return found or (["direct-attached drives (no controller)"] if hw["storage"].get("direct_drives") else ["no controller"])
+    raise ValueError(key)
+
+
+def group_servers(rows: list[dict[str, Any]], key: str, filters: dict[str, Any], linked_only: bool) -> tuple[list[tuple[str, list[str]]], list[str]]:
+    """Servers grouped by one hardware aspect, biggest group first, plus the servers COM has no data for."""
+    groups: dict[str, list[str]] = {}
+    unknown: list[str] = []
+    for r in rows:
+        labels = _group_labels(r, key, filters, linked_only)
+        if labels is None:
+            unknown.append(r["name"])
+        for label in dict.fromkeys(labels or []):
+            groups.setdefault(label, []).append(r["name"])
+    return sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])), unknown
+
+
+def fleet_totals(rows: list[dict[str, Any]], aspects: set[str]) -> dict[str, Any]:
+    """Exact fleet-wide totals (all servers in *rows*) for the hardware a question is about, so the model never counts rows."""
+    totals: dict[str, Any] = {}
+    if "gpu" in aspects:
+        known = [r for r in rows if _cpu_gpu_known(r["hardware"])]
+        by_model: Counter[str] = Counter()
+        for r in known:
+            for g in r["hardware"].get("gpus") or []:
+                by_model[g["name"]] += g["count"]
+        totals["gpus"] = {
+            "servers_with_gpus": sum(1 for r in known if r["hardware"].get("gpu_count")), "servers_with_data": len(known),
+            "total_gpus": sum(by_model.values()), "by_model": dict(by_model.most_common()),
+        }
+    if "nic" in aspects:
+        totals["nic_modes"] = _mode_totals([r for r in rows if _network_known(r["hardware"])])
+    return totals
 
 
 async def hardware_report(

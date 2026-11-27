@@ -91,7 +91,8 @@ def single_list_text(instructions: str, guide: str) -> tuple[str, str]:
     one_tool = (
         "For every question about the COM fleet (which servers, how many, health, power, GPUs, CPUs, storage controllers, drives,\n"
         "NICs, DIMMs) use com_list_servers_table: it filters (health, connected, generation, name_contains, storage_controller,\n"
-        "gpu_model, cpu_contains, nic_ports, dimm_maker, direct_attached, storage_over_tb) and shows the `columns` asked for\n"
+        "gpu_model, cpu_contains, nic_ports, nic_mode, linked_only, dimm_maker, direct_attached, storage_over_tb), groups with\n"
+        "group_by (nic, gpu, memory, cpu, storage_controller, ilo_version, model) and shows the `columns` asked for\n"
         "(power, connected, ilo_ip, ilo_version, firmware_bundle, gpu, storage, storage_controllers, nics, nic_firmware, memory,\n"
         "cpu_model), with exact counts: present the table as it is and quote `counts` (never retype or recount). "
     )
@@ -102,7 +103,7 @@ def single_list_text(instructions: str, guide: str) -> tuple[str, str]:
         "COM fleet and hardware (how many, which, health, power, generation, model, iLO firmware, subscriptions, GPUs, CPUs, storage "
         "controllers, drives, NICs, DIMMs): com_get_overview for counts; com_list_servers_table for any list, with filters health, "
         "connected, generation, name_contains, storage_controller (e.g. NS204), gpu_model (e.g. H100), cpu_contains (e.g. AMD), "
-        "nic_ports, dimm_maker (e.g. Hynix), direct_attached, storage_over_tb and the columns asked for. One server: com_get_server. "
+        "nic_ports, nic_mode (InfiniBand, FibreChannel), linked_only, dimm_maker (e.g. Hynix), direct_attached, storage_over_tb, group_by and the columns asked for. One server: com_get_server. "
         "Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services."
     )
     return instructions, "\n".join(lines)
@@ -363,8 +364,8 @@ async def get_server_summary(server: ServerName, refresh: Refresh = False) -> di
 
 @mcp.tool(annotations=READ_ONLY)
 async def get_fleet_summary(refresh: Refresh = False) -> dict[str, Any]:
-    """get_server_summary (including the OS and boot state) for every configured server at once.
-    Unreachable servers are returned with an `error` field instead of failing the whole call."""
+    """get_server_summary (including the OS and boot state) for every directly configured iLO server (list_servers); for the COM
+    fleet use com_get_overview or com_list_servers_table. Unreachable servers are returned with an `error` field instead of failing the whole call."""
 
     async def one(s: Server) -> dict[str, Any]:
         try:
@@ -412,7 +413,8 @@ async def get_storage(server: ServerName, refresh: Refresh = False) -> dict[str,
 
 @mcp.tool(annotations=READ_ONLY)
 async def get_network_adapters(server: ServerName, refresh: Refresh = False) -> dict[str, Any]:
-    """Host network adapters: model, part number, slot, firmware, and ports (MAC, link,
+    """Host network adapters of one directly configured iLO server (not the COM fleet: use com_list_servers_table nic_mode,
+    nic_ports or group_by=nic): model, part number, slot, firmware, and ports (MAC, link,
     speed, LLDP neighbor switch/port when available)."""
     return await _ilo_cached(server, "network", ilo.network_adapters, refresh, state=True)
 
@@ -488,7 +490,7 @@ async def get_inventory_snapshot(
     categories: Annotated[list[Literal["processors", "memory", "firmware"]] | None, Field(description="Hardware categories; omit for all three.")] = None,
     refresh: Annotated[bool, Field(description="Fetch new data even when a cached snapshot is available.")] = False,
 ) -> dict[str, Any]:
-    """Hardware snapshots (processors, memory, firmware) for one or more iLOs, from the local cache
+    """Hardware snapshots (processors, memory, firmware) for one or more directly configured iLOs (not the COM fleet), from the local cache
     (on by default) or live; each says which and when it was collected. refresh=true
     forces a live read. The iLO login is checked even on a hit. Not for current health or power:
     use the live tools."""
@@ -770,6 +772,8 @@ async def com_list_servers_table(
     gpu_model: Annotated[str | None, Field(description="Only servers with a GPU whose name or vendor contains this text, e.g. H100.")] = None,
     cpu_contains: Annotated[str | None, Field(description="Only servers whose CPU model contains this text, e.g. AMD, EPYC or Xeon.")] = None,
     nic_ports: Annotated[int | None, Field(ge=1, description="Only servers with a NIC/HBA that has exactly this many ports.")] = None,
+    nic_mode: Annotated[str | None, Field(description="Only servers with a NIC/HBA port in this mode: Ethernet, InfiniBand or FibreChannel (any case).")] = None,
+    linked_only: Annotated[bool, Field(description="With nic_ports or nic_mode: only adapters that have a link up.")] = False,
     dimm_maker: Annotated[str | None, Field(description="Only servers with DIMMs from this maker, e.g. Hynix or Samsung (any case).")] = None,
     direct_attached: Annotated[bool | None, Field(description="True: only servers with direct-attached drives; false: only those without.")] = None,
     storage_over_tb: Annotated[float | None, Field(gt=0, description="Only servers with more than this many TB of raw drive capacity.")] = None,
@@ -789,44 +793,94 @@ async def com_list_servers_table(
             "from COM's cached inventory, slower)."
         ),
     ] = None,
+    group_by: Annotated[
+        Literal["nic", "gpu", "memory", "cpu", "storage_controller", "ilo_version", "model"] | None,
+        Field(
+            description="One row per distinct NIC/HBA adapter, GPU, DIMM kind, CPU, storage controller, iLO firmware version or model, "
+            "with the server count and names, and exact fleet totals in `counts`. Default when a hardware filter is set and `columns` is "
+            "not (or only name, model, health and that filter's column). Use `columns` for one row per server."
+        ),
+    ] = None,
     refresh: Refresh = False,
 ) -> dict[str, Any]:
-    """List or show the COM servers: ready to display, exact counts, fast. Use it for "list my
-    servers", "which are critical", "servers with NS204" (storage_controller), "H100 GPUs", "AMD CPUs",
-    "2-port NICs", "Hynix DIMMs", "direct-attached drives", "over 20 TB"; filters combine. With no
-    `columns` and no hardware filter a big fleet comes back as a short grouped list; pass `columns`
-    for a table of exactly what was asked. Servers COM has no inventory for count as unknown, not as
-    non-matching. Show `table` as written and quote `counts`; never retype or recount."""
+    """List or show the COM servers: ready to display, exact counts. For "list my servers", "which are critical",
+    "servers with NS204", "how many have GPUs", "H100", "AMD CPUs", "2-port NICs", "InfiniBand or Fibre Channel adapters
+    and linked ports", "Hynix DIMMs", "direct-attached drives", "over 20 TB", "iLO firmware versions"; filters combine.
+    group_by gives one row per adapter, GPU, CPU, controller, iLO version or model with counts and names; `columns` gives
+    one row per server. Servers COM has no inventory for are unknown, not non-matching. Show `table` as written and quote
+    `counts`; never recount."""
     with store.session(refresh) as current:
-        hardware_filters = {"gpu_model": gpu_model, "cpu_contains": cpu_contains, "nic_ports": nic_ports, "dimm_maker": dimm_maker,
+        hardware_filters = {"gpu_model": gpu_model, "cpu_contains": cpu_contains, "nic_ports": nic_ports, "nic_mode": nic_mode, "dimm_maker": dimm_maker,
                             "direct_attached": direct_attached, "storage_over_tb": storage_over_tb}
         return store.with_age(
-            await _servers_table(account, health, connected, name_contains, generation, storage_controller, columns, hardware_filters), current
+            await _servers_table(
+                account, health, connected, name_contains, generation, storage_controller, columns, hardware_filters, group_by, linked_only
+            ),
+            current,
         )
 
 
-_FILTER_COLUMN = {"gpu_model": "gpu", "cpu_contains": "cpu_model", "nic_ports": "nics", "dimm_maker": "memory",
+_FILTER_COLUMN = {"gpu_model": "gpu", "cpu_contains": "cpu_model", "nic_ports": "nics", "nic_mode": "nics", "dimm_maker": "memory",
                   "direct_attached": "storage_controllers", "storage_over_tb": "storage"}
+_FILTER_GROUP = {"gpu_model": "gpu", "cpu_contains": "cpu", "nic_ports": "nic", "nic_mode": "nic"}
+_GROUP_COLUMN = {"nic": "nics", "gpu": "gpu", "memory": "memory", "cpu": "cpu_model", "storage_controller": "storage_controllers",
+                 "ilo_version": "ilo_version", "model": "model"}
+_GROUP_LABEL = {"nic": "Adapter", "gpu": "GPUs", "memory": "DIMMs", "cpu": "CPU", "storage_controller": "Storage controller",
+                "ilo_version": "iLO firmware", "model": "Model"}
+_HARDWARE_GROUPS = {"nic", "gpu", "memory", "cpu", "storage_controller"}
 
 
-async def _servers_table(account, health, connected, name_contains, generation, storage_controller, columns, hardware_filters=None) -> dict[str, Any]:
+def _default_group(columns, hardware_filters, storage_controller) -> str | None:
+    """A single hardware filter with no columns (or only name, model, health and its own column) answers as one row per
+    adapter, GPU or CPU kind, so every route to the same question shows the same table."""
+    families = {_FILTER_GROUP.get(k) for k in hardware_filters}
+    if storage_controller or len(families) != 1 or None in families:
+        return None
+    family = next(iter(families))
+    return family if not columns or set(columns) <= {"name", "model", "health", _GROUP_COLUMN[family]} else None
+
+
+async def _servers_table(
+    account, health, connected, name_contains, generation, storage_controller, columns, hardware_filters=None, group_by=None, linked_only=False,
+) -> dict[str, Any]:
     hardware_filters = {k: v for k, v in (hardware_filters or {}).items() if v is not None}
-    if (storage_controller or hardware_filters) and not columns:
+    group_by = group_by or _default_group(columns, hardware_filters, storage_controller)
+    if group_by:
+        columns = None
+    elif (storage_controller or hardware_filters) and not columns:
         extra_columns = ["storage_controllers"] if storage_controller else []
         extra_columns += [_FILTER_COLUMN[k] for k in hardware_filters]
         columns = ["name", "model", "health", *dict.fromkeys(extra_columns)]
     wanted = fleet_table.pick_columns(columns)
-    hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted)) or bool(storage_controller) or bool(hardware_filters)
-    network = bool(fleet_table.NETWORK_COLUMNS & set(wanted)) or "nic_ports" in hardware_filters
+    hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted)) or bool(storage_controller) or bool(hardware_filters) or group_by in _HARDWARE_GROUPS
+    network = bool(fleet_table.NETWORK_COLUMNS & set(wanted)) or bool({"nic_ports", "nic_mode"} & set(hardware_filters)) or group_by == "nic"
     rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, network, generation))
     extra: dict[str, Any] = {}
+    if hardware:
+        aspects = {"gpu"} if "gpu" in wanted or group_by == "gpu" or "gpu_model" in hardware_filters else set()
+        if network:
+            aspects.add("nic")
+        extra.update(com.fleet_totals(rows, aspects))
     if storage_controller:
         rows, summary = com.match_storage_controller(rows, storage_controller)
         extra["storage_controller_filter"] = summary
     if hardware_filters:
-        rows, summaries = com.filter_hardware(rows, hardware_filters)
+        rows, summaries = com.filter_hardware(rows, hardware_filters, linked_only)
         extra.update({f"{name}_filter": summary for name, summary in summaries.items()})
     result = fleet_table.build(rows, columns, extra or None)
+    if group_by and rows:
+        groups, unknown = com.group_servers(rows, group_by, hardware_filters, linked_only)
+        grouped, _, _ = fleet_table.grouped_table(groups, None, _GROUP_LABEL[group_by], "Servers")
+        tail = f" ({len(unknown)} servers have no {group_by} data: unknown, not absent)" if unknown else ""
+        result["table"] = f"{len(rows)} servers, grouped by {group_by}{tail}:\n\n{grouped}"
+        result["layout"] = "grouped"
+        result["columns"] = [_GROUP_LABEL[group_by], "Count", "Servers"]
+        result["counts"]["by_group"] = {name: len(names) for name, names in groups}
+        result["counts"]["servers_without_data"] = len(unknown)
+        result["note"] = (
+            "Show `table` to the user exactly as written. The counts are exact (computed by the server): quote them, do not recount. "
+            "Unknown means COM has no inventory for that server. For one row per server with more columns pass `columns`."
+        )
     if not rows and (health or connected is not None or name_contains or generation or storage_controller or hardware_filters):
         result["available"] = await _com(account, lookup.com_available)
         result["table"] = "No servers match. `available` shows what the fleet has."

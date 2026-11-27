@@ -167,6 +167,22 @@ async def test_com_list_servers_table_filters_by_any_hardware_fact(mcp_client):
     assert memory["counts"]["dimms_by_maker"] == {"SK Hynix": 2, "Micron": 1, "Samsung": 1} and memory["counts"]["servers_with_unknown_memory"] == 2
 
 
+async def test_com_list_servers_table_groups_by_hardware_and_gives_the_same_answer_whatever_the_columns(mcp_client):
+    async with mcp_client as c:
+        run = lambda **args: c.call_tool("com_list_servers_table", args)  # noqa: E731
+        plain = (await run(nic_ports=2)).structured_content
+        asked = (await run(nic_ports=2, columns=["name", "model", "nics"])).structured_content  # what a model typically sends
+        detailed = (await run(nic_ports=2, columns=["name", "power", "nics"])).structured_content
+        gpus = (await run(group_by="gpu")).structured_content
+        ilo = (await run(group_by="ilo_version")).structured_content
+        by_mode = (await run(nic_mode="ethernet", linked_only=True)).structured_content
+    assert plain["layout"] == "grouped" and asked["table"] == plain["table"]
+    assert detailed["layout"] == "table"  # other columns: one row per server
+    assert gpus["counts"]["gpus"]["total_gpus"] >= 1 and "servers_with_gpus" in gpus["counts"]["gpus"]
+    assert sum(ilo["counts"]["by_group"].values()) == ilo["total"]  # every server is in exactly one iLO version group
+    assert by_mode["counts"]["nic_mode_filter"]["value"] == "ethernet" and "nic_modes" in by_mode["counts"]
+
+
 def test_single_com_list_mode_exposes_one_list_tool_and_points_to_it():
     code = (
         "import asyncio, json\n"
@@ -998,7 +1014,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 48_400, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table
+    assert sum(sizes.values()) <= 49_500, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table, +950 for nic_mode, linked_only and group_by, +100 for the iLO tools saying they are not the COM fleet
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"
