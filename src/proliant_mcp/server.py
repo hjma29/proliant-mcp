@@ -92,9 +92,9 @@ def single_list_text(instructions: str, guide: str) -> tuple[str, str]:
         "For every question about the COM fleet (which servers, how many, health, power, GPUs, CPUs, storage controllers, drives,\n"
         "NICs, DIMMs) use com_list_servers_table: it filters (health, connected, generation, name_contains, storage_controller,\n"
         "gpu_model, cpu_contains, nic_ports, nic_mode, linked_only, dimm_maker, direct_attached, storage_over_tb), groups with\n"
-        "group_by (nic, gpu, memory, cpu, storage_controller, ilo_version, model) and shows the `columns` asked for\n"
-        "(power, connected, ilo_ip, ilo_version, firmware_bundle, gpu, storage, storage_controllers, nics, nic_firmware, memory,\n"
-        "cpu_model), with exact counts: present the table as it is and quote `counts` (never retype or recount). "
+        "group_by and shows the `columns` asked for, with exact counts: present the table as it is and quote `counts` (never\n"
+        "retype or recount). The iLO tools (get_fleet_summary, get_network_adapters, get_inventory_snapshot) cover only the iLO\n"
+        "servers added to this install (list_servers shows which), not the COM fleet. "
     )
     instructions = instructions[:start] + one_tool + instructions[instructions.index(end):]
     lines = [line for line in guide.splitlines() if not line.startswith("COM hardware:")]
