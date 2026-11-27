@@ -804,9 +804,9 @@ async def com_list_servers_table(
         ),
     ] = None,
     group_by: Annotated[
-        Literal["nic", "gpu", "memory", "cpu", "storage_controller", "ilo_version", "model"] | None,
+        Literal["nic", "gpu", "memory", "cpu", "storage_controller", "ilo_version", "model", "subscription"] | None,
         Field(
-            description="One row per distinct NIC/HBA adapter, GPU, DIMM kind, CPU, storage controller, iLO firmware version or model, "
+            description="One row per distinct NIC/HBA adapter, GPU, DIMM kind, CPU, storage controller, iLO firmware version, subscription tier or model, "
             "with the server count and names, and exact fleet totals in `counts`. Default when a hardware filter is set and `columns` is "
             "not (or only name, model, health and that filter's column). Use `columns` for one row per server."
         ),
@@ -814,11 +814,10 @@ async def com_list_servers_table(
     refresh: Refresh = False,
 ) -> dict[str, Any]:
     """List or show the COM servers: ready to display, exact counts. For "list my servers", "which are critical",
-    "servers with NS204", "how many have GPUs", "H100", "AMD CPUs", "2-port NICs", "InfiniBand or Fibre Channel adapters
-    and linked ports", "Hynix DIMMs", "direct-attached drives", "over 20 TB", "iLO firmware versions"; filters combine.
-    group_by gives one row per adapter, GPU, CPU, controller, iLO version or model with counts and names; `columns` gives
-    one row per server. Servers COM has no inventory for are unknown, not non-matching. Show `table` as written and quote
-    `counts`; never recount."""
+    "servers with NS204", "how many have GPUs", "H100", "AMD CPUs", "2-port NICs", "InfiniBand or Fibre Channel ports
+    linked", "Hynix DIMMs", "direct-attached drives", "over 20 TB", "iLO versions", "Enhanced license/subscription"; filters
+    combine. group_by gives one row per adapter, GPU, CPU, controller, iLO version, subscription or model with counts and
+    names; `columns` one row per server. Servers COM has no inventory for are unknown. Show `table` as written; quote `counts`."""
     with store.session(refresh) as current:
         hardware_filters = {"gpu_model": gpu_model, "cpu_contains": cpu_contains, "nic_ports": nic_ports, "nic_mode": nic_mode, "dimm_maker": dimm_maker,
                             "direct_attached": direct_attached, "storage_over_tb": storage_over_tb}
@@ -834,9 +833,9 @@ _FILTER_COLUMN = {"gpu_model": "gpu", "cpu_contains": "cpu_model", "nic_ports": 
                   "direct_attached": "storage_controllers", "storage_over_tb": "storage"}
 _FILTER_GROUP = {"gpu_model": "gpu", "cpu_contains": "cpu", "nic_ports": "nic", "nic_mode": "nic"}
 _GROUP_COLUMN = {"nic": "nics", "gpu": "gpu", "memory": "memory", "cpu": "cpu_model", "storage_controller": "storage_controllers",
-                 "ilo_version": "ilo_version", "model": "model"}
+                 "ilo_version": "ilo_version", "model": "model", "subscription": "subscription"}
 _GROUP_LABEL = {"nic": "Adapter", "gpu": "GPUs", "memory": "DIMMs", "cpu": "CPU", "storage_controller": "Storage controller",
-                "ilo_version": "iLO firmware", "model": "Model"}
+                "ilo_version": "iLO firmware", "model": "Model", "subscription": "Subscription"}
 _HARDWARE_GROUPS = {"nic", "gpu", "memory", "cpu", "storage_controller"}
 
 

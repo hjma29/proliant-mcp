@@ -190,6 +190,8 @@ def build(rows: list[dict[str, Any]], columns: list[str] | None = None, extra_co
         counts["by_power"] = dict(Counter(s.get("power_state") or "UNKNOWN" for s in rows).most_common())
     if "connected" in keys:
         counts["connected_to_com"] = {"yes": sum(1 for s in rows if s.get("connected")), "no": sum(1 for s in rows if not s.get("connected"))}
+    if "subscription" in keys:
+        counts["by_subscription"] = dict(Counter(_subscription(s) or "no subscription" for s in rows).most_common())
     if "gpu" in keys:
         gpus: Counter[str] = Counter()
         for s in rows:

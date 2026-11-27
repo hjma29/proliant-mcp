@@ -918,7 +918,7 @@ def filter_hardware(
     return rows, summaries
 
 
-GROUP_BY = ("nic", "gpu", "memory", "cpu", "storage_controller", "ilo_version", "model")
+GROUP_BY = ("nic", "gpu", "memory", "cpu", "storage_controller", "ilo_version", "model", "subscription")
 
 
 def _group_labels(r: dict[str, Any], key: str, filters: dict[str, Any], linked_only: bool) -> list[str] | None:
@@ -928,6 +928,8 @@ def _group_labels(r: dict[str, Any], key: str, filters: dict[str, Any], linked_o
         return [fleet_table.COLUMNS["model"][1](r) or "unknown model"]
     if key == "ilo_version":
         return [(r.get("ilo") or {}).get("version") or "unknown"]
+    if key == "subscription":
+        return [fleet_table._subscription(r) or "no subscription"]
     if key == "nic":
         if not _network_known(hw):
             return None

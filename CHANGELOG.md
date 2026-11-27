@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.30.1 — 2026-11-27
+
+### Enhancements
+- `com_list_servers_table` groups by subscription (`group_by=subscription`: one row per tier, such as `SUBSCRIBED ENHANCED`, with the server count and names), and the `subscription` column now comes with exact totals in `counts.by_subscription`. Before, "which servers have the Enhanced subscription" had no counts, so the assistant counted the 42 rows by hand. On the lab: 15 Enhanced, 25 Standard, 2 Required. COM reports the subscription tier, not the iLO license key.
+
+---
+
 ## v0.30.0 — 2026-11-27
 
 ### Enhancements

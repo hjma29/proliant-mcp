@@ -177,11 +177,15 @@ async def test_com_list_servers_table_groups_by_hardware_and_gives_the_same_answ
         gpus = (await run(group_by="gpu")).structured_content
         ilo = (await run(group_by="ilo_version")).structured_content
         by_mode = (await run(nic_mode="ethernet", linked_only=True)).structured_content
+        by_sub = (await run(group_by="subscription")).structured_content
+        sub_column = (await run(columns=["name", "subscription"])).structured_content
     assert plain["layout"] == "grouped" and asked["table"] == plain["table"]
     assert detailed["layout"] == "table"  # other columns: one row per server
     assert gpus["counts"]["gpus"]["total_gpus"] >= 1 and "servers_with_gpus" in gpus["counts"]["gpus"]
     assert sum(ilo["counts"]["by_group"].values()) == ilo["total"]  # every server is in exactly one iLO version group
     assert by_mode["counts"]["nic_mode_filter"]["value"] == "ethernet" and "nic_modes" in by_mode["counts"]
+    assert sum(by_sub["counts"]["by_group"].values()) == by_sub["total"] and by_sub["layout"] == "grouped"
+    assert sub_column["counts"]["by_subscription"] == by_sub["counts"]["by_group"]  # the column and the grouping agree
 
 
 def _tools_in_mode(mode: str | None) -> dict:
