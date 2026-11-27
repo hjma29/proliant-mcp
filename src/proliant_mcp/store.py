@@ -90,8 +90,9 @@ def session(refresh: bool = False) -> Iterator[Session]:
 
 
 def with_age(result: Any, current: Session) -> Any:
+    """``data_age`` goes first: a client that cuts a long result (OpenCode keeps about 50 KB) must not cut the age."""
     if isinstance(result, dict) and current.used():
-        result["data_age"] = current.summary()
+        return {"data_age": current.summary(), **{k: v for k, v in result.items() if k != "data_age"}}
     return result
 
 

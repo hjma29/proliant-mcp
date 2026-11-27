@@ -131,6 +131,13 @@ def _com_requests(seen):
     return [r for r in seen if "greenlake" in r or "sso.common" in r]
 
 
+async def test_data_age_comes_first_so_a_client_that_cuts_a_long_result_keeps_it(mcp_client):
+    async with mcp_client as c:
+        listed = (await c.call_tool("com_list_servers", {"include_hardware": True})).structured_content
+        table = (await c.call_tool("com_list_servers_table", {})).structured_content
+    assert list(listed)[0] == "data_age" and list(table)[0] == "data_age"
+
+
 async def test_cache_is_first_even_for_two_day_old_data(mcp_client, monkeypatch):
     seen = _counting(monkeypatch)
     com._tokens.clear()

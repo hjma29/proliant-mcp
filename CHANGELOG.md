@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.27.1 — 2026-11-26
+
+### Bug Fixes
+- `data_age` is now the first field of every cached answer, not the last. OpenCode keeps only about 50 KB of a tool result and cut the end off a 51 KB `com_list_servers` answer, so the model never saw that the data was cached and told the user it was live.
+
+---
+
 ## v0.27.0 — 2026-11-26
 
 ### New Features
