@@ -79,9 +79,10 @@ iLO firmware: ilo_firmware_list_updates (latest version from HPE, steps, minutes
 
 Counts in results are exact: quote them. "unknown" means the source has no data, not that the part is absent. Never guess a value; if no tool covers it, say so."""
 
-# Experimental (PROLIANT_MCP_COM_LIST=single): one COM list tool, com_list_servers_table, with every hardware filter and
-# column, instead of also exposing com_list_servers, com_list_gpus, com_list_nics, com_list_memory and com_hardware_report.
-SINGLE_COM_LIST = os.environ.get("PROLIANT_MCP_COM_LIST", "").strip().lower() == "single"
+# One COM list tool by default: com_list_servers_table, with every hardware filter, group_by and column, instead of also
+# exposing com_list_servers, com_list_gpus, com_list_nics, com_list_memory and com_hardware_report (tested on Claude and Qwen: the
+# same pass rate with fewer tools and one answer shape). PROLIANT_MCP_COM_LIST=several brings the five tools back.
+SINGLE_COM_LIST = os.environ.get("PROLIANT_MCP_COM_LIST", "").strip().lower() not in ("several", "multi", "all")
 SINGLE_COM_LIST_HIDDEN = ["com_list_servers", "com_list_gpus", "com_list_nics", "com_list_memory", "com_hardware_report"]
 
 

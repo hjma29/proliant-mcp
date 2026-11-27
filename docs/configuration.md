@@ -173,16 +173,18 @@ database cannot be used, the tools read live and say so; they never fail because
   and writes but keeps existing data; clearing removes the rows but cannot guarantee erasure from
   filesystem backups or SQLite free pages. Clear it after replacing hardware.
 
-## One COM list tool (experimental)
+## One COM list tool
 
-By default proliant-mcp has several COM list tools (`com_list_servers_table`, `com_list_servers`, `com_list_gpus`, `com_list_nics`,
-`com_list_memory`, `com_hardware_report`). Models with no tool search, or small ones, can pick the wrong one. Set the environment
-variable `PROLIANT_MCP_COM_LIST=single` for the MCP server and it exposes only `com_list_servers_table`, which filters by health,
-generation, GPU, CPU, NIC ports, DIMM maker, direct-attached drives, storage controller and capacity and shows any column, with the
-same exact counts. The server instructions and guide then point only at that tool. Example for an MCP client config:
+proliant-mcp exposes one tool for COM server lists, `com_list_servers_table`. It filters by health, generation, GPU, CPU, NIC ports,
+NIC mode (InfiniBand, Fibre Channel, Ethernet) and link, DIMM maker, direct-attached drives, storage controller and capacity,
+groups with `group_by` (adapter, GPU, DIMM, CPU, storage controller, iLO version, model) and shows any column, with exact counts.
+It replaces `com_list_servers`, `com_list_gpus`, `com_list_nics`, `com_list_memory` and `com_hardware_report`, which are hidden:
+in tests with Claude and Qwen the assistants answered as many fleet questions right with one list tool, with fewer tools to
+choose from and one answer shape for the same question. To bring the five tools back, set the environment variable
+`PROLIANT_MCP_COM_LIST=several` for the MCP server. Example for an MCP client config:
 
 ```json
-{"command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"], "env": {"PROLIANT_MCP_COM_LIST": "single"}}
+{"command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"], "env": {"PROLIANT_MCP_COM_LIST": "several"}}
 ```
 
 ## Tool-call counters

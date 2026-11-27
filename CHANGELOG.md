@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.30.0 — 2026-11-27
+
+### Enhancements
+- One COM list tool by default. `com_list_servers_table` (filters, `group_by`, `nic_mode`, exact counts) now answers every fleet list question, and `com_list_servers`, `com_list_gpus`, `com_list_nics`, `com_list_memory` and `com_hardware_report` are hidden, so there are 56 tools instead of 61 and one answer shape for the same question (a 2-port NIC question used to be answered per server in one chat and per adapter in another, depending on which tool the model chose). In tests the assistants answered as many questions right with one tool: Qwen 49 of 58 against 47 with several tools, Claude Sonnet 5.5 27 of 29 (after the v0.29.2 `list_servers` note) against 28 of 29. Set `PROLIANT_MCP_COM_LIST=several` to bring the five tools back; it was `single` (experimental) before, and `single` is now the default.
+
+---
+
 ## v0.29.2 — 2026-11-27
 
 ### Enhancements

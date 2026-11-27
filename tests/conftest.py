@@ -1,4 +1,9 @@
+import os
+
 import pytest
+
+# The server hides five COM list tools by default; most tests exercise them, so they run in the several-tools mode.
+os.environ.setdefault("PROLIANT_MCP_COM_LIST", "several")
 
 
 @pytest.fixture(autouse=True)

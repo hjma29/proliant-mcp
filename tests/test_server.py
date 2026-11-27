@@ -184,7 +184,7 @@ async def test_com_list_servers_table_groups_by_hardware_and_gives_the_same_answ
     assert by_mode["counts"]["nic_mode_filter"]["value"] == "ethernet" and "nic_modes" in by_mode["counts"]
 
 
-def test_single_com_list_mode_exposes_one_list_tool_and_points_to_it():
+def _tools_in_mode(mode: str | None) -> dict:
     code = (
         "import asyncio, json\n"
         "from fastmcp import Client\n"
@@ -195,13 +195,23 @@ def test_single_com_list_mode_exposes_one_list_tool_and_points_to_it():
         "    print(json.dumps({'names': names, 'instructions': srv.INSTRUCTIONS, 'guide': srv.GUIDE}))\n"
         "asyncio.run(main())\n"
     )
-    env = {**os.environ, "PROLIANT_MCP_COM_LIST": "single", "PROLIANT_MCP_CONFIG": os.devnull}
-    out = json.loads(subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout.splitlines()[-1])
+    env = {k: v for k, v in os.environ.items() if k != "PROLIANT_MCP_COM_LIST"} | {"PROLIANT_MCP_CONFIG": os.devnull}
+    if mode is not None:
+        env["PROLIANT_MCP_COM_LIST"] = mode
+    return json.loads(subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout.splitlines()[-1])
+
+
+def test_one_com_list_tool_is_the_default_and_the_instructions_point_to_it():
+    out = _tools_in_mode(None)
     hidden = srv.SINGLE_COM_LIST_HIDDEN
     assert "com_list_servers_table" in out["names"] and not set(hidden) & set(out["names"])
     mentioned = [n for n in hidden if re.search(rf"\b{n}\b", out["instructions"] + out["guide"])]  # com_list_servers is a prefix of ..._table
     assert not mentioned, f"hints towards hidden tools: {mentioned}"
     assert "dimm_maker" in out["instructions"] and "dimm_maker" in out["guide"] and len(out["instructions"]) <= 3_800
+
+
+def test_com_list_mode_several_brings_the_separate_list_tools_back():
+    assert set(srv.SINGLE_COM_LIST_HIDDEN) <= set(_tools_in_mode("several")["names"])
 
 
 def test_data_age_note_is_one_short_line_with_a_readable_age():
