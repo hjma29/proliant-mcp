@@ -54,7 +54,8 @@ async def test_list_servers_groups_targets_and_hides_credentials(mcp_client):
     assert [a["name"] for a in data["oneview_appliances"]] == ["oneview", "ov-badpass"]
     assert data["com_accounts"][0]["name"] == "greenlake"
     assert "good" not in str(data) and "csecret" not in str(data)
-
+    # without it a model that sees only the iLO servers here answers fleet questions from them
+    assert "only the 2 iLOs" in data["note"] and "com_list_servers_table" in data["note"] and "oneview_" in data["note"]
 
 async def test_list_servers_by_generation_counts_every_source_once(mcp_client, monkeypatch):
     # the iLO and COM report the same physical server: the serial number is the same, whatever its case

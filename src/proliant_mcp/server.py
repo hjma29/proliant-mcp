@@ -310,12 +310,21 @@ async def list_servers(
     if generation or model:
         with store.session(refresh) as current:
             return store.with_age(await lookup.lookup(generation, model, _transport), current)
+    ilos, appliances, accounts = load_servers(), load_oneview(), load_com()
+    scope = []
+    if accounts:
+        scope.append("each COM account holds its own, usually larger, fleet: for its server counts, models, health, GPUs, NICs, storage "
+                     "and firmware use com_get_overview and com_list_servers_table (filters, group_by, columns)")
+    if appliances:
+        scope.append("OneView: the oneview_* tools")
     return {
         "proliant_mcp_version": __version__,
         "release_check": await _cached_release_status(),
         "config_file": str(config_path()) if config_path() else None,
-        "servers": [{"name": s.name, "ilo_host": s.host} for s in load_servers().values()],
-        "oneview_appliances": [{"name": a.name, "host": a.host} for a in load_oneview().values()],
+        **({"note": f"`servers` lists only the {len(ilos)} iLOs added directly (the iLO tools such as get_fleet_summary cover only those); "
+            + "; ".join(scope) + "."} if scope else {}),
+        "servers": [{"name": s.name, "ilo_host": s.host} for s in ilos.values()],
+        "oneview_appliances": [{"name": a.name, "host": a.host} for a in appliances.values()],
         "com_accounts": [
             {
                 "name": a.name,
@@ -324,7 +333,7 @@ async def list_servers(
                 "workspace": a.workspace or None,
                 "source": a.source or None,
             }
-            for a in load_com().values()
+            for a in accounts.values()
         ],
     }
 

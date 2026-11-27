@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.29.2 — 2026-11-27
+
+### Enhancements
+- `list_servers` now says what it covers: `servers` lists only the iLOs added directly, each COM account holds its own larger fleet (use `com_get_overview` and `com_list_servers_table` for its counts, models, health, GPUs, NICs, storage and firmware), and OneView has the `oneview_*` tools. In an A/B test, assistants that called `list_servers` first saw a few iLO servers and kept using the iLO tools (`get_fleet_summary`, `get_storage`, `get_processors`), so "show me servers with GPUs" or "which servers have MegaRAID MR416" was answered from those few servers instead of the whole COM fleet. The note is runtime text, so the tool definitions do not grow.
+
+---
+
 ## v0.29.1 — 2026-11-27
 
 ### Enhancements
