@@ -111,21 +111,25 @@ your browser cannot open the page. Pick one:
 
 ## Local cache
 
-A local SQLite cache is **on by default**. Almost every read tool answers from it while the data is
-fresh and reads live only what is missing or too old. Two kinds of data have their own lifetime:
+A local SQLite cache is **on by default**, and it is **cache first**: almost every read tool answers from it
+whatever the age of the data (kept up to 7 days) and reads live only what is missing. Every cached answer says
+when it was collected, and the assistant offers a live refresh ("ask me to refresh"). Two kinds of data have
+their own lifetime, both 7 days by default (shorten them with `set_inventory_cache`):
 
 | Kind | Default lifetime | Tools |
 |---|---|---|
-| Inventory (rarely changes) | 1 hour | `get_ilo_info`, `get_firmware_inventory`, `get_processors`, `get_memory`, `get_storage`; `com_list_gpus`, `com_list_nics`, `com_hardware_report`, `com_list_groups`, `com_list_firmware_bundles`, `greenlake_list_services`; `oneview_list_firmware_baselines`; `list_servers` with `generation` or `model`; `find_server` |
-| State (can change any time) | 5 minutes | `get_server_summary`, `get_fleet_summary`, `get_health`, `get_network_adapters` (links), `get_event_log`, `get_fleet_event_summary`, `get_ilo_logins`; `com_get_overview`, `com_list_servers`, `com_list_servers_table`, `com_get_server`, `com_list_alerts`, `com_list_jobs`; `oneview_get_appliance`, `oneview_list_server_hardware`, `oneview_get_server_hardware`, `oneview_list_server_profiles`, `oneview_list_alerts`, `oneview_list_enclosures`, `oneview_list_interconnects`, `oneview_list_uplink_sets` |
+| Inventory (rarely changes) | 7 days | `get_ilo_info`, `get_firmware_inventory`, `get_processors`, `get_memory`, `get_storage`; `com_list_gpus`, `com_list_nics`, `com_hardware_report`, `com_list_groups`, `com_list_firmware_bundles`, `greenlake_list_services`; `oneview_list_firmware_baselines`; `list_servers` with `generation` or `model`; `find_server` |
+| State (can change any time) | 7 days | `get_server_summary`, `get_fleet_summary`, `get_health`, `get_network_adapters` (links), `get_event_log`, `get_fleet_event_summary`, `get_ilo_logins`; `com_get_overview`, `com_list_servers`, `com_list_servers_table`, `com_get_server`, `com_list_alerts`, `com_list_jobs`; `oneview_get_appliance`, `oneview_list_server_hardware`, `oneview_get_server_hardware`, `oneview_list_server_profiles`, `oneview_list_alerts`, `oneview_list_enclosures`, `oneview_list_interconnects`, `oneview_list_uplink_sets` |
 | Always live | | anything that changes a server or signs in (firmware update, `com_login`, `add_server`, ...), `ilo_firmware_update_status`, `ilo_firmware_list_updates`, and the raw `redfish_get`, `com_api_get`, `oneview_rest_get` |
 
 Measured on a lab of 42 COM servers, 3 iLOs and one OneView appliance: those 35 tools took 31.9 s
 live together and 0.7 s from the cache (12 to 66 ms each), with no request to any iLO, OneView or COM.
 
-Each answer has `data_age`: `source` (`live`, `local cache` or both), `as_of` and `minutes_old`. When state
-comes from the cache, the assistant says how old it is; inventory it mentions from 5 minutes old. Ask for
-"fresh" or "current" data and it passes `refresh=true`, which reads live and updates the cache.
+Each answer has `data_age`: `source` (`live`, `local cache` or both), `as_of` and `minutes_old`. When data
+comes from the cache, the assistant ends the reply with when it was collected and that you can ask for a live
+refresh. Ask for "fresh" or "current" data and it passes `refresh=true`, which reads live and updates the cache.
+Health and power from the cache can be days old, so the age line matters; the optional `proliant-mcp poll`
+keeps everything recent if you want that.
 
 - **A source that is down:** inventory falls back to the last stored answer (up to 7 days old), marked
   stale with the error. State never does: an iLO that cannot be read is reported, not hidden behind
@@ -156,7 +160,7 @@ database cannot be used, the tools read live and say so; they never fail because
 - A cached answer does not log in to the iLO, OneView or COM: it is what that source said at `as_of`.
   `get_inventory_snapshot` still logs in to the iLO on every call.
 - Ask your assistant to **turn the cache off** (`set_inventory_cache`), change its lifetimes
-  (`ttl_seconds` for inventory, `state_ttl_seconds` for state, 1 second to 24 hours), check it
+  (`ttl_seconds` for inventory, `state_ttl_seconds` for state, 1 second to 7 days), check it
   (`get_inventory_cache_status`), or **clear** it (`clear_inventory_cache`). Turning it off stops reads
   and writes but keeps existing data; clearing removes the rows but cannot guarantee erasure from
   filesystem backups or SQLite free pages. Clear it after replacing hardware.

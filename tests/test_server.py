@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 
@@ -129,6 +130,23 @@ def _com_requests(seen):
     return [r for r in seen if "greenlake" in r or "sso.common" in r]
 
 
+async def test_cache_is_first_even_for_two_day_old_data(mcp_client, monkeypatch):
+    seen = _counting(monkeypatch)
+    com._tokens.clear()
+    async with mcp_client as c:
+        await c.call_tool("com_list_servers_table", {})
+        seen.clear()
+        db = sqlite3.connect(inventory_cache._db_path())
+        db.execute("UPDATE snapshots SET collected_at = collected_at - ?", (2 * 86400,))
+        db.commit()
+        db.close()
+        old = (await c.call_tool("com_list_servers_table", {})).structured_content
+        live = (await c.call_tool("com_list_servers_table", {"refresh": True})).structured_content
+    assert old["data_age"]["source"] == "local cache" and old["data_age"]["minutes_old"] >= 2 * 24 * 60 - 1
+    assert "live refresh" in old["data_age"]["note"]
+    assert live["data_age"]["source"] == "live"
+
+
 async def test_com_hardware_tools_answer_from_the_local_cache_and_say_how_old(mcp_client, monkeypatch):
     seen = _counting(monkeypatch)
     com._tokens.clear()
@@ -148,7 +166,7 @@ async def test_com_hardware_tools_answer_from_the_local_cache_and_say_how_old(mc
     assert "refresh=true" in again["data_age"]["note"] and {k: again[k] for k in ("total_gpus", "gpus_by_model")} == {k: first[k] for k in ("total_gpus", "gpus_by_model")}
     assert nics["counts"]["adapters_matching"] == 3 and nics["data_age"]["source"] == "local cache"
     assert fresh["data_age"]["source"] == "live" and any("/inventory" in r for r in seen)
-    assert plain["data_age"]["source"] == "local cache" and "how old they are" in plain["data_age"]["note"]  # server list just read
+    assert plain["data_age"]["source"] == "local cache" and "when the data was collected" in plain["data_age"]["note"]  # server list just read
 
 
 async def test_com_outage_serves_the_last_inventory_marked_stale(mcp_client, monkeypatch):
@@ -223,7 +241,7 @@ async def test_ilo_inventory_tools_answer_from_the_cache_without_logging_in(mcp_
         fresh = (await c.call_tool("get_processors", {"server": "gen12", "refresh": True})).structured_content
     assert {k: v for k, v in first.items() if k != "data_age"} == {k: v for k, v in again.items() if k != "data_age"}
     assert first["data_age"]["source"] == "live" and nics["result"] == nics_again["result"]  # a list keeps its "result" key
-    assert again["data_age"]["source"] == "local cache" and "how old the inventory is" in again["data_age"]["note"]
+    assert again["data_age"]["source"] == "local cache" and "when the data was collected" in again["data_age"]["note"]
     assert procs["data_age"]["source"] == "live" and sum(r.startswith("POST") for r in cached_requests) == 1  # only processors logged in
     assert fresh["data_age"]["source"] == "live" and any(r.startswith("POST") for r in seen)
 
@@ -238,7 +256,7 @@ async def test_state_has_a_short_lifetime_and_inventory_a_long_one(mcp_client, m
         memory = (await c.call_tool("get_memory", {"server": "gen12"})).structured_content
         status = (await c.call_tool("get_inventory_cache_status", {})).structured_content
     assert health["data_age"]["source"] == "live" and memory["data_age"]["source"] == "local cache"
-    assert (status["ttl_seconds"], status["state_ttl_seconds"]) == (3600, 1)
+    assert (status["ttl_seconds"], status["state_ttl_seconds"]) == (604800, 1)
 
 
 async def test_an_unreachable_ilo_is_reported_for_state_but_old_inventory_is_still_served(mcp_client, monkeypatch):
@@ -308,7 +326,7 @@ async def test_inventory_cache_is_on_by_default_and_respects_refresh_and_live_st
     args = {"servers": ["gen12"], "categories": ["processors"]}
     async with mcp_client as client:
         status = (await client.call_tool("get_inventory_cache_status", {})).structured_content
-        assert status["enabled"] and status["ttl_seconds"] == 3600 and not inventory_cache._db_path().exists()
+        assert status["enabled"] and status["ttl_seconds"] == 604800 and not inventory_cache._db_path().exists()
         first = (await client.call_tool("get_inventory_snapshot", args)).structured_content
         assert inventory_cache._db_path().is_file()  # created privately on first use, no setup step
         first_requests = len(requests)
@@ -322,7 +340,7 @@ async def test_inventory_cache_is_on_by_default_and_respects_refresh_and_live_st
         assert not any(method == "GET" and "Processors" in path for method, path in second_requests)
         fresh = (await client.call_tool("get_inventory_snapshot", {**args, "refresh": True})).structured_content
         assert fresh["servers"][0]["inventory"]["processors"]["source"] == "live"
-        await client.call_tool("get_health", {"server": "gen12"})  # first call: live, then kept as state (5 minutes)
+        await client.call_tool("get_health", {"server": "gen12"})  # first call: live, then kept as state (cache first)
         assert any(method == "GET" and path.endswith("/Systems/1/") for method, path in requests[first_requests:])
         cleared = (await client.call_tool("clear_inventory_cache", {})).structured_content
         assert cleared["removed"] == 2  # the processors snapshot and get_health's state entry
@@ -570,8 +588,8 @@ async def test_server_summary_says_whether_an_os_runs(mcp_client, monkeypatch):
         monkeypatch.setitem(fake_ilo.FAKE_ILO, "/redfish/v1/Systems/1/", system)
         cached = (await c.call_tool("get_server_summary", {"server": "gen12"})).structured_content
         running = (await c.call_tool("get_server_summary", {"server": "gen12", "refresh": True})).structured_content["os"]
-    assert cached["os"] == stuck and cached["data_age"]["source"] == "local cache"  # state is kept 5 minutes...
-    assert "how old they are" in cached["data_age"]["note"]  # ...and the assistant is told to say so
+    assert cached["os"] == stuck and cached["data_age"]["source"] == "local cache"  # state is cache first...
+    assert "when the data was collected" in cached["data_age"]["note"]  # ...and the assistant is told to say so
     assert stuck["state"] == "stopped in BIOS setup (RBSU); no OS booted"
     assert stuck["boot_order"] == ["Generic USB Boot", "UEFI HTTPv4 (Embedded LOM 1)"] and stuck["name"] is None
     assert stuck["os_boot_entries"] == []  # devices and network boot are not OS loaders

@@ -2,15 +2,19 @@
 
 Two kinds of data, with their own lifetime (``inventory_cache.settings`` and ``state_ttl``):
 
-- inventory, which rarely changes (hardware, firmware, catalogs, server lists for lookups): 1 hour by default;
-- state, which can change any time (health, power, alerts, jobs, event logs, logins, links): 5 minutes by default.
+- inventory, which rarely changes (hardware, firmware, catalogs, server lists for lookups);
+- state, which can change any time (health, power, alerts, jobs, event logs, logins, links).
+
+Both are cache first: they are served from SQLite whatever their age (default lifetime 7 days, ``STALE_KEEP``),
+and every answer says when it was collected so the assistant can tell the user and offer a live refresh. A lifetime
+can be shortened with ``set_inventory_cache``.
 
 A tool runs inside ``session(refresh)``. ``fetch_many`` serves the entries younger than their lifetime from SQLite,
 reads only the missing or older ones live and stores them. When a live inventory read fails, an entry up to
 ``inventory_cache.STALE_KEEP`` old is served instead and marked stale; state never is (an unreachable server is the
 answer), and neither is a sign-in error (``no_stale``). Outside a session everything is read live. ``data_age``
-says where the answer came from and how old it is, so the assistant can tell the user and offer a refresh. A cache
-hit does not log in to the iLO, OneView or COM. ``run_poll`` refreshes everything on a timer.
+says where the answer came from and how old it is. A cache
+hit does not log in to the iLO, OneView or COM. ``run_poll`` refreshes everything on a timer (optional).
 """
 
 from __future__ import annotations
@@ -24,8 +28,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from proliant_mcp import inventory_cache
-
-STALE_AFTER_MINUTES = 5  # from this age the assistant should say how old the data is
 
 
 @dataclass
@@ -60,17 +62,13 @@ class Session:
                 "source said at as_of."
             )
         if self.state_cached:
-            advice = (
-                "Health, power, alerts, logs or links here come from the local cache (kept "
-                f"{max(1, self.state_ttl // 60)} min): tell the user in one short line how old they are and that they can "
-                "ask for a refresh (call again with refresh=true)."
-            )
+            what = "Health, power, alerts, logs or links here come"
         else:
-            advice = (
-                f"If minutes_old is {STALE_AFTER_MINUTES} or more, tell the user in one short line how old the inventory is "
-                "and that they can ask for a refresh (call again with refresh=true). Health and power here are as of that "
-                "time too."
-            )
+            what = "This inventory comes"
+        advice = (
+            f"{what} from the local cache, collected at as_of ({minutes} min ago). End the reply with one short line "
+            "saying when the data was collected and that they can ask for a live refresh (call again with refresh=true)."
+        )
         out["note"] = " ".join([*self.notes, advice])
         return out
 

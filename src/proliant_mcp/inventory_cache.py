@@ -22,10 +22,12 @@ from typing import Any
 from proliant_mcp.config import _home_config
 from proliant_mcp.inventory import write_text
 
-DEFAULT_TTL = 3600
-DEFAULT_STATE_TTL = 300  # health, power, alerts, logs and links: kept only a few minutes
 STALE_KEEP = 7 * 86400  # how long entries stay for a stale fallback after their lifetime ends
-MAX_TTL = 86400
+# Cache first: an answer comes from the cache whatever its age (up to a week) and says how old it is; the user asks for a
+# live read (refresh=true) when it matters. Shorter lifetimes are a choice (set_inventory_cache).
+DEFAULT_TTL = STALE_KEEP
+DEFAULT_STATE_TTL = STALE_KEEP
+MAX_TTL = STALE_KEEP
 MAX_ROWS = 2000
 MAX_VALUE_BYTES = 1_000_000
 MAX_PAYLOAD_BYTES = 16_000_000

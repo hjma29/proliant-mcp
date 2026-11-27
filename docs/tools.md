@@ -13,7 +13,8 @@ is named in `source_errors`, not silently counted as empty. `com_list_servers_ta
 `available` when its filters match nothing.
 
 **Local cache.** Almost every read tool answers from a local SQLite cache in milliseconds: inventory
-(hardware, firmware, catalogs) for 1 hour, state (health, power, alerts, logs, links) for 5 minutes. Each
+(hardware, firmware, catalogs) and state (health, power, alerts, logs, links), cache first: it is served at
+any age (kept up to 7 days) and the assistant says when it was collected and offers a live refresh. Each
 answer has `data_age` (source, `as_of`, `minutes_old`); `refresh=true` reads live. Tools that change a
 server or sign in, and the raw `*_get` tools, are always live. Tools that returned a list now return
 `{"result": [...], "data_age": {...}}`. `proliant-mcp poll` keeps the cache warm.
@@ -33,7 +34,7 @@ none of them knows, it reads that iLO's login-free identity pages (iLO model, se
 | `get_firmware_inventory` | Every firmware component and version |
 | `get_processors` | CPUs and GPUs |
 | `get_memory` | Total, populated/empty slots, each DIMM |
-| `get_inventory_snapshot` | Processors, memory and firmware for one or more iLOs, served from the local cache when fresh (on by default, 1 hour); each category says `cache` or `live` and when it was collected; `refresh=true` forces a live read. Not for health or power |
+| `get_inventory_snapshot` | Processors, memory and firmware for one or more iLOs, served from the local cache (on by default); each category says `cache` or `live` and when it was collected; `refresh=true` forces a live read. Not for health or power |
 | `get_storage` | Controllers, drives, RAID volumes |
 | `get_network_adapters` | NICs, ports, MACs, link, LLDP neighbor (switch and port) |
 | `get_event_log` | Newest IML (hardware), IEL (iLO) or Security Log entries, filter by severity (exact or `min_severity`), time window (`since`/`until`: `7d`, `24h`, a date) and message text; entries with a wrong iLO clock are flagged and listed last; `summary` groups identical messages with counts and first/last time |

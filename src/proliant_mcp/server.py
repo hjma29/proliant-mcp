@@ -43,8 +43,8 @@ nics, cpu_model), nothing more. For analysis across servers use
 com_list_servers (include_hardware adds CPU, GPU and storage) or com_list_gpus; for a table of storage
 controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link speeds or network mode
 com_list_nics. Never loop com_get_server or com_api_get over many servers.
-Read tools answer from a local cache (inventory 1 hour, health/power/alerts/logs 5 minutes) and say how
-old in data_age; pass refresh=true when the user wants current data.
+Read tools answer from a local cache first (any age, up to 7 days) and say when it was collected in
+data_age: end the reply with one short line on that and offer a live refresh; pass refresh=true when asked.
 Change the cache with set_inventory_cache, or clear it with clear_inventory_cache, only when asked.
 If a com_ tool says no COM account is configured, the COM login failed (HTTP 401) or COM is not set up,
 sign the user in right away in this chat; do not send them to a browser, terminal or the GreenLake site.
@@ -380,8 +380,8 @@ async def get_inventory_cache_status() -> dict[str, Any]:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
 async def set_inventory_cache(
     enabled: Annotated[bool, Field(description="True to use the local hardware snapshot cache (the default), false to turn it off.")],
-    ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="Inventory lifetime in seconds; omit to keep it.")] = None,
-    state_ttl_seconds: Annotated[int | None, Field(ge=1, le=86400, description="State (health, power, alerts) lifetime; omit to keep it.")] = None,
+    ttl_seconds: Annotated[int | None, Field(ge=1, le=604800, description="Inventory lifetime in seconds (max 7 days); omit to keep it.")] = None,
+    state_ttl_seconds: Annotated[int | None, Field(ge=1, le=604800, description="State (health, power, alerts) lifetime (max 7 days); omit to keep it.")] = None,
 ) -> dict[str, Any]:
     """Turn the local cache on or off, or change its lifetimes, when the user asks. It is on by
     default and stored on this computer in an owner-only folder (server names and serial numbers,
@@ -435,7 +435,7 @@ async def get_inventory_snapshot(
     refresh: Annotated[bool, Field(description="Fetch new data even when a cached snapshot is available.")] = False,
 ) -> dict[str, Any]:
     """Hardware snapshots (processors, memory, firmware) for one or more iLOs, from the local cache
-    (on by default, 1 hour) or live; each says which and when it was collected. refresh=true
+    (on by default) or live; each says which and when it was collected. refresh=true
     forces a live read. The iLO login is checked even on a hit. Not for current health or power:
     use the live tools."""
     targets = list(_servers().values()) if servers is None else list(dict.fromkeys(_resolve(name) for name in servers))
