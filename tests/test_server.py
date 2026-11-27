@@ -105,8 +105,9 @@ def test_lookup_text_shows_a_few_names_per_model_when_the_list_is_long():
     matches = [server(i, "ProLiant DL380a Gen11") for i in range(12)] + [server(20 + i, "ProLiant DL360 Gen11") for i in range(5)]
     table, remaining, more = lookup._text(matches)
     lines = table.splitlines()
-    assert lines[0] == "DL380a Gen11 (12): srv00 (com), srv01 (com), srv02 (com), +9 more"
-    assert lines[1] == "DL360 Gen11 (5): srv20 (com), srv21 (com), srv22 (com), +2 more"
+    assert lines[0:2] == ["| Model | Count | Servers (source) |", "|---|---|---|"]
+    assert lines[2] == "| DL380a Gen11 | 12 | srv00 (com), srv01 (com), srv02 (com), +9 more |"
+    assert lines[3] == "| DL360 Gen11 | 5 | srv20 (com), srv21 (com), srv22 (com), +2 more |"
     assert sum(len(v.split(", ")) for v in remaining.values()) == 11 and "11 more servers match" in more
     short, kept, none = lookup._text(matches[:3])
     assert short.splitlines()[0] == "| Name | Model | Power | Source |" and len(short.splitlines()) == 5 and not kept and none == ""
@@ -1075,7 +1076,8 @@ async def test_com_list_nics_ports_filter_answers_with_a_short_grouped_list(mcp_
     }
     assert short["total"] == counts["servers_with_match"]
     # every matching server is named once per matching adapter, with ports up out of ports
-    assert "gpu1.example.com (1/2)" in short["table"].split("MCX653436A-HDAI Adapter (1):")[1]
+    assert "gpu1.example.com (1/2)" in short["table"].split("MCX653436A-HDAI Adapter | 1 |")[1]
+    assert short["table"].splitlines()[2:4] == ["| Adapter | Count | Servers (ports up/total) |", "|---|---|---|"]
     first = short["table"].splitlines()[0]
     assert first == f"{short['total']} of {counts['servers_with_nic_data']} servers with NIC data have a 2-port adapter (2 more servers have no NIC data):"
     assert none["total"] == 0 and none["counts"]["adapters_matching"] == 0 and none["table"].startswith("No server with NIC data has a 4-port adapter")
@@ -1096,8 +1098,9 @@ def test_ports_summary_of_a_long_list_shows_samples_and_keeps_the_rest_for_a_fol
     assert data["counts"]["servers_without_nic_data"] == 1 and data["counts"]["servers_checked"] == 21
     lines = data["table"].splitlines()
     assert lines[0] == "20 of 20 servers with NIC data have a 4-port adapter (1 more servers have no NIC data):"
-    assert lines[1] == "Card A 4p (15): srv00 (0/4), srv01 (1/4), srv02 (0/4), +12 more"
-    assert lines[2] == "Card B 4p (5): srv15 (1/4), srv16 (0/4), srv17 (1/4), +2 more"
+    assert lines[1] == "" and lines[2:4] == ["| Adapter | Count | Servers (ports up/total) |", "|---|---|---|"]
+    assert lines[4] == "| Card A 4p | 15 | srv00 (0/4), srv01 (1/4), srv02 (0/4), +12 more |"
+    assert lines[5] == "| Card B 4p | 5 | srv15 (1/4), srv16 (0/4), srv17 (1/4), +2 more |"
     shown = sum(name in data["table"] for name in (f"srv{i:02d}" for i in range(20)))
     kept = sum(name in data["remaining"]["Card A 4p"] + data["remaining"]["Card B 4p"] for name in (f"srv{i:02d}" for i in range(20)))
     assert shown == 6 and kept == 14 and shown + kept == 20  # every server is in exactly one of the two

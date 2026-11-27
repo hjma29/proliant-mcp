@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.26.1 — 2026-11-26
+
+### Bug Fixes
+- `com_list_nics` with `ports` and the `list_servers` lists for a big fleet now return a real Markdown table (adapter or model, count, servers) instead of plain text lines, which assistants wrapped in a code block that did not wrap in the chat.
+
+---
+
 ## v0.26.0 — 2026-11-26
 
 ### New Features

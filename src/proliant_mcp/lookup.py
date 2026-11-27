@@ -131,8 +131,8 @@ def _text(matches: list[dict[str, Any]]) -> tuple[str, dict[str, str], str]:
     groups: dict[str, list[str]] = {}
     for s in matches:
         groups.setdefault(fleet_table._short_model(s["model"]) or "unknown model", []).append(f"{s['name']} ({sources(s)})")
-    lines, remaining, hidden = fleet_table.grouped_lines(sorted(groups.items(), key=lambda kv: -len(kv[1])), SAMPLE_PER_MODEL)
-    return "\n".join(lines), remaining, f" Then tell the user {hidden} more servers match and offer the full list. Do NOT show `remaining` unless asked; then show every name with no new tool call."
+    table, remaining, hidden = fleet_table.grouped_table(sorted(groups.items(), key=lambda kv: -len(kv[1])), SAMPLE_PER_MODEL, "Model", "Servers (source)")
+    return table, remaining, f" Then tell the user {hidden} more servers match and offer the full list. Do NOT show `remaining` unless asked; then show every name with no new tool call."
 
 
 async def lookup(generation: str | None, model: str | None, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:

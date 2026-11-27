@@ -875,8 +875,10 @@ def _ports_summary(rows: list[dict[str, Any]], ports: int, linked_only: bool) ->
     shown = SAMPLE_PER_MODEL if sample else None
     lines = [f"{len(hits)} of {with_data} servers with NIC data have {what}{tail}:" if hits
              else f"No server with NIC data has {what}{tail}."]
-    group_lines, remaining, hidden_total = fleet_table.grouped_lines(ordered, shown)
-    lines += group_lines
+    remaining, hidden_total = {}, 0
+    if hits:
+        grouped, remaining, hidden_total = fleet_table.grouped_table(ordered, shown, "Adapter", "Servers (ports up/total)")
+        lines += ["", grouped]
     note = (
         "Show `table` to the user exactly as written. The counts are exact (computed by the server): quote them, do not recount. "
         "Servers without network data are unknown, not absent. Ports up is linked/total ports."

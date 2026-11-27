@@ -127,17 +127,19 @@ def _cell(value: Any) -> str:
 COMPACT_ABOVE = 15
 
 
-def grouped_lines(groups: list[tuple[str, list[str]]], per_group: int | None) -> tuple[list[str], dict[str, str], int]:
-    """One line per group, ``label (count): name, name``. With *per_group* each group shows that many names and the rest
-    go to the returned ``remaining`` (label -> names) for a follow-up; the third value is how many names are held back."""
-    lines, remaining, hidden_total = [], {}, 0
-    for label, names in groups:
-        hidden = len(names) - (per_group or len(names))
-        lines.append(f"{label} ({len(names)}): {', '.join(names[:per_group])}" + (f", +{hidden} more" if hidden > 0 else ""))
+def grouped_table(groups: list[tuple[str, list[str]]], per_group: int | None, label: str, names: str) -> tuple[str, dict[str, str], int]:
+    """A Markdown table, one row per group: ``label | count | names``. With *per_group* each group shows that many names
+    and the rest go to the returned ``remaining`` (label -> names) for a follow-up; the third value is how many names are
+    held back."""
+    rows, remaining, hidden_total = [f"| {label} | Count | {names} |", "|---|---|---|"], {}, 0
+    for group, members in groups:
+        hidden = len(members) - (per_group or len(members))
+        shown = _cell(", ".join(members[:per_group])) + (f", +{hidden} more" if hidden > 0 else "")
+        rows.append(f"| {_cell(group)} | {len(members)} | {shown} |")
         if hidden > 0:
-            remaining[label] = ", ".join(names[per_group:])
+            remaining[group] = ", ".join(members[per_group:])
             hidden_total += hidden
-    return lines, remaining, hidden_total
+    return "\n".join(rows), remaining, hidden_total
 
 
 def _table(rows: list[dict[str, Any]], keys: list[str]) -> str:
