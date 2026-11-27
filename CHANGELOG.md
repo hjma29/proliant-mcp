@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.29.1 — 2026-11-27
+
+### Enhancements
+- With `PROLIANT_MCP_COM_LIST=single` the server instructions now say the iLO tools (`get_fleet_summary`, `get_network_adapters`, `get_inventory_snapshot`) cover only the iLO servers added to the install, not the COM fleet, so a question about COM models or hardware goes to `com_list_servers_table` and not to an iLO tool that sees a few servers.
+
+---
+
 ## v0.29.0 — 2026-11-27
 
 ### New Features
