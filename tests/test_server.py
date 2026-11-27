@@ -138,6 +138,13 @@ async def test_data_age_comes_first_so_a_client_that_cuts_a_long_result_keeps_it
     assert list(listed)[0] == "data_age" and list(table)[0] == "data_age"
 
 
+async def test_dimm_questions_are_routed_to_com_list_memory_in_every_hint(mcp_client):
+    async with mcp_client as c:
+        tools = {t.name: " ".join((t.description or "").split()) for t in await c.list_tools()}
+    assert "com_list_memory" in tools["com_list_servers"][:100]  # clients that list tools as "name: first 80 characters"
+    assert "com_list_memory, not com_list_servers" in " ".join(srv.INSTRUCTIONS.split())  # the sentence Qwen quoted when it chose the raw tool
+
+
 async def test_cache_is_first_even_for_two_day_old_data(mcp_client, monkeypatch):
     seen = _counting(monkeypatch)
     com._tokens.clear()

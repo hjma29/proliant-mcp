@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.27.2 — 2026-11-27
+
+### Bug Fixes
+- A DIMM question (for example "which servers have Hynix DIMMs") went to the 51 KB raw `com_list_servers` instead of `com_list_memory`: the server instructions said to use `com_list_servers` for analysis across servers and did not name the memory tool next to it, and the raw tool's description did not mention it. Both now point to `com_list_memory`.
+
+---
+
 ## v0.27.1 — 2026-11-26
 
 ### Bug Fixes

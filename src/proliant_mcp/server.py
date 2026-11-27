@@ -41,7 +41,8 @@ oneview_list_uplink_sets; for GreenLake services greenlake_list_services.
 To show the user a list of servers use com_list_servers_table: a ready-made table and exact counts, to
 present as they are (never retype the data into a script). Default columns are name, model, health: pass
 `columns` for exactly what was asked (power, connected, ilo_ip, ilo_version, firmware_bundle, gpu, storage,
-nics, cpu_model), nothing more. For analysis across servers use
+nics, cpu_model), nothing more. DIMMs or memory makers (Hynix, Samsung): com_list_memory, not
+com_list_servers. For analysis across servers use
 com_list_servers (include_hardware adds CPU, GPU and storage) or com_list_gpus; for a table of storage
 controllers, drives, GPUs and NICs com_hardware_report; for NICs, HBAs, link speeds or network mode
 com_list_nics. Never loop com_get_server or com_api_get over many servers.
@@ -717,7 +718,7 @@ async def com_list_servers(
     generation: Generation = None,
     refresh: Refresh = False,
 ) -> dict[str, Any]:
-    """Raw COM JSON for analysis; to list servers use com_list_servers_table.
+    """Raw COM JSON for analysis; to list servers use com_list_servers_table, for DIMMs com_list_memory.
     Per server: name, serial, model, generation, health, power, COM connection, subscription,
     iLO host/IP/version, OS, CPU vendor, firmware bundle. About 700 characters per server, so a
     big fleet fills the model's context. One call returns the whole fleet."""
