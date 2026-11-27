@@ -203,6 +203,59 @@ async def test_list_servers_filter_logs_in_to_each_ilo_only_until_it_is_cached(m
     assert again["total"] == first["total"] and again["data_age"]["source"] == "local cache" and set(again["source_errors"]) == set(first["source_errors"])
 
 
+def test_only_one_server_claims_each_automatic_refresh(mcp_client):
+    inventory_cache.ensure_ready()
+    assert inventory_cache.claim_poll(3600) is True
+    assert inventory_cache.claim_poll(3600) is False  # another running server asking within the hour
+    db = sqlite3.connect(inventory_cache._db_path())
+    db.execute("UPDATE snapshots SET collected_at = collected_at - 7200 WHERE key = ?", (inventory_cache.POLL_KEY,))
+    db.commit()
+    db.close()
+    assert inventory_cache.claim_poll(3600) is True
+
+
+async def test_automatic_refresh_runs_once_per_interval_and_survives_a_failure(mcp_client):
+    from proliant_mcp import store
+
+    inventory_cache.ensure_ready()
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    async def poll():
+        calls.append(1)
+        raise RuntimeError("source down")
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 3:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await store.auto_poll(poll, sleep=sleep, rand=lambda low, high: low)
+    assert calls == [1] and sleeps == [30, 0.2 * 3600, 0.2 * 3600]  # the error did not stop the loop; the next check is inside the hour
+
+    calls.clear()
+    sleeps.clear()
+    inventory_cache.configure(True, poll=0)
+    with pytest.raises(asyncio.CancelledError):
+        await store.auto_poll(poll, sleep=sleep, rand=lambda low, high: low)
+    assert not calls and inventory_cache.poll_minutes() == 0  # switched off: it only looks again later
+
+
+async def test_automatic_refresh_leaves_a_refused_sign_in_alone(mcp_client, monkeypatch):
+    seen = _counting(monkeypatch)
+    srv._poll_denied.clear()
+    async with mcp_client:
+        first = await srv._poll_once(auto=True)
+        seen.clear()
+        second = await srv._poll_once(auto=True)
+        manual = await srv._poll_once()
+    srv._poll_denied.clear()
+    assert "refused" in first["errors"]["ilo:badpass"].lower() or "401" in first["errors"]["ilo:badpass"]
+    assert second["errors"]["ilo:badpass"].startswith("skipped") and second["errors"]["oneview:ov-badpass"].startswith("skipped")
+    assert not manual["errors"]["ilo:badpass"].startswith("skipped")  # `proliant-mcp poll` and refresh=true still try
+
+
 async def test_poll_once_fills_the_cache_so_answers_need_no_request(mcp_client, monkeypatch):
     seen = _counting(monkeypatch)
     from proliant_mcp import store
@@ -880,7 +933,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 45_700, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools
+    assert sum(sizes.values()) <= 45_900, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"

@@ -17,7 +17,7 @@ is named in `source_errors`, not silently counted as empty. `com_list_servers_ta
 any age (kept up to 7 days) and the assistant says when it was collected and offers a live refresh. Each
 answer has `data_age` (source, `as_of`, `minutes_old`); `refresh=true` reads live. Tools that change a
 server or sign in, and the raw `*_get` tools, are always live. Tools that returned a list now return
-`{"result": [...], "data_age": {...}}`. `proliant-mcp poll` keeps the cache warm.
+`{"result": [...], "data_age": {...}}`. The server refreshes the cache about every hour on its own (`set_inventory_cache` `poll_minutes`); `proliant-mcp poll` does it from cron.
 See [configuration](configuration.md#local-cache).
 `find_server` tells you which server a name, iLO IP or hostname, serial or OS hostname belongs to,
 searching the iLO inventory, every COM account and every OneView appliance at once; for an address

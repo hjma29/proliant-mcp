@@ -4,10 +4,12 @@ plus an opt-in iLO firmware update that the user picks and confirms on a local p
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import sys
 import time
 from collections import Counter
+from collections.abc import AsyncIterator
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
 import httpx
@@ -90,7 +92,23 @@ StorageController = Annotated[
 ]
 
 compat.install()
-mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS, version=__version__)
+_auto_refresh = False  # set by main() for a running server; tests and --check leave it off
+_poll_denied: dict[str, float] = {}  # sources whose sign-in was refused: the automatic refresh leaves them alone for a day
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_: FastMCP[Any]) -> AsyncIterator[None]:
+    task = asyncio.create_task(store.auto_poll(lambda: _poll_once(auto=True))) if _auto_refresh else None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+mcp = FastMCP("proliant-mcp", instructions=INSTRUCTIONS, version=__version__, lifespan=_lifespan)
 mcp.add_middleware(usage_stats.UsageMiddleware())
 
 
@@ -371,8 +389,9 @@ async def get_inventory_cache_status() -> dict[str, Any]:
     power, alerts, logs, links). It does not inspect credentials or create a cache."""
     try:
         enabled, ttl = inventory_cache.settings()
-        return {"enabled": enabled, "ttl_seconds": ttl, "state_ttl_seconds": inventory_cache.state_ttl(), "path": str(inventory_cache._db_path()),
-                "note": "Inventory is kept ttl_seconds and state state_ttl_seconds; refresh=true on a tool reads live."}
+        return {"enabled": enabled, "ttl_seconds": ttl, "state_ttl_seconds": inventory_cache.state_ttl(),
+                "poll_minutes": inventory_cache.poll_minutes(), "path": str(inventory_cache._db_path()),
+                "note": "Answers come from the cache at any age (kept up to 7 days); every poll_minutes the running server refreshes it; refresh=true on a tool reads live."}
     except inventory_cache.CacheError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -382,12 +401,13 @@ async def set_inventory_cache(
     enabled: Annotated[bool, Field(description="True to use the local hardware snapshot cache (the default), false to turn it off.")],
     ttl_seconds: Annotated[int | None, Field(ge=1, le=604800, description="Inventory lifetime in seconds (max 7 days); omit to keep it.")] = None,
     state_ttl_seconds: Annotated[int | None, Field(ge=1, le=604800, description="State (health, power, alerts) lifetime (max 7 days); omit to keep it.")] = None,
+    poll_minutes: Annotated[int | None, Field(ge=0, le=1440, description="Minutes between automatic refreshes (default 60, 0 = off).")] = None,
 ) -> dict[str, Any]:
     """Turn the local cache on or off, or change its lifetimes, when the user asks. It is on by
     default and stored on this computer in an owner-only folder (server names and serial numbers,
     never passwords). Turning it off keeps the existing data; clear_inventory_cache removes it."""
     try:
-        return await asyncio.to_thread(inventory_cache.configure, enabled, ttl_seconds, state_ttl_seconds)
+        return await asyncio.to_thread(inventory_cache.configure, enabled, ttl_seconds, state_ttl_seconds, poll_minutes)
     except inventory_cache.CacheError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -1265,10 +1285,20 @@ _OV_STATE = {"appliance": oneview.appliance_info, "server_hardware": oneview.lis
              "enclosures": oneview.list_enclosures, "interconnects": oneview.list_interconnects, "uplink_sets": oneview.list_uplink_sets}
 
 
-async def _poll_once() -> dict[str, Any]:
+async def _poll_once(auto: bool = False) -> dict[str, Any]:
     """Read everything the tools would read with their default options, live, and store it (``proliant-mcp poll``):
-    each iLO with one login, each COM account with one sign-in, each OneView appliance."""
+    each iLO with one login, each COM account with one sign-in, each OneView appliance. ``auto`` is the refresh that
+    runs inside the server: a source that refused its sign-in is not tried again for a day (no account lock-outs)."""
     from proliant_mcp import find
+
+    def skipped(name: str) -> tuple[str, str] | None:
+        if auto and time.time() - _poll_denied.get(name, 0) < 86400:
+            return name, "skipped: its sign-in was refused earlier"
+        return None
+
+    def refused(name: str, exc: BaseException) -> None:
+        if getattr(exc, "no_stale", False) or isinstance(exc, oneview.OneViewLoginError):
+            _poll_denied[name] = time.time()
 
     started = time.time()
     problem = await store.poll_ready()
@@ -1287,15 +1317,20 @@ async def _poll_once() -> dict[str, Any]:
             return failed
 
         async def one_ilo(s: Server) -> tuple[str, str] | None:
+            if skip := skipped(f"ilo:{s.name}"):
+                return skip
             try:
                 async with RedfishClient(s, transport=_transport) as client:  # one login; an iLO answers one request at a time
                     reads = [(*_ilo_key(s, kind), lambda fn=fn: fn(client), kind in _ILO_STATE) for kind, fn in {**_ILO_INVENTORY, **_ILO_STATE}.items()]
                     failed = await each(s.name, reads, (RedfishError,))
             except RedfishError as exc:
                 failed = str(exc)
+                refused(f"ilo:{s.name}", exc)
             return (f"ilo:{s.name}", failed) if failed else None
 
         async def one_com(a: ComAccount) -> tuple[str, str] | None:
+            if skip := skipped(f"com:{a.name}"):
+                return skip
             try:
                 async with ComClient(a, transport=_transport) as c:
                     rows = await com.server_rows(c, cached=True)
@@ -1309,9 +1344,12 @@ async def _poll_once() -> dict[str, Any]:
                     failed = await each(a.name, reads, (ComError,))
             except ComError as exc:
                 failed = str(exc)
+                refused(f"com:{a.name}", exc)
             return (f"com:{a.name}", failed) if failed else None
 
         async def one_ov(a: OneViewAppliance) -> tuple[str, str] | None:
+            if skip := skipped(f"oneview:{a.name}"):
+                return skip
             try:
                 async with OneViewClient(a, transport=_transport) as c:
                     reads = [(*_ov_key(a, kind), lambda fn=fn: fn(c), kind != "baselines") for kind, fn in {**_OV_STATE, "baselines": oneview.list_baselines}.items()]
@@ -1319,6 +1357,7 @@ async def _poll_once() -> dict[str, Any]:
                     failed = await each(a.name, reads, (OneViewError,))
             except OneViewError as exc:
                 failed = str(exc)
+                refused(f"oneview:{a.name}", exc)
             return (f"oneview:{a.name}", failed) if failed else None
 
         done = await asyncio.gather(
@@ -1362,6 +1401,8 @@ def main() -> None:
         raise SystemExit(inventory_cli.run_import(args.file, args.replace, not args.no_check))
     if args.check:
         raise SystemExit(asyncio.run(_check(args.connect)))
+    global _auto_refresh
+    _auto_refresh = True  # refresh the local cache while this server runs (set_inventory_cache poll_minutes changes or stops it)
     if args.http:
         # No authentication on this endpoint: keep it on localhost or a trusted lab network.
         mcp.run(transport="http", host=args.host, port=args.port)

@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import random
+import sys
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
@@ -221,6 +223,33 @@ async def poll_ready() -> str | None:
     with session(refresh=True) as current:
         enabled, _, _, note = await _ready(current)
     return None if enabled else note or "The local cache is turned off (set_inventory_cache)."
+
+
+async def auto_poll(
+    poll: Callable[[], Awaitable[dict[str, Any]]],
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    rand: Callable[[float, float], float] = random.uniform,
+) -> None:
+    """Refresh the whole cache about every ``poll_minutes`` while this server runs (cancel it to stop).
+
+    Each running server wakes at random times and ``claim_poll`` lets one of them refresh, so the load on the iLOs,
+    OneView and COM is one refresh per interval and spreads over time. A refresh only replaces what it read
+    successfully: when a source is down its last answer stays in the cache, with its age."""
+    await sleep(rand(30, 120))
+    while True:
+        minutes = inventory_cache.DEFAULT_POLL_MINUTES
+        try:
+            minutes = await asyncio.to_thread(inventory_cache.poll_minutes)
+            enabled, _ = await asyncio.to_thread(inventory_cache.settings)
+            if minutes and enabled and await asyncio.to_thread(inventory_cache.claim_poll, minutes * 60):
+                result = await poll()
+                print(f"proliant-mcp: refreshed the local cache ({result.get('stored', 0)} entries"
+                      + (f", {len(result['errors'])} sources failed" if result.get("errors") else "") + ")", file=sys.stderr, flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # a failed refresh must never stop the server
+            print(f"proliant-mcp: cache refresh failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+        await sleep(rand(0.2, 0.3) * minutes * 60 if minutes else 600)
 
 
 def run_poll(interval_minutes: float, once: bool, poll: Callable[[], Awaitable[dict[str, Any]]]) -> int:

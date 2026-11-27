@@ -128,8 +128,8 @@ live together and 0.7 s from the cache (12 to 66 ms each), with no request to an
 Each answer has `data_age`: `source` (`live`, `local cache` or both), `as_of` and `minutes_old`. When data
 comes from the cache, the assistant ends the reply with when it was collected and that you can ask for a live
 refresh. Ask for "fresh" or "current" data and it passes `refresh=true`, which reads live and updates the cache.
-Health and power from the cache can be days old, so the age line matters; the optional `proliant-mcp poll`
-keeps everything recent if you want that.
+Health and power from the cache can be days old, so the age line matters; the automatic refresh
+keeps everything about an hour old.
 
 - **A source that is down:** inventory falls back to the last stored answer (up to 7 days old), marked
   stale with the error. State never does: an iLO that cannot be read is reported, not hidden behind
@@ -139,11 +139,18 @@ keeps everything recent if you want that.
 - **New servers:** `find_server` looks in the cached lists first and again live if nothing matches.
 - COM's own inventory may have been collected long before; check `inventory_collected_at`.
 
-**Keep it warm.** `proliant-mcp poll` reads everything the tools read (each iLO with one login, each COM
-account, each OneView appliance) every 30 minutes (`--interval MINUTES`), so answers come from the
-cache; `proliant-mcp poll --once` refreshes once and exits, for cron or a timer. On the lab one refresh
-stores 83 entries in about 11 s. To keep state answers warm too, poll at least as often as the state
-lifetime (`--interval 5`), at the cost of one login per iLO each time:
+**Automatic refresh.** While proliant-mcp runs, it refreshes everything the tools read (each iLO with one
+login, each COM account, each OneView appliance) about every 60 minutes, so cached answers stay recent and
+nothing needs scheduling. The refresh only replaces what it read successfully: when a source is down its last
+answer stays in the cache (up to 7 days) with its age. With several chats open, the running servers share one
+refresh (a claim row in the cache), and each wakes at random times, so the sources see one refresh per hour,
+spread over time. A source that refuses its sign-in is left alone for a day, to avoid account lock-outs; asking
+for `refresh=true` still tries it. Ask your assistant to change the interval or turn it off
+(`set_inventory_cache`, `poll_minutes`, 0 to 1440; 0 = off).
+
+**Poll from cron instead.** `proliant-mcp poll` does the same refresh on a timer without any assistant running
+(`--interval MINUTES`, default 30), and `proliant-mcp poll --once` refreshes once and exits, for cron or a
+systemd timer. On the lab one refresh stores 83 entries in about 11 s, at the cost of one login per iLO:
 
 ```
 # every 30 minutes, with uv installed (Linux / WSL crontab -e)

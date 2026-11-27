@@ -28,6 +28,9 @@ STALE_KEEP = 7 * 86400  # how long entries stay for a stale fallback after their
 DEFAULT_TTL = STALE_KEEP
 DEFAULT_STATE_TTL = STALE_KEEP
 MAX_TTL = STALE_KEEP
+DEFAULT_POLL_MINUTES = 60  # automatic refresh of everything the tools read; 0 turns it off
+MAX_POLL_MINUTES = 1440
+POLL_KEY = "poll-claim"
 MAX_ROWS = 2000
 MAX_VALUE_BYTES = 1_000_000
 MAX_PAYLOAD_BYTES = 16_000_000
@@ -106,11 +109,55 @@ def state_ttl() -> int:
     return ttl
 
 
-def configure(enabled: bool, ttl_seconds: int | None = None, state_ttl_seconds: int | None = None) -> dict[str, Any]:
+def poll_minutes() -> int:
+    """Minutes between automatic refreshes (0 = off)."""
+    path = _settings_path()
+    if not path.exists():
+        return DEFAULT_POLL_MINUTES
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CacheError(f"Cannot read cache settings: {type(exc).__name__}") from exc
+    minutes = value.get("poll_minutes", DEFAULT_POLL_MINUTES) if isinstance(value, dict) else None
+    if type(minutes) is not int or not 0 <= minutes <= MAX_POLL_MINUTES:
+        raise CacheError("Invalid automatic refresh interval in the cache settings")
+    return minutes
+
+
+def claim_poll(min_age_seconds: float) -> bool:
+    """True for exactly one of the servers sharing this cache once the last refresh is at least this old.
+
+    Every running proliant-mcp wakes at random times; the claim row in the cache decides who refreshes, so the
+    sources see one refresh per interval however many chats are open."""
+    db = _connect(True)
+    if db is None:
+        return False
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        now = time.time()
+        row = db.execute("SELECT collected_at FROM snapshots WHERE key = ?", (POLL_KEY,)).fetchone()
+        if row and 0 <= now - row[0] < min_age_seconds:
+            db.rollback()
+            return False
+        db.execute("INSERT INTO snapshots VALUES (?, ?, '{}') ON CONFLICT(key) DO UPDATE SET collected_at = excluded.collected_at", (POLL_KEY, now))
+        db.commit()
+        return True
+    except sqlite3.Error as exc:
+        raise CacheError(f"Cannot claim the refresh: {type(exc).__name__}") from exc
+    finally:
+        db.close()
+
+
+def configure(enabled: bool, ttl_seconds: int | None = None, state_ttl_seconds: int | None = None,
+              poll: int | None = None) -> dict[str, Any]:
     if ttl_seconds is None:
         _, ttl_seconds = settings()
     if state_ttl_seconds is None:
         state_ttl_seconds = state_ttl()
+    if poll is None:
+        poll = poll_minutes()
+    if not 0 <= poll <= MAX_POLL_MINUTES:
+        raise CacheError(f"Automatic refresh must be between 0 and {MAX_POLL_MINUTES} minutes")
     for name, value in (("Cache lifetime", ttl_seconds), ("State cache lifetime", state_ttl_seconds)):
         if not 1 <= value <= MAX_TTL:
             raise CacheError(f"{name} must be between 1 and {MAX_TTL} seconds")
@@ -122,10 +169,10 @@ def configure(enabled: bool, ttl_seconds: int | None = None, state_ttl_seconds: 
     else:
         _bump_generation()
     try:
-        write_text(_settings_path(), json.dumps({"enabled": enabled, "ttl_seconds": ttl_seconds, "state_ttl_seconds": state_ttl_seconds}) + "\n")
+        write_text(_settings_path(), json.dumps({"enabled": enabled, "ttl_seconds": ttl_seconds, "state_ttl_seconds": state_ttl_seconds, "poll_minutes": poll}) + "\n")
     except OSError as exc:
         raise CacheError(f"Cannot save cache settings: {type(exc).__name__}") from exc
-    return {"enabled": enabled, "ttl_seconds": ttl_seconds, "state_ttl_seconds": state_ttl_seconds, "path": str(_db_path()),
+    return {"enabled": enabled, "ttl_seconds": ttl_seconds, "state_ttl_seconds": state_ttl_seconds, "poll_minutes": poll, "path": str(_db_path()),
             "note": "The local cache contains hardware inventory, not passwords. Disabling does not erase existing data."}
 
 

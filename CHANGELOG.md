@@ -6,6 +6,18 @@ directly (see the README).
 
 ---
 
+## v0.26.0 — 2026-11-26
+
+### New Features
+- Cache first: answers come from the local cache at any age (inventory and state are kept up to 7 days; they were 1 hour and 5 minutes) and every cached answer tells the assistant to end the reply with when the data was collected and to offer a live refresh (`refresh=true`).
+- Automatic refresh: the running server refreshes everything the tools read about every 60 minutes, so cached answers stay recent without a cron job or timer. Several open chats share one refresh (a claim row in the cache) and wake at random times, so each iLO, OneView and COM sees one refresh per hour. A refresh only replaces what it read successfully; a source that is down keeps its last answer with its age. `set_inventory_cache` takes `poll_minutes` (0 turns it off, up to 1440); `get_inventory_cache_status` shows it.
+
+### Enhancements
+- A source whose sign-in was refused (wrong iLO or OneView password, COM login) is skipped by the automatic refresh for a day, so it cannot lock the account. `refresh=true` and `proliant-mcp poll` still try it.
+- `set_inventory_cache` lifetimes go up to 7 days.
+
+---
+
 ## v0.25.0 — 2026-11-26
 
 ### New Features
