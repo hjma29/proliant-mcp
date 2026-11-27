@@ -934,7 +934,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 45_900, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes
+    assert sum(sizes.values()) <= 47_200, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"
@@ -1082,6 +1082,18 @@ async def test_com_list_nics_ports_filter_answers_with_a_short_grouped_list(mcp_
     assert first == f"{short['total']} of {counts['servers_with_nic_data']} servers with NIC data have a 2-port adapter (2 more servers have no NIC data):"
     assert none["total"] == 0 and none["counts"]["adapters_matching"] == 0 and none["table"].startswith("No server with NIC data has a 4-port adapter")
     assert linked["counts"]["adapters_matching"] == 3 and "with a link up" in linked["table"]  # each 2-port adapter has a port up
+
+
+async def test_com_list_memory_finds_the_servers_with_a_dimm_maker(mcp_client):
+    async with mcp_client as c:
+        every = (await c.call_tool("com_list_memory", {})).structured_content
+        hynix = (await c.call_tool("com_list_memory", {"manufacturer": "hynix"})).structured_content
+        none = (await c.call_tool("com_list_memory", {"manufacturer": "Kingston"})).structured_content
+    assert every["counts"]["by_maker"] == {"SK Hynix": {"servers": 1, "dimms": 2}, "Samsung": {"servers": 1, "dimms": 1}, "Micron": {"servers": 1, "dimms": 1}}
+    assert every["counts"]["servers_with_memory_data"] == 2 and every["counts"]["servers_without_memory_data"] == len(every["inventory_unavailable"]) > 0
+    assert hynix["counts"]["servers_with_match"] == 1 and hynix["counts"]["dimms_matching"] == 2  # the empty slot is not a DIMM, "Hynix" and "SK Hynix" are one maker
+    assert "| Server | DIMMs | Modules |" in hynix["table"] and "2 x 64GB DRAM RDIMM 4800 MT/s (HMCG94AEBRA123N)" in hynix["table"]
+    assert none["counts"]["servers_with_match"] == 0 and none["table"].startswith("No server with memory data has Kingston DIMMs")
 
 
 def test_ports_summary_of_a_long_list_shows_samples_and_keeps_the_rest_for_a_follow_up():

@@ -491,6 +491,36 @@ def _pci_gpu_names(pci: list[dict[str, Any]]) -> dict[str, str]:
     return {name: next(iter(models)) for name, models in found.items() if name and len(models) == 1 and "" not in models}
 
 
+def _dimm_vendor(item: dict[str, Any]) -> str:
+    """One name per memory maker: iLO says "Hynix" in Manufacturer and "SK Hynix" in the HPE VendorName."""
+    raw = (((item.get("Oem") or {}).get("Hpe") or {}).get("VendorName") or item.get("Manufacturer") or "").strip()
+    low = raw.lower()
+    for key, name in (("hynix", "SK Hynix"), ("samsung", "Samsung"), ("micron", "Micron"), ("kingston", "Kingston")):
+        if key in low:
+            return name
+    return raw or "Unknown"
+
+
+def memory_summary(inv: dict[str, Any]) -> dict[str, Any]:
+    """Installed DIMMs from a server's COM inventory, grouped by maker, size, type and speed (empty slots are skipped)."""
+    items = _section(inv, "memory")
+    groups: Counter[tuple[str, int, str, Any, str]] = Counter()
+    for m in items:
+        size = int(m.get("CapacityMiB") or 0)
+        if (m.get("Status") or {}).get("State") == "Absent" or not size:
+            continue
+        hpe = (m.get("Oem") or {}).get("Hpe") or {}
+        groups[(
+            _dimm_vendor(m), size // 1024, " ".join(filter(None, [m.get("MemoryDeviceType") or m.get("MemoryType"), hpe.get("BaseModuleType")])),
+            m.get("OperatingSpeedMhz") or hpe.get("MaxOperatingSpeedMTs"), (m.get("PartNumber") or "").strip(),
+        )] += 1
+    modules = [
+        {"manufacturer": maker, "size_gib": gib, "type": kind or None, "speed_mts": speed, "part_number": part or None, "count": n}
+        for (maker, gib, kind, speed, part), n in sorted(groups.items(), key=lambda kv: (-kv[1], kv[0][0]))
+    ]
+    return {"known": bool(items), "dimms": sum(g["count"] for g in modules), "total_gib": sum(g["count"] * g["size_gib"] for g in modules), "modules": modules}
+
+
 def hardware_summary(inv: dict[str, Any], detail: bool = False, network: bool = False) -> dict[str, Any]:
     """CPUs and GPUs from a server's cached COM inventory (``/servers/{id}/inventory``).
 
@@ -540,6 +570,7 @@ def hardware_summary(inv: dict[str, Any], detail: bool = False, network: bool = 
         "gpus": gpus,
         "gpu_source": source if gpu_items else None,
         "storage": {**storage_summary(inv, detail), "known": storage_known},
+        "memory": memory_summary(inv),
     }
     if network:
         summary["network"] = nic_summary(inv, detail)
@@ -583,7 +614,7 @@ async def _hardware_for(c: ComClient, ids: list[str], workers: int = 8, network:
                     return {"inventory_available": False, "inventory_error": str(exc)}
                 raise
 
-    got = await store.fetch_many("com_hw", _scope(c), ids, fetch, (ComError,))
+    got = await store.fetch_many("com_hw2", _scope(c), ids, fetch, (ComError,))
     auth = next((v for v in got.values() if isinstance(v, ComAuthError)), None)
     if auth is not None:
         raise auth  # a sign-in problem applies to every server: report it once
@@ -720,6 +751,59 @@ async def list_gpus(
         "note": "Data is COM's cached inventory. Servers in inventory_unavailable have no cached CPU/PCI inventory "
         "(full inventory never collected, or not connected to COM), so their GPUs are unknown, not absent.",
         "servers": report,
+    }
+
+
+def _module_text(m: dict[str, Any]) -> str:
+    detail = " ".join(str(x) for x in (m["type"], f"{m['speed_mts']} MT/s" if m["speed_mts"] else None) if x)
+    return f"{m['count']} x {m['size_gib']}GB {detail}".strip() + (f" ({m['part_number']})" if m["part_number"] else "")
+
+
+async def list_memory(
+    c: ComClient, manufacturer: str | None, name_contains: str | None, connected: bool | None, generation: str | None = None,
+) -> dict[str, Any]:
+    """Fleet DIMM report from COM's cached inventory. Without ``manufacturer``: the DIMM makers with their server and DIMM
+    counts. With it (any case, e.g. Hynix): only the servers that have such DIMMs, one table row each."""
+    rows = await list_servers(c, None, connected, name_contains, include_hardware=True, generation=generation)
+    wanted = (manufacturer or "").strip().lower()
+    known = [r for r in rows if (r["hardware"].get("memory") or {}).get("known")]
+    unavailable = [r["name"] for r in rows if r not in known]
+    by_maker: dict[str, dict[str, Any]] = {}
+    matches: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    for r in known:
+        mods = [m for m in r["hardware"]["memory"]["modules"] if not wanted or wanted in m["manufacturer"].lower()]
+        if not mods:
+            continue
+        matches.append((r, mods))
+        for maker in {m["manufacturer"] for m in mods}:
+            entry = by_maker.setdefault(maker, {"servers": 0, "dimms": 0, "names": []})
+            entry["servers"] += 1
+            entry["names"].append(r["name"])
+            entry["dimms"] += sum(m["count"] for m in mods if m["manufacturer"] == maker)
+    ordered = sorted(by_maker.items(), key=lambda kv: (-kv[1]["servers"], kv[0]))
+    dimms = sum(m["count"] for _, mods in matches for m in mods)
+    tail = f" ({len(unavailable)} more servers have no memory data)" if unavailable else ""
+    if not matches:
+        table = f"No server with memory data has {manufacturer or 'any'} DIMMs{tail}."
+    elif wanted:
+        lines = [f"{len(matches)} of {len(known)} servers with memory data have {manufacturer} DIMMs ({dimms} DIMMs){tail}:", "",
+                 "| Server | DIMMs | Modules |", "|---|---|---|"]
+        for r, mods in matches:
+            lines.append(f"| {fleet_table._cell(r['name'])} | {sum(m['count'] for m in mods)} | {fleet_table._cell('; '.join(_module_text(m) for m in mods))} |")
+        table = "\n".join(lines)
+    else:
+        grouped, _, _ = fleet_table.grouped_table([(k, v["names"]) for k, v in ordered], None, "DIMM maker", "Servers")
+        table = f"{len(known)} servers with memory data{tail}:\n\n{grouped}"
+    return {
+        "counts": {
+            "servers_checked": len(rows), "servers_with_memory_data": len(known), "servers_without_memory_data": len(unavailable),
+            "servers_with_match": len(matches), "dimms_matching": dimms,
+            "by_maker": {k: {"servers": v["servers"], "dimms": v["dimms"]} for k, v in ordered},
+        },
+        "table": table,
+        "inventory_unavailable": unavailable,
+        "note": "Show `table` as written and quote `counts`: they are exact. Data is COM's cached inventory; servers in "
+        "inventory_unavailable have no memory data (unknown, not absent). Hynix and SK Hynix are the same maker.",
     }
 
 

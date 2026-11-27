@@ -143,6 +143,13 @@ _VPI = {"Id": "DE081000", "Name": "NetworkAdapter", "Model": "HPE InfiniBand HDR
         "SKU": "P36054-001", "Manufacturer": "MLNX", "Ports": [_port(1, "Ethernet", True, 100.0), _port(2, "InfiniBand", False, 0.0)]}
 _FC = {"Id": "DE085000", "Name": "HPE SN1620E 32Gb 2p FC HBA", "Model": "HPE SN1620E 32Gb 2p FC HBA", "SKU": "SN1620E2P",
        "Ports": [_port(1, "FibreChannel", True, 16), _port(2, "FibreChannel", True, 16)]}
+def _dimm(slot: int, maker: str, vendor: str | None, mib: int = 65536) -> dict:
+    absent = mib == 0
+    return {"Id": f"proc1dimm{slot}", "Manufacturer": maker or None, "CapacityMiB": mib, "MemoryType": "DRAM", "PartNumber": "" if absent else "HMCG94AEBRA123N",
+            "Status": {"State": "Absent" if absent else "Enabled", "Health": "OK"},
+            "Oem": {"Hpe": {"VendorName": vendor, "BaseModuleType": "RDIMM", "MaxOperatingSpeedMTs": 4800}}}
+
+
 FAKE_COM_INVENTORY: dict[str, dict] = {
     "/compute-ops-mgmt/v1/servers/P1+SN0001/inventory": {
         "lastFullInventoryCollectionAt": "2026-11-10T00:00:00Z",
@@ -150,6 +157,7 @@ FAKE_COM_INVENTORY: dict[str, dict] = {
         "pciDevice": {"data": [_EMBEDDED_VIDEO]},
         "storage": {"data": [_RAID, *_NVME]},
         "networkAdapter": {"data": [_FC]},
+        "memory": {"data": [_dimm(1, "Hynix", "SK Hynix"), _dimm(2, "Hynix", "SK Hynix"), _dimm(3, "", None, 0)]},  # one slot is empty
     },
     "/compute-ops-mgmt/v1/servers/P3+SN0003/inventory": {
         "lastFullInventoryCollectionAt": "2026-11-11T00:00:00Z",
@@ -157,6 +165,7 @@ FAKE_COM_INVENTORY: dict[str, dict] = {
                                 _gpu(5, "Intel Video Controller", "Intel", "")]},
         "pciDevice": {"data": [_EMBEDDED_VIDEO]},
         "networkAdapter": {"data": [_BCM, _VPI]},
+        "memory": {"data": [_dimm(1, "Samsung", "Samsung", 32768), _dimm(2, "Micron Technology", "Micron", 32768)]},
     },
     # an older iLO that lists the GPU only as a PCIe display controller
     "/compute-ops-mgmt/v1/servers/P4+SN0004/inventory": {

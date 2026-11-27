@@ -6,6 +6,16 @@ directly (see the README).
 
 ---
 
+## v0.27.0 — 2026-11-26
+
+### New Features
+- `com_list_memory`: DIMMs across the COM fleet in one call, from COM's cached inventory. Without arguments it lists the DIMM makers with exact server and DIMM counts; with `manufacturer` (for example `Hynix`, any case) it returns a table of the servers that have them (DIMM count, size, type, speed, part number). Hynix and SK Hynix count as one maker, empty slots are not DIMMs, and servers COM has no memory data for are listed as unknown. Before, "how many servers have Hynix DIMMs" needed a raw `com_api_get` per server.
+
+### Enhancements
+- COM hardware summaries now include installed memory (DIMMs by maker, size, type and speed), so the cached hardware entries are read again once after the upgrade.
+
+---
+
 ## v0.26.1 — 2026-11-26
 
 ### Bug Fixes

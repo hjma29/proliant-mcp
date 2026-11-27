@@ -69,7 +69,7 @@ Never ask the user to type a password into the chat; these tools collect it on a
 GUIDE = """proliant-mcp answers questions about HPE ProLiant servers from three sources: iLO (a few servers reached directly), HPE Compute Ops Management (COM, the GreenLake cloud service, usually the whole fleet) and HPE OneView (Synergy frames). Start with list_servers: it shows which iLOs, OneView appliances and COM accounts are configured. Then pick by question:
 
 COM fleet (how many, which, health, power, connected, generation, model, iLO firmware, subscriptions): com_get_overview for counts; com_list_servers_table for a list, with filters health, connected, generation, name_contains and storage_controller (e.g. NS204) and columns such as gpu, storage_controllers, nics, nic_firmware, ilo_version.
-COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, drives and capacity com_hardware_report (storage_controller, storage_over_tb); NICs and ports com_list_nics. One server: com_get_server. Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services.
+COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, drives and capacity com_hardware_report (storage_controller, storage_over_tb); NICs and ports com_list_nics; DIMMs and memory makers com_list_memory. One server: com_get_server. Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services.
 Find a server by name, serial number or IP: find_server. Count or list servers of all sources by generation or model: list_servers(generation, model).
 One iLO server (name or IP from list_servers): get_server_summary (model, serial, BIOS, iLO version, power, health, OS), get_health, get_processors (CPUs and GPUs), get_memory, get_storage, get_network_adapters (MACs, links, firmware), get_firmware_inventory, get_event_log, get_ilo_info. All iLOs at once: get_fleet_summary, get_fleet_event_summary.
 OneView: oneview_get_appliance, oneview_list_enclosures, oneview_list_server_hardware, oneview_list_server_profiles (template compliance), oneview_list_alerts, oneview_list_interconnects, oneview_list_uplink_sets, oneview_list_firmware_baselines.
@@ -843,6 +843,22 @@ async def com_list_gpus(
     (e.g. H100) to list only servers with that GPU."""
     with store.session(refresh) as current:
         return store.with_age(await _com(account, lambda c: com.list_gpus(c, name_contains, connected, include_servers_without_gpus, gpu_model)), current)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def com_list_memory(
+    account: AccountName = None,
+    manufacturer: Annotated[str | None, Field(description="Only servers with DIMMs from this maker, e.g. Hynix, Samsung or Micron (any case).")] = None,
+    name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
+    connected: Annotated[bool | None, Field(description="Only servers whose iLO is (or isn't) connected to COM.")] = None,
+    generation: Generation = None,
+    refresh: Refresh = False,
+) -> dict[str, Any]:
+    """DIMMs across the whole COM fleet: the DIMM makers with exact server and DIMM counts, or with
+    manufacturer (e.g. Hynix) a table of the servers that have them (DIMM count, size, type, speed,
+    part number). Servers COM has no memory data for are listed as unknown. Use it for any DIMM question."""
+    with store.session(refresh) as current:
+        return store.with_age(await _com(account, lambda c: com.list_memory(c, manufacturer, name_contains, connected, generation)), current)
 
 
 @mcp.tool(annotations=READ_ONLY)
