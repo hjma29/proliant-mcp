@@ -84,6 +84,13 @@ def _nic_firmware(s: dict[str, Any]) -> str | None:
     return _with_counts([f"{a['name']} fw {a.get('firmware') or '?'}" for a in network.get("adapters") or []]) or "none"
 
 
+def _memory(s: dict[str, Any]) -> str | None:
+    memory = _hw(s).get("memory") or {}
+    if not memory.get("known"):
+        return "unknown"
+    return "; ".join(f"{m['count']} x {m['size_gib']}GB {m['manufacturer']} {m['type'] or ''}".strip() for m in memory.get("modules") or []) or "none"
+
+
 # column key -> (heading, value)
 COLUMNS: dict[str, tuple[str, Callable[[dict[str, Any]], Any]]] = {
     "name": ("Name", lambda s: s.get("name")),
@@ -107,10 +114,11 @@ COLUMNS: dict[str, tuple[str, Callable[[dict[str, Any]], Any]]] = {
     "storage_controllers": ("Storage controllers", _storage_controllers),
     "nics": ("NICs", _nics),
     "nic_firmware": ("NIC firmware", _nic_firmware),
+    "memory": ("Memory", _memory),
 }
 
 # These read COM's cached hardware inventory, one request per server, so they are fetched only when asked for.
-HARDWARE_COLUMNS = {"cpu_model", "gpu", "storage", "storage_controllers", "nics", "nic_firmware"}
+HARDWARE_COLUMNS = {"cpu_model", "gpu", "storage", "storage_controllers", "nics", "nic_firmware", "memory"}
 NETWORK_COLUMNS = {"nics", "nic_firmware"}  # also need the network adapter inventory
 
 
@@ -189,6 +197,13 @@ def build(rows: list[dict[str, Any]], columns: list[str] | None = None, extra_co
                 gpus[g["name"]] += g["count"]
         counts["gpus_by_model"] = dict(gpus.most_common())
         counts["servers_with_unknown_gpus"] = sum(1 for s in rows if not _hw(s).get("cpu_gpu_known"))
+    if "memory" in keys:
+        dimms: Counter[str] = Counter()
+        for s in rows:
+            for m in (_hw(s).get("memory") or {}).get("modules") or []:
+                dimms[m["manufacturer"]] += m["count"]
+        counts["dimms_by_maker"] = dict(dimms.most_common())
+        counts["servers_with_unknown_memory"] = sum(1 for s in rows if not (_hw(s).get("memory") or {}).get("known"))
     counts.update(extra_counts or {})
     return {
         "total": len(rows),

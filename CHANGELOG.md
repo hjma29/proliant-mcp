@@ -6,6 +6,14 @@ directly (see the README).
 
 ---
 
+## v0.28.0 — 2026-11-27
+
+### New Features
+- `com_list_servers_table` answers most fleet questions in one call: new filters `gpu_model`, `cpu_contains` (for example `AMD`), `nic_ports`, `dimm_maker`, `direct_attached` and `storage_over_tb`, which combine with the existing ones, and a `memory` column. Each filter adds its own column by default and counts servers COM has no inventory for as unknown. On the lab it gives the same answers as the separate tools: 17 servers with Hynix DIMMs, 21 with a 2-port adapter, 18 with direct-attached drives, 7 with AMD CPUs.
+- Experimental: `PROLIANT_MCP_COM_LIST=single` exposes only `com_list_servers_table` for COM lists (the other COM list tools are hidden and the server instructions point only at it), to test whether one list tool is easier for a model than several.
+
+---
+
 ## v0.27.2 — 2026-11-27
 
 ### Bug Fixes

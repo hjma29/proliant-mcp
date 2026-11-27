@@ -172,6 +172,18 @@ database cannot be used, the tools read live and say so; they never fail because
   and writes but keeps existing data; clearing removes the rows but cannot guarantee erasure from
   filesystem backups or SQLite free pages. Clear it after replacing hardware.
 
+## One COM list tool (experimental)
+
+By default proliant-mcp has several COM list tools (`com_list_servers_table`, `com_list_servers`, `com_list_gpus`, `com_list_nics`,
+`com_list_memory`, `com_hardware_report`). Models with no tool search, or small ones, can pick the wrong one. Set the environment
+variable `PROLIANT_MCP_COM_LIST=single` for the MCP server and it exposes only `com_list_servers_table`, which filters by health,
+generation, GPU, CPU, NIC ports, DIMM maker, direct-attached drives, storage controller and capacity and shows any column, with the
+same exact counts. The server instructions and guide then point only at that tool. Example for an MCP client config:
+
+```json
+{"command": "uvx", "args": ["--python", "3.13", "proliant-mcp@latest"], "env": {"PROLIANT_MCP_COM_LIST": "single"}}
+```
+
 ## Tool-call counters
 
 proliant-mcp counts which tools your assistant calls, how often, how long they take and how many fail, so

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as dt
+import os
 import sys
 import time
 from collections import Counter
@@ -77,6 +78,38 @@ OneView: oneview_get_appliance, oneview_list_enclosures, oneview_list_server_har
 iLO firmware: ilo_firmware_list_updates (latest version from HPE, steps, minutes); ilo_firmware_update_start to update (the user picks and confirms on a page), then ilo_firmware_update_status for live progress.
 
 Counts in results are exact: quote them. "unknown" means the source has no data, not that the part is absent. Never guess a value; if no tool covers it, say so."""
+
+# Experimental (PROLIANT_MCP_COM_LIST=single): one COM list tool, com_list_servers_table, with every hardware filter and
+# column, instead of also exposing com_list_servers, com_list_gpus, com_list_nics, com_list_memory and com_hardware_report.
+SINGLE_COM_LIST = os.environ.get("PROLIANT_MCP_COM_LIST", "").strip().lower() == "single"
+SINGLE_COM_LIST_HIDDEN = ["com_list_servers", "com_list_gpus", "com_list_nics", "com_list_memory", "com_hardware_report"]
+
+
+def single_list_text(instructions: str, guide: str) -> tuple[str, str]:
+    """The server instructions and the guide, pointing at com_list_servers_table only."""
+    start, end = instructions.index("To show the user a list of servers"), "Never loop com_get_server or com_api_get over many servers."
+    one_tool = (
+        "For every question about the COM fleet (which servers, how many, health, power, GPUs, CPUs, storage controllers, drives,\n"
+        "NICs, DIMMs) use com_list_servers_table: it filters (health, connected, generation, name_contains, storage_controller,\n"
+        "gpu_model, cpu_contains, nic_ports, dimm_maker, direct_attached, storage_over_tb) and shows the `columns` asked for\n"
+        "(power, connected, ilo_ip, ilo_version, firmware_bundle, gpu, storage, storage_controllers, nics, nic_firmware, memory,\n"
+        "cpu_model), with exact counts: present the table as it is and quote `counts` (never retype or recount). "
+    )
+    instructions = instructions[:start] + one_tool + instructions[instructions.index(end):]
+    lines = [line for line in guide.splitlines() if not line.startswith("COM hardware:")]
+    index = next(i for i, line in enumerate(lines) if line.startswith("COM fleet ("))
+    lines[index] = (
+        "COM fleet and hardware (how many, which, health, power, generation, model, iLO firmware, subscriptions, GPUs, CPUs, storage "
+        "controllers, drives, NICs, DIMMs): com_get_overview for counts; com_list_servers_table for any list, with filters health, "
+        "connected, generation, name_contains, storage_controller (e.g. NS204), gpu_model (e.g. H100), cpu_contains (e.g. AMD), "
+        "nic_ports, dimm_maker (e.g. Hynix), direct_attached, storage_over_tb and the columns asked for. One server: com_get_server. "
+        "Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services."
+    )
+    return instructions, "\n".join(lines)
+
+
+if SINGLE_COM_LIST:
+    INSTRUCTIONS, GUIDE = single_list_text(INSTRUCTIONS, GUIDE)
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
@@ -734,47 +767,67 @@ async def com_list_servers_table(
     name_contains: Annotated[str | None, Field(description="Case-insensitive substring of the server name.")] = None,
     generation: Generation = None,
     storage_controller: StorageController = None,
+    gpu_model: Annotated[str | None, Field(description="Only servers with a GPU whose name or vendor contains this text, e.g. H100.")] = None,
+    cpu_contains: Annotated[str | None, Field(description="Only servers whose CPU model contains this text, e.g. AMD, EPYC or Xeon.")] = None,
+    nic_ports: Annotated[int | None, Field(ge=1, description="Only servers with a NIC/HBA that has exactly this many ports.")] = None,
+    dimm_maker: Annotated[str | None, Field(description="Only servers with DIMMs from this maker, e.g. Hynix or Samsung (any case).")] = None,
+    direct_attached: Annotated[bool | None, Field(description="True: only servers with direct-attached drives; false: only those without.")] = None,
+    storage_over_tb: Annotated[float | None, Field(gt=0, description="Only servers with more than this many TB of raw drive capacity.")] = None,
     columns: Annotated[
         list[
             Literal[
                 "name", "model", "health", "power", "connected", "ilo_ip", "ilo_host", "ilo_version", "firmware_bundle", "os",
-                "serial", "cpu", "cpu_model", "gpu", "storage", "storage_controllers", "nics", "nic_firmware", "generation",
-                "subscription", "oneview",
+                "serial", "cpu", "cpu_model", "gpu", "storage", "storage_controllers", "nics", "nic_firmware", "memory",
+                "generation", "subscription", "oneview",
             ]
         ]
         | None,
         Field(
-            description="Columns in order. Default: name, model, health. Add only what the user asks for: power, connected, "
-            "ilo_ip, ilo_version, firmware_bundle; or gpu, storage (drives), storage_controllers (model + firmware), "
-            "nics (ports, mode), nic_firmware (model + firmware), cpu_model (read per server from COM's cached inventory, slower)."
+            description="Columns in order. Default: name, model, health (plus the column of each hardware filter). Add only what the "
+            "user asks for: power, connected, ilo_ip, ilo_version, firmware_bundle; or gpu, storage (drives), storage_controllers "
+            "(model + firmware), nics (ports, mode), nic_firmware (model + firmware), memory (DIMMs), cpu_model (read per server "
+            "from COM's cached inventory, slower)."
         ),
     ] = None,
     refresh: Refresh = False,
 ) -> dict[str, Any]:
-    """List or show the COM servers: ready to display, exact counts, fast. Use this for "list my
-    servers", "which are critical", "servers with NS204" (storage_controller), "Gen11 servers with
-    their NIC and storage controller firmware".
-    With no `columns`, a big fleet comes back as a short grouped list (health summary, the servers
-    needing attention, the OK ones by model); pass `columns` for a real table with exactly what was
-    asked. Show `table` as written and quote `counts`; do not retype the data into a script. Same
-    filters as com_list_servers, which returns the full JSON for analysis."""
+    """List or show the COM servers: ready to display, exact counts, fast. Use it for "list my
+    servers", "which are critical", "servers with NS204" (storage_controller), "H100 GPUs", "AMD CPUs",
+    "2-port NICs", "Hynix DIMMs", "direct-attached drives", "over 20 TB"; filters combine. With no
+    `columns` and no hardware filter a big fleet comes back as a short grouped list; pass `columns`
+    for a table of exactly what was asked. Servers COM has no inventory for count as unknown, not as
+    non-matching. Show `table` as written and quote `counts`; never retype or recount."""
     with store.session(refresh) as current:
-        return store.with_age(await _servers_table(account, health, connected, name_contains, generation, storage_controller, columns), current)
+        hardware_filters = {"gpu_model": gpu_model, "cpu_contains": cpu_contains, "nic_ports": nic_ports, "dimm_maker": dimm_maker,
+                            "direct_attached": direct_attached, "storage_over_tb": storage_over_tb}
+        return store.with_age(
+            await _servers_table(account, health, connected, name_contains, generation, storage_controller, columns, hardware_filters), current
+        )
 
 
-async def _servers_table(account, health, connected, name_contains, generation, storage_controller, columns) -> dict[str, Any]:
-    if storage_controller and not columns:
-        columns = ["name", "model", "health", "storage_controllers"]
+_FILTER_COLUMN = {"gpu_model": "gpu", "cpu_contains": "cpu_model", "nic_ports": "nics", "dimm_maker": "memory",
+                  "direct_attached": "storage_controllers", "storage_over_tb": "storage"}
+
+
+async def _servers_table(account, health, connected, name_contains, generation, storage_controller, columns, hardware_filters=None) -> dict[str, Any]:
+    hardware_filters = {k: v for k, v in (hardware_filters or {}).items() if v is not None}
+    if (storage_controller or hardware_filters) and not columns:
+        extra_columns = ["storage_controllers"] if storage_controller else []
+        extra_columns += [_FILTER_COLUMN[k] for k in hardware_filters]
+        columns = ["name", "model", "health", *dict.fromkeys(extra_columns)]
     wanted = fleet_table.pick_columns(columns)
-    hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted)) or bool(storage_controller)
-    network = bool(fleet_table.NETWORK_COLUMNS & set(wanted))
+    hardware = bool(fleet_table.HARDWARE_COLUMNS & set(wanted)) or bool(storage_controller) or bool(hardware_filters)
+    network = bool(fleet_table.NETWORK_COLUMNS & set(wanted)) or "nic_ports" in hardware_filters
     rows = await _com(account, lambda c: com.list_servers(c, health, connected, name_contains, hardware, network, generation))
-    extra = None
+    extra: dict[str, Any] = {}
     if storage_controller:
         rows, summary = com.match_storage_controller(rows, storage_controller)
-        extra = {"storage_controller_filter": summary}
-    result = fleet_table.build(rows, columns, extra)
-    if not rows and (health or connected is not None or name_contains or generation or storage_controller):
+        extra["storage_controller_filter"] = summary
+    if hardware_filters:
+        rows, summaries = com.filter_hardware(rows, hardware_filters)
+        extra.update({f"{name}_filter": summary for name, summary in summaries.items()})
+    result = fleet_table.build(rows, columns, extra or None)
+    if not rows and (health or connected is not None or name_contains or generation or storage_controller or hardware_filters):
         result["available"] = await _com(account, lookup.com_available)
         result["table"] = "No servers match. `available` shows what the fleet has."
     return result
@@ -870,7 +923,7 @@ async def com_get_server(
 ) -> dict[str, Any]:
     """One COM server in detail: per-subsystem health, iLO, subscription, last firmware update,
     firmware inventory, CPU, GPUs, storage controllers and drives, network ports (mode, link, speed,
-    MAC) and active alerts. For several servers use com_list_servers, com_list_gpus or com_list_nics."""
+    MAC) and active alerts. For several servers use com_list_servers_table."""
     return await _com_cached(account, "server", lambda c: com.get_server(c, server), refresh, state=True, args=(server.strip().lower(),))
 
 
@@ -1383,6 +1436,10 @@ async def _poll_once(auto: bool = False) -> dict[str, Any]:
         )
     errors = dict(d for d in done[:-1] if d)
     return {"stored": current.live, "seconds": round(time.time() - started, 1), **({"errors": errors} if errors else {})}
+
+
+if SINGLE_COM_LIST:
+    mcp.disable(names=SINGLE_COM_LIST_HIDDEN)
 
 
 def main() -> None:

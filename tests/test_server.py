@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -143,6 +144,47 @@ async def test_dimm_questions_are_routed_to_com_list_memory_in_every_hint(mcp_cl
         tools = {t.name: " ".join((t.description or "").split()) for t in await c.list_tools()}
     assert "com_list_memory" in tools["com_list_servers"][:100]  # clients that list tools as "name: first 80 characters"
     assert "com_list_memory, not com_list_servers" in " ".join(srv.INSTRUCTIONS.split())  # the sentence Qwen quoted when it chose the raw tool
+
+
+async def test_com_list_servers_table_filters_by_any_hardware_fact(mcp_client):
+    async with mcp_client as c:
+        run = lambda **args: c.call_tool("com_list_servers_table", args)  # noqa: E731
+        hynix = (await run(dimm_maker="hynix")).structured_content
+        gpus = (await run(gpu_model="l40s")).structured_content
+        ports = (await run(nic_ports=2)).structured_content
+        direct = (await run(direct_attached=True)).structured_content
+        both = (await run(dimm_maker="hynix", nic_ports=2)).structured_content
+        none = (await run(dimm_maker="kingston")).structured_content
+        memory = (await run(columns=["name", "memory"])).structured_content
+    assert hynix["total"] == 1 and "esx2.example.com | Synergy 480 Gen10 | WARNING | 2 x 64GB SK Hynix DRAM RDIMM" in hynix["table"]
+    assert hynix["counts"]["dimm_maker_filter"] | {"unknown_servers": None} == {"value": "hynix", "servers_with": 1, "servers_without": 1, "servers_unknown": 2, "unknown_servers": None}
+    assert hynix["counts"]["dimms_by_maker"] == {"SK Hynix": 2}  # "Hynix" and "SK Hynix" are one maker; the empty slot is no DIMM
+    assert gpus["total"] == 1 and "gpu1.example.com" in gpus["table"] and "NVIDIA L40S" in gpus["table"]
+    assert ports["total"] == 2 and ports["counts"]["nic_ports_filter"]["servers_unknown"] == 2  # no inventory: unknown, not "without"
+    assert direct["total"] == 1 and direct["counts"]["direct_attached_filter"]["servers_with"] == 1
+    assert both["total"] == 1 and set(both["counts"]) >= {"dimm_maker_filter", "nic_ports_filter"}  # filters combine
+    assert none["total"] == 0 and none["table"].startswith("No servers match") and "available" in none
+    assert memory["counts"]["dimms_by_maker"] == {"SK Hynix": 2, "Micron": 1, "Samsung": 1} and memory["counts"]["servers_with_unknown_memory"] == 2
+
+
+def test_single_com_list_mode_exposes_one_list_tool_and_points_to_it():
+    code = (
+        "import asyncio, json\n"
+        "from fastmcp import Client\n"
+        "from proliant_mcp import server as srv\n"
+        "async def main():\n"
+        "    async with Client(srv.mcp) as c:\n"
+        "        names = [t.name for t in await c.list_tools()]\n"
+        "    print(json.dumps({'names': names, 'instructions': srv.INSTRUCTIONS, 'guide': srv.GUIDE}))\n"
+        "asyncio.run(main())\n"
+    )
+    env = {**os.environ, "PROLIANT_MCP_COM_LIST": "single", "PROLIANT_MCP_CONFIG": os.devnull}
+    out = json.loads(subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout.splitlines()[-1])
+    hidden = srv.SINGLE_COM_LIST_HIDDEN
+    assert "com_list_servers_table" in out["names"] and not set(hidden) & set(out["names"])
+    mentioned = [n for n in hidden if re.search(rf"\b{n}\b", out["instructions"] + out["guide"])]  # com_list_servers is a prefix of ..._table
+    assert not mentioned, f"hints towards hidden tools: {mentioned}"
+    assert "dimm_maker" in out["instructions"] and "dimm_maker" in out["guide"] and len(out["instructions"]) <= 3_800
 
 
 async def test_cache_is_first_even_for_two_day_old_data(mcp_client, monkeypatch):
@@ -948,7 +990,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 47_200, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory
+    assert sum(sizes.values()) <= 48_400, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"

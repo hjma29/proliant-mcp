@@ -846,6 +846,62 @@ def match_storage_controller(rows: list[dict[str, Any]], text: str) -> tuple[lis
     return matched, summary
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _network_known(hw: dict[str, Any]) -> bool:
+    return bool((hw.get("network") or {}).get("known"))
+
+
+def _storage_known(hw: dict[str, Any]) -> bool:
+    return bool((hw.get("storage") or {}).get("known"))
+
+
+def _cpu_gpu_known(hw: dict[str, Any]) -> bool:
+    return bool(hw.get("cpu_gpu_known"))
+
+
+def _memory_known(hw: dict[str, Any]) -> bool:
+    return bool((hw.get("memory") or {}).get("known"))
+
+
+# filter -> (is the inventory known for a server, does the server match). Servers whose inventory is unknown are
+# counted as unknown, never as non-matching.
+HARDWARE_FILTERS: dict[str, tuple[Any, Any]] = {
+    "gpu_model": (_cpu_gpu_known, lambda hw, text: any(text in f"{g.get('manufacturer') or ''} {g['name']}".lower() for g in hw.get("gpus") or [])),
+    "cpu_contains": (_cpu_gpu_known, lambda hw, text: any(text in (c["model"] or "").lower() for c in hw.get("cpu") or [])),
+    "nic_ports": (_network_known, lambda hw, ports: any(a["ports"] == ports for a in hw["network"].get("adapters") or [])),
+    "dimm_maker": (_memory_known, lambda hw, text: any(_norm(text) in _norm(m["manufacturer"]) for m in hw["memory"].get("modules") or [])),
+    "direct_attached": (_storage_known, lambda hw, want: bool(hw["storage"].get("direct_drives")) == want),
+    "storage_over_tb": (_storage_known, lambda hw, tb: (hw["storage"].get("total_gb") or 0) > tb * 1000),
+}
+
+
+def filter_hardware(rows: list[dict[str, Any]], filters: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Keep the servers (rows with ``hardware``) that satisfy every given filter; one summary per filter with exact counts."""
+    summaries: dict[str, dict[str, Any]] = {}
+    for name, value in filters.items():
+        if value is None:
+            continue
+        known, matches_filter = HARDWARE_FILTERS[name]
+        needle = value.lower() if name in ("gpu_model", "cpu_contains") else value
+        kept: list[dict[str, Any]] = []
+        unknown: list[str] = []
+        for r in rows:
+            hw = r.get("hardware") or {}
+            if not known(hw):
+                unknown.append(r["name"])
+            elif matches_filter(hw, needle):
+                kept.append(r)
+        summaries[name] = {
+            "value": value, "servers_with": len(kept), "servers_without": len(rows) - len(kept) - len(unknown),
+            "servers_unknown": len(unknown), "unknown_servers": unknown,
+        }
+        rows = kept
+    return rows, summaries
+
+
 async def hardware_report(
     c: ComClient, name_contains: str | None, connected: bool | None, storage_over_tb: float | None = None, generation: str | None = None,
     storage_controller: str | None = None,
