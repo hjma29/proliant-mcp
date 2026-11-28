@@ -70,7 +70,7 @@ Never ask the user to type a password into the chat; these tools collect it on a
 
 GUIDE = """proliant-mcp answers questions about HPE ProLiant servers from three sources: iLO (a few servers reached directly), HPE Compute Ops Management (COM, the GreenLake cloud service, usually the whole fleet) and HPE OneView (Synergy frames). Start with list_servers: it shows which iLOs, OneView appliances and COM accounts are configured. Then pick by question:
 
-COM fleet (how many, which, health, power, connected, generation, model, iLO firmware, subscriptions): com_get_overview for counts; com_list_servers_table for a list, with filters health, connected, generation, name_contains and storage_controller (e.g. NS204) and columns such as gpu, storage_controllers, nics, nic_firmware, ilo_version.
+COM fleet (how many, which, health, power, connected, generation, model, iLO firmware, subscriptions): com_get_overview for counts; com_list_servers_table for a list, with filters health, connected, generation, name_contains and storage_controller (e.g. NS204) and columns such as gpu, storage_controllers, nics, nic_firmware, ilo_version. Busiest servers (CPU utilization, energy over N days): com_server_usage.
 COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, drives and capacity com_hardware_report (storage_controller, storage_over_tb); NICs and ports com_list_nics; DIMMs and memory makers com_list_memory. One server: com_get_server. Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services.
 Find a server by name, serial number or IP: find_server. Count or list servers of all sources by generation or model: list_servers(generation, model).
 One iLO server (name or IP from list_servers): get_server_summary (model, serial, BIOS, iLO version, power, health, OS), get_health, get_processors (CPUs and GPUs), get_memory, get_storage, get_network_adapters (MACs, links, firmware), get_firmware_inventory, get_event_log, get_ilo_info. All iLOs at once: get_fleet_summary, get_fleet_event_summary.
@@ -105,6 +105,7 @@ def single_list_text(instructions: str, guide: str) -> tuple[str, str]:
         "controllers, drives, NICs, DIMMs): com_get_overview for counts; com_list_servers_table for any list, with filters health, "
         "connected, generation, name_contains, storage_controller (e.g. NS204), gpu_model (e.g. H100), cpu_contains (e.g. AMD), "
         "nic_ports, nic_mode (InfiniBand, FibreChannel), linked_only, dimm_maker (e.g. Hynix), direct_attached, storage_over_tb, group_by and the columns asked for. One server: com_get_server. "
+        "Busiest servers (CPU utilization, energy over N days): com_server_usage. "
         "Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services."
     )
     return instructions, "\n".join(lines)
@@ -1014,6 +1015,19 @@ async def com_list_jobs(
     """Newest COM jobs (firmware updates, inventory collection, power, OneView sync, ...)
     with state and result."""
     return await _com_cached(account, "jobs", lambda c: com.list_jobs(c, limit, state), refresh, state=True, args=(limit, state))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def com_server_usage(
+    account: AccountName = None,
+    days: Annotated[int, Field(ge=1, le=90, description="Period that ends now, in days.")] = 30,
+    sort_by: Annotated[Literal["cpu", "energy"], Field(description="Rank by average CPU utilization or by energy (kWh).")] = "cpu",
+    top: Annotated[int, Field(ge=1, le=200)] = 10,
+    refresh: Refresh = False,
+) -> dict[str, Any]:
+    """Busiest COM servers over the last N days: average and peak CPU utilization and energy (kWh, share, cost) per
+    server, ranked, with fleet kWh, cost and CO2e. For "which server is busiest", "highest CPU", "uses most power"."""
+    return await _com_cached(account, "usage", lambda c: com.server_usage(c, days, sort_by, top), refresh, state=True, args=(days, sort_by, top))
 
 
 @mcp.tool(annotations=READ_ONLY)

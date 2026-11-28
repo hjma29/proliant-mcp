@@ -1274,6 +1274,72 @@ async def list_jobs(c: ComClient, limit: int, state: str | None) -> list[dict[st
     return rows[:limit]
 
 
+async def _by_entity(c: ComClient, path: str, params: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Every item of a COM ``*-by-entity`` report (paged) plus its first page, which holds ``excluded`` and the fleet sums."""
+    first = await c.get(path, {**params, "limit": 100, "offset": 0})
+    items = list(first.get("items") or [])
+    while len(items) < int(first.get("total") or 0):
+        batch = (await c.get(path, {**params, "limit": 100, "offset": len(items)})).get("items") or []
+        if not batch:
+            break
+        items.extend(batch)
+    return items, first
+
+
+def _num(value: Any) -> float | None:
+    return round(float(value), 1) if isinstance(value, (int, float)) else None
+
+
+async def server_usage(c: ComClient, days: int, sort_by: str, top: int) -> dict[str, Any]:
+    """Busiest servers over the last *days*: CPU utilization (COM ``utilization-by-entity``) and energy
+    (``energy-by-entity``) per server, ranked by *sort_by* (``cpu`` or ``energy``), with fleet totals."""
+    import datetime as dt
+
+    end = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    start = end - dt.timedelta(days=days)
+    period = {"start-date": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "end-date": end.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    cpu, cpu_meta = await _by_entity(c, "/compute-ops-mgmt/v1beta1/utilization-by-entity", {**period, "metric-type": "CPU_UTILIZATION"})
+    energy, energy_meta = await _by_entity(c, "/compute-ops-mgmt/v1beta1/energy-by-entity", period)
+    rows: dict[str, dict[str, Any]] = {}
+    for item in cpu:
+        got = item.get("collected") or {}
+        rows.setdefault(item["id"], {"name": item.get("name"), "model": (item.get("entityDetails") or {}).get("model")}).update(
+            cpu_avg_pct=_num(got.get("average")), cpu_peak_pct=_num(got.get("high")))
+    for item in energy:
+        kwh = item.get("kwh") or {}
+        rows.setdefault(item["id"], {"name": item.get("name"), "model": (item.get("entityDetails") or {}).get("model")}).update(
+            kwh=_num(kwh.get("total")), kwh_share_pct=_num((kwh.get("percents") or {}).get("total")),
+            cost=_num((item.get("cost") or {}).get("total")), energy_partial=item.get("status") == "PARTIAL")
+    key = "cpu_avg_pct" if sort_by == "cpu" else "kwh"
+    ranked = sorted(rows.values(), key=lambda r: (r.get(key) is None, -(r.get(key) or 0)))
+    lines = ["| # | Server | Model | CPU avg % | CPU peak % | Energy kWh | Share of kWh |", "|---|---|---|---|---|---|---|"]
+    for i, r in enumerate(ranked[:top], 1):
+        cells = [r.get("cpu_avg_pct"), r.get("cpu_peak_pct"), r.get("kwh"), r.get("kwh_share_pct")]
+        kwh_mark = " (partial)" if r.get("energy_partial") else ""
+        values = [fleet_table._cell(v) for v in cells]
+        values[2] += kwh_mark
+        lines.append(f"| {i} | {fleet_table._cell(r['name'])} | {fleet_table._cell(fleet_table._short_model(r['model']))} | " + " | ".join(values) + " |")
+    by_cpu = max((r for r in rows.values() if r.get("cpu_avg_pct") is not None), key=lambda r: r["cpu_avg_pct"], default=None)
+    by_kwh = max((r for r in rows.values() if r.get("kwh") is not None), key=lambda r: r["kwh"], default=None)
+    sums = energy_meta.get("kwhSums") or {}
+    return {
+        "period": {"start": period["start-date"], "end": period["end-date"], "days": days},
+        "counts": {
+            "busiest_by_cpu": by_cpu and {"name": by_cpu["name"], "cpu_avg_pct": by_cpu["cpu_avg_pct"]},
+            "busiest_by_energy": by_kwh and {"name": by_kwh["name"], "kwh": by_kwh["kwh"]},
+            "servers_with_cpu_data": len(cpu), "servers_without_cpu_data": cpu_meta.get("excluded"),
+            "servers_with_energy_data": len(energy), "servers_without_energy_data": energy_meta.get("excluded"),
+            "fleet_kwh": _num(sums.get("total")), "fleet_cost": _num((energy_meta.get("costSums") or {}).get("total")),
+            "fleet_co2e_kg": _num((energy_meta.get("co2eKgSums") or {}).get("total")),
+        },
+        "table": f"Top {min(top, len(ranked))} of {len(ranked)} servers by {'average CPU utilization' if sort_by == 'cpu' else 'energy'}, "
+        f"{period['start-date'][:10]} to {period['end-date'][:10]}:\n\n" + "\n".join(lines),
+        "note": "Show `table` as written and quote `counts`. From COM's utilization and energy data (what each iLO reports); servers "
+        "without data (not connected, no subscription or no power meter) are counted, not ranked. '-' means no data for that "
+        "metric; partial means COM has energy for only part of the period. Cost uses the rate set in COM.",
+    }
+
+
 async def list_groups(c: ComClient) -> list[dict[str, Any]]:
     return [group_row(g) for g in await c.get_all("/groups")]
 

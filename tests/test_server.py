@@ -188,6 +188,18 @@ async def test_com_list_servers_table_groups_by_hardware_and_gives_the_same_answ
     assert sub_column["counts"]["by_subscription"] == by_sub["counts"]["by_group"]  # the column and the grouping agree
 
 
+async def test_com_server_usage_ranks_by_cpu_or_energy_with_fleet_totals(mcp_client):
+    async with mcp_client as c:
+        by_cpu = (await c.call_tool("com_server_usage", {"days": 30})).structured_content
+        by_kwh = (await c.call_tool("com_server_usage", {"sort_by": "energy"})).structured_content
+    first = lambda r: r["table"].split("\n")[4]  # noqa: E731 - first data row after the heading, blank line and table head
+    assert "esx2.example.com" in first(by_cpu) and "91.2" in first(by_cpu)
+    assert "esx1.example.com" in first(by_kwh) and "150.0 (partial)" in first(by_kwh)
+    assert by_cpu["counts"]["busiest_by_cpu"]["name"] == "esx2.example.com" and by_cpu["counts"]["busiest_by_energy"]["name"] == "esx1.example.com"
+    assert by_cpu["counts"]["servers_without_cpu_data"] == 2 and by_cpu["counts"]["fleet_kwh"] == 200.0
+    assert by_cpu["period"]["days"] == 30
+
+
 def _tools_in_mode(mode: str | None) -> dict:
     code = (
         "import asyncio, json\n"
@@ -1029,7 +1041,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 49_500, f"all tool definitions: {sum(sizes.values())} chars"  # +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table, +950 for nic_mode, linked_only and group_by, +100 for the iLO tools saying they are not the COM fleet
+    assert sum(sizes.values()) <= 50_400, f"all tool definitions: {sum(sizes.values())} chars"  # +850 for com_server_usage, +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table, +950 for nic_mode, linked_only and group_by, +100 for the iLO tools saying they are not the COM fleet
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"

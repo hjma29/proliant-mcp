@@ -82,6 +82,7 @@ The times start from measurements on iLO 7; after each real update proliant-mcp 
 | `get_com_inventory_snapshot` | COM hardware inventory for the fleet (optionally filtered by name), served from the local cache when fresh; each server says `cache` or `live` and when it was collected |
 | `com_get_server` | One server by name, serial, iLO IP or id: per-subsystem health, firmware inventory, CPU and GPUs (with serial numbers), NIC ports (mode, link, speed, MAC), last firmware update, active alerts |
 | `com_list_alerts` | Newest alerts, uncleared by default; filter by server and severity |
+| `com_server_usage` | Busiest servers over the last N days (1-90, default 30): average and peak CPU utilization and energy (kWh, share of the fleet, cost) per server, ranked by CPU or energy, with the fleet's kWh, cost and CO2e. Read from COM's utilization and energy data (`utilization-by-entity`, `energy-by-entity`); servers COM has no data for are counted, not ranked |
 | `com_list_jobs` | Newest jobs (firmware updates, inventory, OneView sync) with state and result |
 | `com_list_groups` | Server groups, members and firmware / iLO-settings compliance |
 | `com_list_firmware_bundles` | SPPs and patch bundles available in COM |

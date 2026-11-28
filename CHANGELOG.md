@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.31.0 — 2026-11-28
+
+### New Features
+- `com_server_usage`: the busiest COM servers over the last N days (1 to 90, default 30), with average and peak CPU utilization and energy (kWh, share of the fleet, cost) per server, ranked by CPU or energy, plus the fleet's kWh, cost and CO2e. It reads COM's utilization and energy data, which COM collects from each iLO, so "which server is busiest" or "which uses the most power" is one call. Servers COM has no data for (not connected, no subscription) are counted, not ranked. On the lab: dl560-11 averaged 99.2% CPU and used 1,426 kWh (18% of the fleet's 7,803 kWh) over 30 days.
+
+---
+
 ## v0.30.1 — 2026-11-27
 
 ### Enhancements

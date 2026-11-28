@@ -194,6 +194,19 @@ FAKE_COM: dict[str, list[dict]] = {
     "/compute-ops-mgmt/v1/servers/P1+SN0001/alerts": _COM_ALERTS[:1],
     "/compute-ops-mgmt/v1/servers/P3+SN0003/alerts": [],
     "/compute-ops-mgmt/v1beta1/appliances": [{"id": "ov1", "state": "activated", "activationKey": "eyJ-secret"}],
+    "/compute-ops-mgmt/v1beta1/utilization-by-entity": [
+        {"id": "P1+SN0001", "name": "esx1.example.com", "collected": {"high": 40.0, "low": 1.0, "average": 12.5}},
+        {"id": "P2+SN0002", "name": "esx2.example.com", "collected": {"high": 99.0, "low": 80.0, "average": 91.25}},
+    ],
+    "/compute-ops-mgmt/v1beta1/energy-by-entity": [
+        {"id": "P2+SN0002", "name": "esx2.example.com", "kwh": {"total": 50.0, "percents": {"total": 25.0}}, "cost": {"total": 8.0}, "status": "COMPLETE"},
+        {"id": "P1+SN0001", "name": "esx1.example.com", "kwh": {"total": 150.0, "percents": {"total": 75.0}}, "cost": {"total": 24.0}, "status": "PARTIAL"},
+    ],
+}
+# Extra top-level fields of a COM list answer (the *-by-entity reports carry the excluded count and fleet sums).
+FAKE_COM_META: dict[str, dict] = {
+    "/compute-ops-mgmt/v1beta1/utilization-by-entity": {"excluded": 2},
+    "/compute-ops-mgmt/v1beta1/energy-by-entity": {"excluded": 2, "kwhSums": {"total": 200.0}, "costSums": {"total": 32.0}, "co2eKgSums": {"total": 90.0}},
 }
 
 
@@ -212,7 +225,8 @@ def _com(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"message": "not found"})
     offset = int(request.url.params.get("offset", 0))
     limit = int(request.url.params.get("limit", 100))
-    return httpx.Response(200, json={"items": items[offset : offset + limit], "total": len(items), "count": len(items[offset : offset + limit])})
+    page = items[offset : offset + limit]
+    return httpx.Response(200, json={"items": page, "total": len(items), "count": len(page), **FAKE_COM_META.get(request.url.path, {})})
 
 
 def fake_mgmt(request: httpx.Request) -> httpx.Response | None:
