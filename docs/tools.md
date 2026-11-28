@@ -125,3 +125,5 @@ GreenLake API client, and `greenlake_delete_api_clients_start` deletes the API c
 argument, so the AI cannot see a password or choose which file is read.
 
 The server also publishes one MCP resource, `proliant://guide`: a short text saying which tool answers which kind of question. Assistants that list resources (for example OpenCode's `list_mcp_resources`) find the server and its tools that way.
+
+The GreenLake and Compute Ops Management API endpoints behind these tools, with what each returns and its limits, are listed in [greenlake-api.md](greenlake-api.md).
