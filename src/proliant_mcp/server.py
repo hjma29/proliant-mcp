@@ -1020,14 +1020,17 @@ async def com_list_jobs(
 @mcp.tool(annotations=READ_ONLY)
 async def com_server_usage(
     account: AccountName = None,
-    days: Annotated[int, Field(ge=1, le=180, description="Period that ends now, in days; COM keeps 180 days (for \"this year\" use 180).")] = 30,
+    days: Annotated[int, Field(ge=1, le=3660, description="Period that ends now, in days. COM keeps 180 days; longer asks get the last 180.")] = 30,
     sort_by: Annotated[Literal["cpu", "energy"], Field(description="Rank by average CPU utilization or by energy (kWh).")] = "cpu",
     top: Annotated[int, Field(ge=1, le=200)] = 10,
+    server: Annotated[str | None, Field(description="One server (name, serial, iLO IP): its CPU % per day, for a trend or line chart.")] = None,
     refresh: Refresh = False,
 ) -> dict[str, Any]:
     """Busiest COM servers over the last N days: average and peak CPU utilization and energy (kWh, share, cost) per
-    server, ranked, with fleet kWh, cost and CO2e. For "which server is busiest", "highest CPU", "uses most power"."""
-    return await _com_cached(account, "usage", lambda c: com.server_usage(c, days, sort_by, top), refresh, state=True, args=(days, sort_by, top))
+    server, ranked, with fleet kWh, cost and CO2e. For "which server is busiest", "highest CPU", "uses most power".
+    With `server`: that server's real daily CPU values, for "CPU over time" or a chart."""
+    return await _com_cached(account, "usage", lambda c: com.server_usage(c, days, sort_by, top, server), refresh, state=True,
+                             args=(days, sort_by, top, server))
 
 
 @mcp.tool(annotations=READ_ONLY)

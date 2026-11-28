@@ -193,12 +193,25 @@ async def test_com_server_usage_ranks_by_cpu_or_energy_with_fleet_totals(mcp_cli
         by_cpu = (await c.call_tool("com_server_usage", {"days": 30})).structured_content
         by_kwh = (await c.call_tool("com_server_usage", {"sort_by": "energy"})).structured_content
         half_year = (await c.call_tool("com_server_usage", {"days": 180})).structured_content
+        this_year = (await c.call_tool("com_server_usage", {"days": 332})).structured_content
     first = lambda r: r["table"].split("\n")[4]  # noqa: E731 - first data row after the heading, blank line and table head
     assert "esx2.example.com" in first(by_cpu) and "91.2" in first(by_cpu)
     assert "esx1.example.com" in first(by_kwh) and "150.0 (partial)" in first(by_kwh)
     assert by_cpu["counts"]["busiest_by_cpu"]["name"] == "esx2.example.com" and by_cpu["counts"]["busiest_by_energy"]["name"] == "esx1.example.com"
     assert by_cpu["counts"]["servers_without_cpu_data"] == 2 and by_cpu["counts"]["fleet_kwh"] == 200.0
     assert by_cpu["period"]["days"] == 30 and half_year["period"]["days"] == 180  # COM keeps 180 days
+    assert this_year["period"]["days"] == 180 and this_year["period"]["requested_days"] == 332 and "180 days" in this_year["period"]["why"]
+    assert "requested_days" not in half_year["period"]  # no note when the period fits
+
+
+async def test_com_server_usage_for_one_server_returns_the_real_daily_series(mcp_client):
+    async with mcp_client as c:
+        series = (await c.call_tool("com_server_usage", {"server": "esx2.example.com"})).structured_content
+        ranked = (await c.call_tool("com_server_usage", {})).structured_content
+    assert series["server"] == "esx2.example.com" and series["series"] == [{"date": "2026-11-26", "cpu_pct": 90.5}, {"date": "2026-11-27", "cpu_pct": 92.0}]
+    assert series["counts"]["days_without_data"] == ["2026-11-28"] and series["counts"]["average_pct"] == 91.25
+    assert series["counts"]["highest_day"] == {"date": "2026-11-27", "cpu_pct": 92.0} and "invent" in series["note"]
+    assert "server=NAME" in ranked["note"]  # a ranked answer has no daily values and must say so, or a model draws made-up points
 
 
 def _tools_in_mode(mode: str | None) -> dict:
@@ -1042,7 +1055,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 50_400, f"all tool definitions: {sum(sizes.values())} chars"  # +850 for com_server_usage, +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table, +950 for nic_mode, linked_only and group_by, +100 for the iLO tools saying they are not the COM fleet
+    assert sum(sizes.values()) <= 50_700, f"all tool definitions: {sum(sizes.values())} chars"  # +850 for com_server_usage, +300 for its server option, +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table, +950 for nic_mode, linked_only and group_by, +100 for the iLO tools saying they are not the COM fleet
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"

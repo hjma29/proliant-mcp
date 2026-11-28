@@ -6,6 +6,23 @@ directly (see the README).
 
 ---
 
+## v0.32.0 — 2026-11-28
+
+### New Features
+- `com_server_usage` with `server=NAME` returns that server's real CPU utilization per day (COM `utilization-over-time`: daily averages, lowest and highest day, days without data), so "CPU over time" or a line chart needs no raw call. The ranked answer now says it holds one figure per server for the whole period, not daily values, and tells the assistant to call again with `server=`. In a test an assistant had only the 180-day average and peak and drew a made-up daily curve (62 to 90%) for a server whose real daily average was 99.05 to 99.42% on every one of 30 days.
+
+### Enhancements
+- A period longer than COM keeps (for example "this year", 332 days) is answered with the last 180 days and says so in `period` (`requested_days`, `limited_to_days`), instead of a validation error or COM's HTTP 400 "start-date should be within past 180 days" (this was the unreleased v0.31.2 change).
+
+---
+
+## v0.31.2 — 2026-11-28 (not released separately; included in v0.32.0)
+
+### Enhancements
+- `com_server_usage` answers a period longer than COM keeps (for example "this year", 332 days) with the last 180 days and says so in `period` (`requested_days`, `limited_to_days` and why), instead of a validation error or COM's HTTP 400 "start-date should be within past 180 days".
+
+---
+
 ## v0.31.1 — 2026-11-28
 
 ### Enhancements

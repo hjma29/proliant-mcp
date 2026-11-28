@@ -198,6 +198,10 @@ FAKE_COM: dict[str, list[dict]] = {
         {"id": "P1+SN0001", "name": "esx1.example.com", "collected": {"high": 40.0, "low": 1.0, "average": 12.5}},
         {"id": "P2+SN0002", "name": "esx2.example.com", "collected": {"high": 99.0, "low": 80.0, "average": 91.25}},
     ],
+    "/compute-ops-mgmt/v1beta1/utilization-over-time": [
+        {"resource": {"id": "P2+SN0002"}, "averages": {"collected": 91.25}, "intervalsCollected": [
+            {"time": "2026-11-26T00:00:00", "value": 90.5}, {"time": "2026-11-27T00:00:00", "value": 92.0}, {"time": "2026-11-28T00:00:00", "value": None}]},
+    ],
     "/compute-ops-mgmt/v1beta1/energy-by-entity": [
         {"id": "P2+SN0002", "name": "esx2.example.com", "kwh": {"total": 50.0, "percents": {"total": 25.0}}, "cost": {"total": 8.0}, "status": "COMPLETE"},
         {"id": "P1+SN0001", "name": "esx1.example.com", "kwh": {"total": 150.0, "percents": {"total": 75.0}}, "cost": {"total": 24.0}, "status": "PARTIAL"},

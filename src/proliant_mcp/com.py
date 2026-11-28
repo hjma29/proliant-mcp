@@ -1290,11 +1290,54 @@ def _num(value: Any) -> float | None:
     return round(float(value), 1) if isinstance(value, (int, float)) else None
 
 
-async def server_usage(c: ComClient, days: int, sort_by: str, top: int) -> dict[str, Any]:
-    """Busiest servers over the last *days*: CPU utilization (COM ``utilization-by-entity``) and energy
-    (``energy-by-entity``) per server, ranked by *sort_by* (``cpu`` or ``energy``), with fleet totals."""
+USAGE_MAX_DAYS = 180
+
+
+async def usage_series(c: ComClient, server: str, days: int) -> dict[str, Any]:
+    """One server's CPU utilization per day (COM ``utilization-over-time``), for a trend or a line chart."""
     import datetime as dt
 
+    asked = days
+    days = min(days, USAGE_MAX_DAYS)
+    today = dt.datetime.now(dt.timezone.utc).date()
+    row = find_server(await c.get_all("/servers"), server)
+    page = await c.get(
+        "/compute-ops-mgmt/v1beta1/utilization-over-time",
+        {"start-date": str(today - dt.timedelta(days=days)), "end-date": str(today), "sample-size": "1_DAY", "metric-type": "CPU_UTILIZATION",
+         "resource-uri": f"/compute-ops-mgmt/v1/servers/{row['id']}"},
+    )
+    item = next(iter(page.get("items") or []), {})
+    points = [(p["time"][:10], p.get("value")) for p in item.get("intervalsCollected") or []]
+    have = [(d, round(float(v), 3)) for d, v in points if isinstance(v, (int, float))]
+    missing = [d for d, v in points if not isinstance(v, (int, float))]
+    counts: dict[str, Any] = {"days_with_data": len(have), "days_without_data": missing}
+    if have:
+        low, high = min(have, key=lambda p: p[1]), max(have, key=lambda p: p[1])
+        counts.update(average_pct=round(sum(v for _, v in have) / len(have), 3), lowest_day={"date": low[0], "cpu_pct": low[1]},
+                      highest_day={"date": high[0], "cpu_pct": high[1]})
+    limited = {"requested_days": asked, "limited_to_days": days} if asked > days else {}
+    lines = ["| Date | Average CPU % |", "|---|---|"] + [f"| {d} | {v} |" for d, v in have]
+    return {
+        "server": row.get("name"),
+        "period": {"start": points[0][0] if points else None, "end": points[-1][0] if points else None, "days": days, **limited},
+        "counts": counts,
+        "series": [{"date": d, "cpu_pct": v} for d, v in have],
+        "table": "\n".join(lines),
+        "note": "COM's own daily averages (UTC dates), one per day; days without data are listed, not filled in. Draw a chart only "
+        "from `series`: never estimate, smooth or invent daily values, and never mix in a different period's average or peak.",
+    }
+
+
+async def server_usage(c: ComClient, days: int, sort_by: str, top: int, server: str | None = None) -> dict[str, Any]:
+    """Busiest servers over the last *days*: CPU utilization (COM ``utilization-by-entity``) and energy
+    (``energy-by-entity``) per server, ranked by *sort_by* (``cpu`` or ``energy``), with fleet totals.
+    With *server*: that server's daily CPU series instead."""
+    import datetime as dt
+
+    if server:
+        return await usage_series(c, server, days)
+    asked = days
+    days = min(days, USAGE_MAX_DAYS)  # COM answers HTTP 400 for a start date older than 180 days
     end = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
     start = end - dt.timedelta(days=days)
     period = {"start-date": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "end-date": end.strftime("%Y-%m-%dT%H:%M:%SZ")}
@@ -1322,8 +1365,11 @@ async def server_usage(c: ComClient, days: int, sort_by: str, top: int) -> dict[
     by_cpu = max((r for r in rows.values() if r.get("cpu_avg_pct") is not None), key=lambda r: r["cpu_avg_pct"], default=None)
     by_kwh = max((r for r in rows.values() if r.get("kwh") is not None), key=lambda r: r["kwh"], default=None)
     sums = energy_meta.get("kwhSums") or {}
+    limited = {"requested_days": asked, "limited_to_days": days,
+               "why": f"COM keeps utilization and energy data for the last {USAGE_MAX_DAYS} days only, so this covers "
+                      f"{period['start-date'][:10]} to {period['end-date'][:10]}; say so to the user."} if asked > days else {}
     return {
-        "period": {"start": period["start-date"], "end": period["end-date"], "days": days},
+        "period": {"start": period["start-date"], "end": period["end-date"], "days": days, **limited},
         "counts": {
             "busiest_by_cpu": by_cpu and {"name": by_cpu["name"], "cpu_avg_pct": by_cpu["cpu_avg_pct"]},
             "busiest_by_energy": by_kwh and {"name": by_kwh["name"], "kwh": by_kwh["kwh"]},
@@ -1336,7 +1382,9 @@ async def server_usage(c: ComClient, days: int, sort_by: str, top: int) -> dict[
         f"{period['start-date'][:10]} to {period['end-date'][:10]}:\n\n" + "\n".join(lines),
         "note": "Show `table` as written and quote `counts`. From COM's utilization and energy data (what each iLO reports); servers "
         "without data (not connected, no subscription or no power meter) are counted, not ranked. '-' means no data for that "
-        "metric; partial means COM has energy for only part of the period. Cost uses the rate set in COM.",
+        "metric; partial means COM has energy for only part of the period. Cost uses the rate set in COM. These are one summary "
+        "figure per server for the whole period, not daily values: for a trend or chart call again with server=NAME, and never "
+        "invent daily points.",
     }
 
 
