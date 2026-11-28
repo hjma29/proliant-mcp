@@ -192,12 +192,13 @@ async def test_com_server_usage_ranks_by_cpu_or_energy_with_fleet_totals(mcp_cli
     async with mcp_client as c:
         by_cpu = (await c.call_tool("com_server_usage", {"days": 30})).structured_content
         by_kwh = (await c.call_tool("com_server_usage", {"sort_by": "energy"})).structured_content
+        half_year = (await c.call_tool("com_server_usage", {"days": 180})).structured_content
     first = lambda r: r["table"].split("\n")[4]  # noqa: E731 - first data row after the heading, blank line and table head
     assert "esx2.example.com" in first(by_cpu) and "91.2" in first(by_cpu)
     assert "esx1.example.com" in first(by_kwh) and "150.0 (partial)" in first(by_kwh)
     assert by_cpu["counts"]["busiest_by_cpu"]["name"] == "esx2.example.com" and by_cpu["counts"]["busiest_by_energy"]["name"] == "esx1.example.com"
     assert by_cpu["counts"]["servers_without_cpu_data"] == 2 and by_cpu["counts"]["fleet_kwh"] == 200.0
-    assert by_cpu["period"]["days"] == 30
+    assert by_cpu["period"]["days"] == 30 and half_year["period"]["days"] == 180  # COM keeps 180 days
 
 
 def _tools_in_mode(mode: str | None) -> dict:

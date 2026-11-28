@@ -6,6 +6,13 @@ directly (see the README).
 
 ---
 
+## v0.31.1 — 2026-11-28
+
+### Enhancements
+- `com_server_usage` accepts up to 180 days (was 90), the longest period COM keeps utilization and energy data for; COM answers HTTP 400 "start-date should be within past 180 days" beyond that. "Which server was busiest this year" is now one call for the last 180 days.
+
+---
+
 ## v0.31.0 — 2026-11-28
 
 ### New Features

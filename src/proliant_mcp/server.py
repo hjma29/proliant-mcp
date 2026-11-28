@@ -1020,7 +1020,7 @@ async def com_list_jobs(
 @mcp.tool(annotations=READ_ONLY)
 async def com_server_usage(
     account: AccountName = None,
-    days: Annotated[int, Field(ge=1, le=90, description="Period that ends now, in days.")] = 30,
+    days: Annotated[int, Field(ge=1, le=180, description="Period that ends now, in days; COM keeps 180 days (for \"this year\" use 180).")] = 30,
     sort_by: Annotated[Literal["cpu", "energy"], Field(description="Rank by average CPU utilization or by energy (kWh).")] = "cpu",
     top: Annotated[int, Field(ge=1, le=200)] = 10,
     refresh: Refresh = False,
