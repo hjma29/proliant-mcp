@@ -71,7 +71,7 @@ Never ask the user to type a password into the chat; these tools collect it on a
 GUIDE = """proliant-mcp answers questions about HPE ProLiant servers from three sources: iLO (a few servers reached directly), HPE Compute Ops Management (COM, the GreenLake cloud service, usually the whole fleet) and HPE OneView (Synergy frames). Start with list_servers: it shows which iLOs, OneView appliances and COM accounts are configured. Then pick by question:
 
 COM fleet (how many, which, health, power, connected, generation, model, iLO firmware, subscriptions): com_get_overview for counts; com_list_servers_table for a list, with filters health, connected, generation, name_contains and storage_controller (e.g. NS204) and columns such as gpu, storage_controllers, nics, nic_firmware, ilo_version. Busiest servers (CPU utilization, energy over N days): com_server_usage.
-COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, drives and capacity com_hardware_report (storage_controller, storage_over_tb); NICs and ports com_list_nics; DIMMs and memory makers com_list_memory. One server: com_get_server. Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services.
+COM hardware: GPUs com_list_gpus (gpu_model, e.g. H100); storage controllers, drives and capacity com_hardware_report (storage_controller, storage_over_tb); NICs and ports com_list_nics; DIMMs and memory makers com_list_memory. One server: com_get_server. Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services. Events and who did what: com_list_activities (COM events per server, a few name the user), greenlake_audit_log (platform sign-ins and API clients), greenlake_list_devices (when a device entered the GreenLake workspace, assignment).
 Find a server by name, serial number or IP: find_server. Count or list servers of all sources by generation or model: list_servers(generation, model).
 One iLO server (name or IP from list_servers): get_server_summary (model, serial, BIOS, iLO version, power, health, OS), get_health, get_processors (CPUs and GPUs), get_memory, get_storage, get_network_adapters (MACs, links, firmware), get_firmware_inventory, get_event_log, get_ilo_info. All iLOs at once: get_fleet_summary, get_fleet_event_summary.
 OneView: oneview_get_appliance, oneview_list_enclosures, oneview_list_server_hardware, oneview_list_server_profiles (template compliance), oneview_list_alerts, oneview_list_interconnects, oneview_list_uplink_sets, oneview_list_firmware_baselines.
@@ -106,7 +106,7 @@ def single_list_text(instructions: str, guide: str) -> tuple[str, str]:
         "connected, generation, name_contains, storage_controller (e.g. NS204), gpu_model (e.g. H100), cpu_contains (e.g. AMD), "
         "nic_ports, nic_mode (InfiniBand, FibreChannel), linked_only, dimm_maker (e.g. Hynix), direct_attached, storage_over_tb, group_by and the columns asked for. One server: com_get_server. "
         "Busiest servers (CPU utilization, energy over N days): com_server_usage. "
-        "Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services."
+        "Also com_list_alerts, com_list_jobs, com_list_groups, com_list_firmware_bundles, greenlake_list_services. Events and who did what: com_list_activities (COM events per server, a few name the user), greenlake_audit_log (platform sign-ins and API clients), greenlake_list_devices (when a device entered the GreenLake workspace, assignment)."
     )
     return instructions, "\n".join(lines)
 
@@ -1031,6 +1031,53 @@ async def com_server_usage(
     With `server`: that server's real daily CPU values, for "CPU over time" or a chart."""
     return await _com_cached(account, "usage", lambda c: com.server_usage(c, days, sort_by, top, server), refresh, state=True,
                              args=(days, sort_by, top, server))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def com_list_activities(
+    account: AccountName = None,
+    server: Annotated[str | None, Field(description="Only this server (name, serial, iLO IP).")] = None,
+    key: Annotated[str | None, Field(description="Event type contains, e.g. CONNECT, POWER_OFF.")] = None,
+    days: Annotated[int, Field(ge=1, le=3660, description="Days back.")] = 30,
+    with_user: Annotated[bool, Field(description="Only events that name the user who acted.")] = False,
+    limit: Limit = 50,
+    refresh: Refresh = False,
+) -> dict[str, Any]:
+    """COM's event log (about 3 months kept): connect, disconnect, power off, health, firmware and settings events per server; a few
+    name the user (address partly hidden). For "what happened to X", "when did it connect". Older events are gone."""
+    return await _com_cached(account, "activities", lambda c: com.list_activities(c, server, key, days, with_user, limit), refresh, state=True,
+                             args=(server, key, days, with_user, limit))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def greenlake_audit_log(
+    account: AccountName = None,
+    user: Annotated[str | None, Field(description="User contains this.")] = None,
+    category: Annotated[str | None, Field(description="Category contains, e.g. Credential.")] = None,
+    ip: Annotated[str | None, Field(description="Source IP starts with this.")] = None,
+    days: Annotated[int, Field(ge=1, le=3660, description="Days back.")] = 30,
+    limit: Limit = 50,
+    refresh: Refresh = False,
+) -> dict[str, Any]:
+    """HPE GreenLake audit log of the workspace: who did what from which IP (sign-ins, API clients, console launches), counts by user,
+    category and IP. Account level, not per server; only a short window is kept (log_oldest)."""
+    return await _com_cached(account, "audit", lambda c: com.audit_log(c, user, category, ip, days, limit), refresh, state=True,
+                             args=(user, category, ip, days, limit))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def greenlake_list_devices(
+    account: AccountName = None,
+    search: Annotated[str | None, Field(description="Serial, name or model contains this.")] = None,
+    assigned: Annotated[Literal["assigned", "unassigned"] | None, Field(description="Only devices assigned (or not) to a service.")] = None,
+    device_type: Annotated[str | None, Field(description="COMPUTE, SWITCH or STORAGE.")] = None,
+    limit: Limit = 50,
+    refresh: Refresh = False,
+) -> dict[str, Any]:
+    """Devices in the GreenLake workspace (servers, switches, storage): when each entered the inventory, service assignment,
+    subscription. For "when was this server added to GreenLake". Records no creator."""
+    return await _com_cached(account, "devices", lambda c: com.list_devices(c, search, assigned, device_type, limit), refresh, state=False,
+                             args=(search, assigned, device_type, limit))
 
 
 @mcp.tool(annotations=READ_ONLY)

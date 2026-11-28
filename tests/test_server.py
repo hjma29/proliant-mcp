@@ -214,6 +214,27 @@ async def test_com_server_usage_for_one_server_returns_the_real_daily_series(mcp
     assert "server=NAME" in ranked["note"]  # a ranked answer has no daily values and must say so, or a model draws made-up points
 
 
+async def test_greenlake_and_com_history_tools_filter_count_and_hide_secrets(mcp_client):
+    async with mcp_client as c:
+        acts = (await c.call_tool("com_list_activities", {})).structured_content
+        one = (await c.call_tool("com_list_activities", {"server": "esx2.example.com"})).structured_content
+        users = (await c.call_tool("com_list_activities", {"with_user": True})).structured_content
+        audit = (await c.call_tool("greenlake_audit_log", {})).structured_content
+        by_ip = (await c.call_tool("greenlake_audit_log", {"ip": "198.51.100", "days": 3650})).structured_content
+        devices = (await c.call_tool("greenlake_list_devices", {})).structured_content
+        unassigned = (await c.call_tool("greenlake_list_devices", {"assigned": "unassigned"})).structured_content
+        by_serial = (await c.call_tool("greenlake_list_devices", {"search": "sn0001"})).structured_content
+    assert acts["counts"]["matching"] == 2 and acts["counts"]["log_events"] == 3  # the third event is older than 30 days
+    assert one["counts"]["matching"] == 1 and "Connected" in one["table"]
+    assert users["counts"]["users_named"] == {"ab***@h***.com": 1}  # the user is read from the message
+    assert audit["counts"]["matching"] == 2 and audit["counts"]["by_user"] == {"pat@example.com": 2} and audit["counts"]["log_entries"] == 3
+    assert by_ip["counts"]["matching"] == 1 and "198.51.100.7" in by_ip["table"]
+    assert devices["counts"]["devices_in_workspace"] == 2 and devices["counts"]["by_type"] == {"COMPUTE": 1, "SWITCH": 1}
+    assert unassigned["counts"]["matching"] == 1 and "SW0001" in unassigned["table"]
+    assert "2024-01-27" in by_serial["table"] and "ENHANCED_PROLIANT until 2027-12-08" in by_serial["table"]
+    assert "SECRET-LICENSE-KEY" not in json.dumps(devices)  # the subscription key never leaves the server
+
+
 def _tools_in_mode(mode: str | None) -> dict:
     code = (
         "import asyncio, json\n"
@@ -1055,7 +1076,7 @@ async def test_tool_definitions_stay_small(mcp_client):
     async with mcp_client as c:
         tools = await c.list_tools()
     sizes = {t.name: len(json.dumps({"name": t.name, "description": t.description or "", "parameters": t.input_schema})) for t in tools}
-    assert sum(sizes.values()) <= 50_700, f"all tool definitions: {sum(sizes.values())} chars"  # +850 for com_server_usage, +300 for its server option, +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table, +950 for nic_mode, linked_only and group_by, +100 for the iLO tools saying they are not the COM fleet
+    assert sum(sizes.values()) <= 54_100, f"all tool definitions: {sum(sizes.values())} chars"  # +3,300 for com_list_activities, greenlake_audit_log and greenlake_list_devices, +850 for com_server_usage, +300 for its server option, +1000 for the 3 iLO firmware tools, +300 for list_servers generation/model, +1900 for refresh (no description) on the 37 cached read tools, +200 for poll_minutes, +1300 for com_list_memory, +1200 for the hardware filters of com_list_servers_table, +950 for nic_mode, linked_only and group_by, +100 for the iLO tools saying they are not the COM fleet
     assert len(srv.INSTRUCTIONS) <= 3_800
     too_long = {t.name: len(t.description or "") for t in tools if len(t.description or "") > 600}
     assert not too_long, f"descriptions over 600 chars: {too_long}"

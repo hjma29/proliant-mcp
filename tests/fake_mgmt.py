@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import datetime as dt
+
 import httpx
 
 OV_HOST = "192.0.2.100"
@@ -178,6 +180,11 @@ _COM_ALERTS = [
     {"id": "a1", "serverId": "P1+SN0001", "severity": "WARNING", "message": "Bios subsystem health is Warning", "cleared": False, "createdAt": "2026-11-02"},
     {"id": "a2", "serverId": "P2+SN0002", "severity": "CRITICAL", "message": "Fan failed", "cleared": True, "createdAt": "2026-11-01"},
 ]
+def _ago(days: float) -> str:
+    """A timestamp *days* ago, so tests of "the last 30 days" do not age."""
+    return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+
+
 FAKE_COM: dict[str, list[dict]] = {
     "/service-catalog/v1/service-managers": [
         {"id": "sm-com", "name": "Compute Ops Management", "description": "Securely manage\n your compute."},
@@ -197,6 +204,30 @@ FAKE_COM: dict[str, list[dict]] = {
     "/compute-ops-mgmt/v1beta1/utilization-by-entity": [
         {"id": "P1+SN0001", "name": "esx1.example.com", "collected": {"high": 40.0, "low": 1.0, "average": 12.5}},
         {"id": "P2+SN0002", "name": "esx2.example.com", "collected": {"high": 99.0, "low": 80.0, "average": 91.25}},
+    ],
+    "/compute-ops-mgmt/v1beta2/activities": [
+        {"id": "e1", "key": "SERVER_CONNECTED", "title": "Connected", "message": "Connected to Compute Ops Management", "createdAt": _ago(2),
+         "associatedServerId": "P1+SN0001", "source": {"name": "esx2.example.com"}},
+        {"id": "e2", "key": "SERVER_HEALTH_NOTIFICATION_PREF_UPDATED", "title": "Notification preferences updated",
+         "message": "User notification preferences updated\n\n**Note:** User ab***@h***.com updated notification preferences.", "createdAt": _ago(5),
+         "associatedServerId": "P2+SN0002", "source": {"name": "dl345.example.com"}},
+        {"id": "e3", "key": "SERVER_POWER_OFF", "title": "Powered off", "message": "Server powered off", "createdAt": _ago(200),
+         "associatedServerId": "P1+SN0001", "source": {"name": "esx2.example.com"}},
+    ],
+    "/audit-log/v1/logs": [
+        {"id": "a1", "createdAt": _ago(1), "user": {"username": "pat@example.com"}, "category": "Credential Management",
+         "description": "Created the credential GLP-proliant-mcp-HOST", "additionalInfo": {"ipAddress": "192.0.2.10"}},
+        {"id": "a2", "createdAt": _ago(2), "user": {"username": "pat@example.com"}, "category": "Session Management",
+         "description": "Created Session successfully", "additionalInfo": {"ipAddress": "198.51.100.7"}},
+        {"id": "a3", "createdAt": _ago(40), "user": {"username": "lee@example.com"}, "category": "User Management",
+         "description": "User lee@example.com logged out", "additionalInfo": {"ipAddress": "192.0.2.10"}},
+    ],
+    "/devices/v1/devices": [
+        {"id": "d1", "serialNumber": "SN0001", "deviceName": "ilo-esx1", "secondaryName": "esx1.example.com", "model": "HPE DL380 GEN11", "deviceType": "COMPUTE",
+         "createdAt": "2024-01-27T02:37:30.000Z", "updatedAt": "2026-05-03T12:00:00.000Z", "assignedState": "ASSIGNED_TO_SERVICE", "region": "us-west",
+         "subscription": [{"key": "SECRET-LICENSE-KEY", "tier": "ENHANCED_PROLIANT", "endTime": "2027-12-08T09:11:00.000Z"}]},
+        {"id": "d2", "serialNumber": "SW0001", "deviceName": "switch1", "model": "Aruba 6300", "deviceType": "SWITCH",
+         "createdAt": "2025-02-02T00:00:00.000Z", "updatedAt": "2025-02-02T00:00:00.000Z", "assignedState": "UNASSIGNED", "region": None, "subscription": []},
     ],
     "/compute-ops-mgmt/v1beta1/utilization-over-time": [
         {"resource": {"id": "P2+SN0002"}, "averages": {"collected": 91.25}, "intervalsCollected": [

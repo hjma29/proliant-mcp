@@ -6,6 +6,16 @@ directly (see the README).
 
 ---
 
+## v0.33.0 — 2026-11-28
+
+### New Features
+- `com_list_activities`: COM's event log (about three months kept) per server: connected or disconnected, power off, health, firmware and settings changes. A few events name the user who acted (COM hides part of the address), so `with_user` lists them. The result says how far back the log goes, so a missing older event is not read as "nothing happened".
+- `greenlake_audit_log`: the GreenLake audit log of the workspace (sign-ins, API clients created or deleted, console launches) by user, category, IP and period, with counts by user, category and IP. Account level, not per server; GreenLake keeps only a short window.
+- `greenlake_list_devices`: the GreenLake device inventory (servers, switches, storage) with when each device entered the workspace, its service assignment and subscription tier. The subscription key is never returned.
+- Why: asked "who added this server and when did it come online", an assistant with only the proliant tools could not reach any of these (the raw COM tool allows only `/compute-ops-mgmt/` paths and the audit log and device inventory sit on GreenLake's global API), so it concluded no tool could answer.
+
+---
+
 ## v0.32.0 — 2026-11-28
 
 ### New Features

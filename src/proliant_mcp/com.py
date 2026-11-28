@@ -1388,6 +1388,121 @@ async def server_usage(c: ComClient, days: int, sort_by: str, top: int, server: 
     }
 
 
+def _utc(value: str | None) -> str:
+    return (value or "")[:16].replace("T", " ")
+
+
+def _since(days: int) -> str:
+    import datetime as dt
+
+    return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+_USER_IN_MESSAGE = re.compile(r"\bUser\s+([^\s@]+@\S+)")
+
+
+async def list_activities(c: ComClient, server: str | None, key: str | None, days: int, with_user: bool, limit: int) -> dict[str, Any]:
+    """COM's event log (``/v1beta2/activities``): what happened to each server, and the few events that name a user."""
+    acts = await c.get_all("/compute-ops-mgmt/v1beta2/activities", max_items=2000)
+    stamps = sorted(a["createdAt"] for a in acts if a.get("createdAt"))
+    kept = [a for a in acts if (a.get("createdAt") or "") >= _since(days)]
+    if server:
+        sid = find_server(await c.get_all("/servers"), server)["id"]
+        kept = [a for a in kept if a.get("associatedServerId") == sid]
+    if key:
+        kept = [a for a in kept if key.lower() in f"{a.get('key')} {a.get('title')}".lower()]
+    rows = []
+    for a in kept:
+        who = _USER_IN_MESSAGE.search(a.get("message") or "")
+        rows.append({
+            "time": a.get("createdAt") or "", "server": (a.get("source") or {}).get("name"), "event": a.get("title") or a.get("key"),
+            "key": a.get("key"), "user": who.group(1).rstrip(".") if who else None,
+        })
+    if with_user:
+        rows = [r for r in rows if r["user"]]
+    rows.sort(key=lambda r: r["time"], reverse=True)
+    lines = ["| Time (UTC) | Server | Event | User |", "|---|---|---|---|"]
+    lines += [f"| {_utc(r['time'])} | {fleet_table._cell(r['server'])} | {fleet_table._cell(r['event'])} | {fleet_table._cell(r['user'])} |" for r in rows[:limit]]
+    return {
+        "counts": {
+            "matching": len(rows), "shown": min(len(rows), limit), "by_event": dict(Counter(r["key"] for r in rows).most_common(10)),
+            "users_named": dict(Counter(r["user"] for r in rows if r["user"])),
+            "log_events": len(acts), "log_oldest": (stamps[0] if stamps else None), "log_newest": (stamps[-1] if stamps else None),
+        },
+        "table": "\n".join(lines) if rows else "No matching events.",
+        "note": "COM keeps only about three months of events (log_oldest to log_newest), so an older add or change is not here. Only a few "
+        "events name a user (COM hides part of the address); no event means COM has no record, not that nothing happened. Times are UTC.",
+    }
+
+
+async def audit_log(c: ComClient, user: str | None, category: str | None, ip: str | None, days: int, limit: int) -> dict[str, Any]:
+    """The GreenLake platform audit log of the workspace (``/audit-log/v1/logs``): account and user events, not per server."""
+    items = await c.get_global_all("/audit-log/v1/logs", max_items=5000)
+    stamps = sorted(i["createdAt"] for i in items if i.get("createdAt"))
+    ip_of = lambda i: (i.get("additionalInfo") or {}).get("ipAddress")  # noqa: E731
+    kept = [i for i in items if (i.get("createdAt") or "") >= _since(days)]
+    if user:
+        kept = [i for i in kept if user.lower() in ((i.get("user") or {}).get("username") or "").lower()]
+    if category:
+        kept = [i for i in kept if category.lower() in (i.get("category") or "").lower()]
+    if ip:
+        kept = [i for i in kept if (ip_of(i) or "").startswith(ip)]
+    kept.sort(key=lambda i: i.get("createdAt") or "", reverse=True)
+    lines = ["| Time (UTC) | User | Category | What | IP |", "|---|---|---|---|---|"]
+    lines += [
+        f"| {_utc(i.get('createdAt'))} | {fleet_table._cell((i.get('user') or {}).get('username'))} | {fleet_table._cell(i.get('category'))} | "
+        f"{fleet_table._cell(i.get('description'))} | {fleet_table._cell(ip_of(i))} |" for i in kept[:limit]
+    ]
+    return {
+        "counts": {
+            "matching": len(kept), "shown": min(len(kept), limit), "by_category": dict(Counter(i.get("category") for i in kept).most_common()),
+            "by_user": dict(Counter((i.get("user") or {}).get("username") for i in kept).most_common(10)),
+            "by_ip": dict(Counter(ip_of(i) for i in kept).most_common(10)),
+            "log_entries": len(items), "log_oldest": (stamps[0] if stamps else None), "log_newest": (stamps[-1] if stamps else None),
+        },
+        "table": "\n".join(lines) if kept else "No matching entries.",
+        "note": "Account and user events of the whole workspace (sign-ins, API clients, console launches), not per server. GreenLake keeps only a "
+        "short window (log_oldest to log_newest), so older events are not here. An IP shows the network a request came from (a proxy shows "
+        "its own address), not who used it. Times are UTC.",
+    }
+
+
+async def list_devices(c: ComClient, search: str | None, assigned: str | None, device_type: str | None, limit: int) -> dict[str, Any]:
+    """The GreenLake workspace's device inventory (``/devices/v1/devices``): when each device entered it and where it is assigned."""
+    devices = await c.get_global_all("/devices/v1/devices", max_items=5000)
+    kept = devices
+    if search:
+        text = search.lower()
+        kept = [d for d in kept if text in " ".join(str(d.get(k) or "") for k in ("serialNumber", "deviceName", "secondaryName", "model", "partNumber")).lower()]
+    if assigned:
+        kept = [d for d in kept if (d.get("assignedState") or "").startswith("UNASSIGNED") == (assigned == "unassigned")]
+    if device_type:
+        kept = [d for d in kept if (d.get("deviceType") or "").upper() == device_type.upper()]
+    rows = []
+    for d in sorted(kept, key=lambda d: d.get("createdAt") or ""):
+        sub = next(iter(d.get("subscription") or []), {})
+        rows.append({
+            "name": d.get("secondaryName") or d.get("deviceName"), "serial": d.get("serialNumber"), "model": d.get("model"), "type": d.get("deviceType"),
+            "added": (d.get("createdAt") or "")[:10], "changed": (d.get("updatedAt") or "")[:10], "assigned": d.get("assignedState"),
+            "region": d.get("region"), "subscription": f"{sub.get('tier')} until {(sub.get('endTime') or '')[:10]}" if sub else None,
+        })
+    lines = ["| Name | Serial | Model | Type | Added to workspace | Assignment | Region | Subscription |", "|---|---|---|---|---|---|---|---|"]
+    lines += [
+        "| " + " | ".join(fleet_table._cell(r[k]) for k in ("name", "serial", "model", "type", "added", "assigned", "region", "subscription")) + " |"
+        for r in rows[:limit]
+    ]
+    return {
+        "counts": {
+            "devices_in_workspace": len(devices), "matching": len(rows), "shown": min(len(rows), limit),
+            "by_type": dict(Counter(r["type"] for r in rows)), "by_assignment": dict(Counter(r["assigned"] for r in rows)),
+        },
+        "table": "\n".join(lines) if rows else "No matching devices.",
+        "note": "'Added to workspace' is the device record's creation date (UTC): when it entered this workspace's inventory as far as GreenLake "
+        "shows. A server's COM record can be much newer, because it was assigned to Compute Ops Management later. No record says who added it. "
+        "Blades that join COM through OneView have no device record.",
+    }
+
+
 async def list_groups(c: ComClient) -> list[dict[str, Any]]:
     return [group_row(g) for g in await c.get_all("/groups")]
 
